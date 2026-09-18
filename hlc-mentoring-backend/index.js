@@ -45,6 +45,24 @@ const {
 const JWT_SECRET = process.env.JWT_SECRET || 'hlc-development-secret-change-me';
 const LEGACY_DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'HLC@123456';
 const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+const mentorUserFilter = { role: 'MENTOR', isActive: true, userId: /^HLC-MTO-\d+$/i };
+
+function lastFiveUserDigits(userId) {
+  const digits = String(userId || '').match(/\d/g)?.join('') || '';
+  return digits.slice(-5).padStart(5, '0');
+}
+
+function formatMentoringPairCode(month, year, mentorId, menteeId) {
+  return `${String(month).padStart(2, '0')}/${year}-${lastFiveUserDigits(mentorId)}-${lastFiveUserDigits(menteeId)}`;
+}
+
+function pairCodeForRecord(pair) {
+  if (pair.pairCode) return pair.pairCode;
+  const month = Number(String(pair.monthlyCode || '').slice(0, 2));
+  const year = Number(String(pair.cycleId || '').slice(0, 4));
+  return month >= 1 && month <= 12 && year ? formatMentoringPairCode(month, year, pair.mentorId, pair.menteeId) : pair.pairId;
+}
+
 function quarterKey(date) {
   const value = new Date(date);
   return value.getUTCFullYear() * 4 + Math.floor(value.getUTCMonth() / 3);
@@ -493,7 +511,7 @@ app.post(['/api/mentoring/preferences', '/api/preferences'], async (req, res) =>
 });
 
 app.get('/api/mentoring/preferences/mentors', async (req, res) => {
-  const mentors = await User.find({ role: 'MENTOR', isActive: true }).select('userId fullName team position').sort({ fullName: 1 });
+  const mentors = await User.find(mentorUserFilter).select('userId fullName team position').sort({ fullName: 1 });
   res.json({ success: true, data: mentors });
 });
 
@@ -587,7 +605,7 @@ app.get('/api/users/init-data', async (req, res) => {
 // API: Lấy danh sách Mentor & Mentee
 // ==========================================
 app.get('/api/users/mentors', async (req, res) => {
-  const mentors = await User.find({ role: 'MENTOR' }).select('userId fullName');
+  const mentors = await User.find(mentorUserFilter).select('userId fullName');
   res.json({ success: true, data: mentors });
 });
 
@@ -786,7 +804,7 @@ app.post('/api/users/import', requireRole('ADMIN'), importUpload.single('file'),
     if (!req.file) return res.status(400).json({ success: false, message: 'Vui lòng chọn file Excel hoặc CSV' });
     const extension = String(req.file.originalname).toLowerCase().split('.').pop();
     if (!['xlsx', 'csv'].includes(extension)) return res.status(400).json({ success: false, message: 'Chỉ hỗ trợ file .xlsx hoặc .csv' });
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: false });
     const errors = [];
     let imported = 0;
     let updated = 0;
@@ -1085,6 +1103,254 @@ app.post('/api/users/import-mentor', requireRole('ADMIN'), importUpload.single('
   }
 });
 
+app.put('/api/mentoring/quarter-lock', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const requestedQuarter = String(req.body.quarter || req.body.cycleId || '').trim().toUpperCase();
+    const cycleId = /^\d{4}Q[1-4]$/.test(requestedQuarter)
+      ? requestedQuarter
+      : `2026${requestedQuarter.replace(/^2026/, '').replace(/^QUARTER/, 'Q')}`;
+    const isLocked = req.body.isLocked;
+    if (!/^2026Q[1-4]$/.test(cycleId) || typeof isLocked !== 'boolean') {
+      return res.status(400).json({ success: false, message: 'quarter/cycleId hoặc isLocked không hợp lệ' });
+    }
+    const cycle = await Cycle.findOneAndUpdate(
+      { code: cycleId },
+      { $set: { isLocked } },
+      { new: true }
+    );
+    if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
+    await MentoringPair.updateMany({ cycleId, isLocked: { $ne: isLocked } }, { $set: { isLocked } });
+    res.json({ success: true, data: { cycleId, isLocked } });
+  } catch (error) {
+    console.error('Lỗi khóa dữ liệu mentoring:', error);
+    res.status(500).json({ success: false, message: 'Không thể cập nhật trạng thái khóa dữ liệu' });
+  }
+});
+
+app.post('/api/mentoring/import-pairs', requireRole('ADMIN'), importUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ success: false, message: 'Vui lòng chọn file Excel hoặc CSV' });
+    const extension = String(req.file.originalname).toLowerCase().split('.').pop();
+    if (!['xlsx', 'csv'].includes(extension)) {
+      return res.status(400).json({ success: false, message: 'Chỉ hỗ trợ file .xlsx hoặc .csv' });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const normalizeHeader = (value) => String(value || '')
+      .replace(/^\uFEFF/, '')
+      .replace(/["“”]/g, '')
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+    const canonicalHeader = (value) => normalizeHeader(value).replace(/[^a-z0-9]/g, '');
+    const headerKey = (value) => {
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return `${String(value.getUTCMonth() + 1).padStart(2, '0')}${value.getUTCFullYear()}`;
+      }
+      const normalized = normalizeHeader(value);
+      const monthMatch = normalized.match(/(?:^|\D)(\d{1,2})\s*[\/.-]\s*(\d{4})(?:\D|$)/);
+      if (monthMatch) return `${String(Number(monthMatch[1])).padStart(2, '0')}${monthMatch[2]}`;
+      const dateDisplayMatch = normalized.match(/(?:^|\D)(\d{1,2})\s*[\/.-]\s*\d{1,2}\s*[\/.-]\s*(\d{4})(?:\D|$)/);
+      if (dateDisplayMatch) return `${String(Number(dateDisplayMatch[1])).padStart(2, '0')}${dateDisplayMatch[2]}`;
+      return normalized.replace(/[^a-z0-9]/g, '');
+    };
+    const normalizeCell = (value) => String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+    const cleanId = (value) => normalizeCell(value).replace(/\s+/g, '').toUpperCase();
+    const cleanPairCode = (value) => normalizeCell(value).replace(/\s+/g, '');
+    const sheetName = workbook.SheetNames[0];
+    const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+      header: 1,
+      raw: false,
+      defval: ''
+    });
+    const headerRowIndex = rawRows.findIndex((row) => {
+      const headers = row.map(headerKey);
+      return headers.some((header) => header.includes('mamentoring'))
+        && headers.some((header) => header.includes('chucdanh'));
+    });
+    if (headerRowIndex < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Không tìm thấy dòng header chứa MÃ MENTORING và CHỨC DANH'
+      });
+    }
+
+    const headers = rawRows[headerRowIndex];
+    const rows = rawRows.slice(headerRowIndex + 1).map((cells, offset) => ({
+      sourceRow: headerRowIndex + offset + 2,
+      cells,
+      data: Object.fromEntries(headers.map((header, columnIndex) => [
+        headerKey(header) || `__empty_${columnIndex}`,
+        cells[columnIndex] ?? ''
+      ]))
+    }));
+    const readValue = (data, ...aliases) => aliases
+      .map((alias) => data[headerKey(alias)])
+      .find((value) => normalizeCell(value) !== '') ?? '';
+    const monthKeyToLabel = (key) => `${key.slice(0, 2)}/${key.slice(2)}`;
+    const parsePairCode = (rawCode) => {
+      const match = /^(\d{1,2})\/(\d{4})/.exec(cleanPairCode(rawCode));
+      return match ? { month: Number(match[1]), year: Number(match[2]) } : null;
+    };
+    const extractStatus = (rawValue) => {
+      if (!rawValue) return 'PENDING';
+
+      const normalized = String(rawValue).trim().toLowerCase().normalize('NFC');
+      const withoutAccents = normalized.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+      if (
+        normalized.includes('chưa')
+        || withoutAccents.includes('chua')
+        || normalized === 'chờ'
+        || withoutAccents === 'cho'
+        || normalized.includes('pending')
+      ) {
+        return 'PENDING';
+      }
+
+      if (
+        normalized.includes('xong')
+        || normalized.includes('done')
+        || normalized === 'ok'
+      ) {
+        return 'COMPLETED';
+      }
+
+      return 'PENDING';
+    };
+    const cycleFromDate = (year, month) => `${year}Q${Math.floor((month - 1) / 3) + 1}`;
+    const pairs = [];
+    const errors = [];
+    let currentMentorRow = null;
+    let orderIndex = 1;
+    const validRows = rows.filter((row) => normalizeCell(row.data.chucdanh));
+    const lockedCycles = new Set(
+      (await Cycle.find({ isLocked: true }).select('code').lean()).map((cycle) => cycle.code)
+    );
+
+    for (const row of validRows) {
+      console.log('Tất cả các cột đọc được:', Object.keys(row.data));
+      const role = normalizeCell(row.data.chucdanh).toLowerCase();
+
+      if (role === 'mentor') {
+        currentMentorRow = row;
+      } else if (role === 'mentee' && currentMentorRow) {
+        const mentorData = currentMentorRow.data;
+        const menteeData = row.data;
+        const mentorId = cleanId(mentorData.hlcid);
+        const menteeId = cleanId(menteeData.hlcid);
+        const sourcePairCode = cleanPairCode(mentorData.mamentoring);
+        const date = parsePairCode(sourcePairCode);
+
+        if (!date || !mentorId || !menteeId) {
+          errors.push({
+            row: currentMentorRow.sourceRow,
+            message: 'Cặp Mentor/Mentee thiếu MÃ MENTORING, Mentor ID hoặc Mentee ID hợp lệ'
+          });
+          currentMentorRow = null;
+          continue;
+        }
+
+        const importedRecapStatus = Object.fromEntries(
+          Object.keys(mentorData)
+            .filter((key) => /^\d{6}$/.test(key))
+            .map((key) => {
+              const status = extractStatus(mentorData[key]);
+              return [monthKeyToLabel(key), { mentor: status, mentee: status }];
+            })
+        );
+        const pairCode = formatMentoringPairCode(date.month, date.year, mentorId, menteeId);
+        pairs.push({
+          orderIndex: orderIndex++,
+          pairCode,
+          sourcePairCode,
+          cycleId: cycleFromDate(date.year, date.month),
+          monthlyCode: `${String(date.month).padStart(2, '0')}${mentorId}${menteeId}`,
+          mentorId,
+          menteeId,
+          importedRecapStatus,
+          sourceRow: currentMentorRow.sourceRow
+        });
+        currentMentorRow = null;
+      }
+    }
+    if (currentMentorRow) {
+      errors.push({ row: currentMentorRow.sourceRow, message: 'Dòng Mentor không có dòng Mentee đi kèm' });
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    let skipped = 0;
+    const skippedLocked = [];
+    for (const pair of pairs) {
+      if (lockedCycles.has(pair.cycleId)) {
+        skipped += 1;
+        skippedLocked.push({ pairCode: pair.pairCode, reason: 'Bỏ qua do dữ liệu quý đã bị khóa' });
+        continue;
+      }
+      const update = {
+        orderIndex: pair.orderIndex,
+        pairCode: pair.pairCode,
+        cycleId: pair.cycleId,
+        monthlyCode: pair.monthlyCode,
+        mentorId: pair.mentorId,
+        menteeId: pair.menteeId,
+        importedRecapStatus: pair.importedRecapStatus,
+        status: 'ACTIVE',
+        createdBy: req.user.userId
+      };
+      const existing = await MentoringPair.findOne({
+        $or: [
+          { pairCode: pair.pairCode },
+          { pairCode: pair.sourcePairCode },
+          { pairId: pair.pairCode },
+          { pairId: pair.sourcePairCode }
+        ]
+      });
+      if (existing) {
+        if (existing.isLocked) {
+          skipped += 1;
+          skippedLocked.push({ pairCode: pair.pairCode, reason: 'Bỏ qua do dữ liệu đã bị khóa' });
+          continue;
+        }
+        const existingStatuses = existing.importedRecapStatus && typeof existing.importedRecapStatus === 'object'
+          ? existing.importedRecapStatus
+          : {};
+        const mergedStatuses = { ...existingStatuses, ...pair.importedRecapStatus };
+        await MentoringPair.updateOne(
+          { _id: existing._id },
+          { $set: { ...update, importedRecapStatus: mergedStatuses } }
+        );
+        updated += 1;
+      } else {
+        await MentoringPair.create({ ...update, pairId: pair.pairCode });
+        inserted += 1;
+      }
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        sheet: sheetName,
+        rowsRead: rows.length,
+        pairsRead: pairs.length,
+        inserted,
+        updated,
+        skipped,
+        skippedLocked,
+        failed: errors.length,
+        errors
+      }
+    });
+  } catch (error) {
+    console.error('Lỗi import cặp mentoring:', error);
+    return res.status(400).json({ success: false, message: error.message || 'Không thể import cặp mentoring' });
+  }
+});
+
 // ==========================================
 // API: Cập nhật Mentor phụ trách
 // ==========================================
@@ -1281,7 +1547,7 @@ app.get('/api/dashboard/overview', async (req, res) => {
     const cycleId = req.query.cycleId || (await Cycle.findOne().sort({ startDate: -1 }))?.code;
     const[menteeCount, mentorCount, pairCount, submittedCount, approvedCount, fundSummary] = await Promise.all([
       User.countDocuments({ role: 'MENTEE', isActive: true }),
-      User.countDocuments({ role: 'MENTOR', isActive: true }),
+      User.countDocuments(mentorUserFilter),
       MentoringPair.countDocuments(cycleId ? { cycleId } : {}),
       Submission.countDocuments(cycleId ? { cycleId, status: { $in: ['SUBMITTED', 'APPROVED', 'IN_REVIEW'] } } : { status: { $in: ['SUBMITTED', 'APPROVED', 'IN_REVIEW'] } }),
       Submission.countDocuments(cycleId ? { cycleId, status: 'APPROVED' } : { status: 'APPROVED' }),
@@ -1393,11 +1659,14 @@ app.get('/api/mentoring/pairs', async (req, res) => {
   try {
     const filter = req.query.cycleId ? { cycleId: String(req.query.cycleId) } : {};
     if (req.user.role !== 'ADMIN') filter[req.user.role === 'MENTOR' ? 'mentorId' : 'menteeId'] = req.user.userId;
-    const pairs = await MentoringPair.find(filter).sort({ createdAt: -1 });
-    if (req.user.role === 'ADMIN') return res.json({ success: true, data: pairs });
+    const pairs = await MentoringPair.find(filter).sort({ orderIndex: 1, createdAt: 1 });
+    if (req.user.role === 'ADMIN') {
+      return res.json({ success: true, data: pairs.map((pair) => ({ ...pair.toObject(), pairCode: pairCodeForRecord(pair) })) });
+    }
     const cycles = await Cycle.find({ code: { $in: [...new Set(pairs.map((pair) => pair.cycleId))] } });
     const visible = new Set(cycles.filter((cycle) => isCycleVisibleToMember(cycle)).map((cycle) => cycle.code));
-    res.json({ success: true, data: pairs.filter((pair) => visible.has(pair.cycleId)) });
+    res.json({ success: true, data: pairs.filter((pair) => visible.has(pair.cycleId))
+      .map((pair) => ({ ...pair.toObject(), pairCode: pairCodeForRecord(pair) })) });
   } catch (error) {
     console.error('Lỗi lấy cặp mentoring:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
@@ -1419,22 +1688,44 @@ app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
     const mentor = await User.findOne({ userId: mentorId, role: 'MENTOR', isActive: true });
     const mentee = await User.findOne({ userId: menteeId, role: 'MENTEE', isActive: true });
     if (!mentor || !mentee) return res.status(400).json({ success: false, message: 'Mentor hoặc mentee không hợp lệ' });
-    const month = monthCode || monthlyMentoringCode(cycle.code, 1);
-    const existing = await MentoringPair.findOne({ cycleId, menteeId, monthlyCode: month, status: { $ne: 'CANCELLED' } });
-    if (existing) {
-      return res.status(409).json({ success: false, message: 'Mentee này đã được ghép trong quý đã chọn' });
+    const cycleStart = new Date(cycle.startDate);
+    const firstMonth = cycleStart.getUTCMonth() + 1;
+    const requestedMonth = String(monthCode || '').match(/^(0?[1-9]|1[0-2])/);
+    const selectedMonth = requestedMonth ? Number(requestedMonth[1]) : firstMonth;
+    const months = [firstMonth, firstMonth + 1, firstMonth + 2];
+    if (!months.includes(selectedMonth)) {
+      return res.status(400).json({ success: false, message: 'Tháng ghép cặp không thuộc quý đã chọn' });
     }
-    const pair = await MentoringPair.create({
-        pairId: pairId || `${cycleId}-${mentorId}-${menteeId}`,
-        monthlyCode: month,
-        cycleId,
-        mentorId,
-        menteeId,
-        status: status || 'ACTIVE',
-        createdBy: req.user.userId
-      });
 
-    res.status(201).json({ success: true, data: pair });
+    const existing = await MentoringPair.findOne({
+      cycleId,
+      menteeId,
+      status: { $ne: 'CANCELLED' }
+    });
+    if (existing && existing.mentorId !== mentorId) {
+      return res.status(409).json({ success: false, message: 'Mentee này đã được ghép với mentor khác trong quý đã chọn' });
+    }
+
+    const syncedPairs = [];
+    for (const month of months) {
+      const code = `${String(month).padStart(2, '0')}${mentorId}${menteeId}`;
+      const pairCode = formatMentoringPairCode(month, cycleStart.getUTCFullYear(), mentorId, menteeId);
+      const syncedPair = await MentoringPair.findOneAndUpdate(
+        { cycleId, menteeId, monthlyCode: new RegExp(`^${String(month).padStart(2, '0')}`) },
+        {
+          $set: { pairCode, mentorId, menteeId, status: status || 'ACTIVE', createdBy: req.user.userId },
+          $setOnInsert: {
+            pairId: pairCode,
+            cycleId,
+            monthlyCode: code
+          }
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true }
+      );
+      syncedPairs.push(syncedPair);
+    }
+
+    res.status(201).json({ success: true, data: syncedPairs[0], syncedMonths: months });
   } catch (error) {
     console.error('Lỗi ghép cặp:', error);
     res.status(400).json({ success: false, message: error.message });
@@ -1444,20 +1735,49 @@ app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
 app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res) => {
   try {
     const { status, rating, ratingComment, mentorId, menteeId, monthlyCode } = req.body;
-    const updates = { status, rating, ratingComment, mentorId, menteeId, monthlyCode };
+    const currentPair = await MentoringPair.findOne({ pairId: req.params.pairId });
+    if (!currentPair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
+
+    const targetMentorId = mentorId || currentPair.mentorId;
+    const targetMenteeId = menteeId || currentPair.menteeId;
+    const cycle = await Cycle.findOne({ code: currentPair.cycleId });
+    if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
+    const firstMonth = new Date(cycle.startDate).getUTCMonth() + 1;
+    const months = [firstMonth, firstMonth + 1, firstMonth + 2];
+    const updates = { status, rating, ratingComment, mentorId: targetMentorId, menteeId: targetMenteeId };
     Object.keys(updates).forEach((key) => updates[key] === undefined && delete updates[key]);
-    const pair = await MentoringPair.findOneAndUpdate(
-      { pairId: req.params.pairId },
-      updates,
-      { new: true }
-    );
-    if (!pair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
+    if (targetMenteeId !== currentPair.menteeId) {
+      await MentoringPair.deleteMany({
+        cycleId: currentPair.cycleId,
+        menteeId: currentPair.menteeId,
+        monthlyCode: { $regex: '^(0?[1-9]|1[0-2])' }
+      });
+    }
+    const syncedPairs = [];
+    for (const month of months) {
+      const code = `${String(month).padStart(2, '0')}${targetMentorId}${targetMenteeId}`;
+      const pairCode = formatMentoringPairCode(month, new Date(cycle.startDate).getUTCFullYear(), targetMentorId, targetMenteeId);
+      const pair = await MentoringPair.findOneAndUpdate(
+        { cycleId: currentPair.cycleId, menteeId: targetMenteeId, monthlyCode: new RegExp(`^${String(month).padStart(2, '0')}`) },
+        {
+          $set: { ...updates, pairCode, monthlyCode: code },
+          $setOnInsert: {
+            pairId: pairCode,
+            cycleId: currentPair.cycleId,
+            createdBy: req.user.userId
+          }
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true }
+      );
+      syncedPairs.push(pair);
+    }
+    const pair = syncedPairs.find((item) => item.pairId === req.params.pairId) || syncedPairs[0];
 
     if (Number(rating) >= 4) {
       const rule = await RewardRule.findOne({ code: 'PAIR_RATING', isActive: true });
       if (rule) {
         await addSystemScoreEvent({
-          userId: pair.menteeId,
+          userId: targetMenteeId,
           cycleId: pair.cycleId,
           ruleId: rule.code,
           category: rule.category,
@@ -1470,7 +1790,7 @@ app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res)
       }
     }
 
-    res.json({ success: true, data: pair });
+    res.json({ success: true, data: pair, syncedMonths: months });
   } catch (error) {
     console.error('Lỗi cập nhật cặp mentoring:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
@@ -1668,7 +1988,7 @@ app.patch('/api/mentoring/recaps/:id/status', requireRole('ADMIN'), async (req, 
 app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) => {
   try {
     const filter = req.query.cycleId ? { cycleId: String(req.query.cycleId) } : {};
-    const pairs = await MentoringPair.find(filter).lean();
+    const pairs = await MentoringPair.find(filter).sort({ orderIndex: 1, createdAt: 1 }).lean();
     const data = await Promise.all(pairs.map(async (pair) => {
       const [schedules, recaps] = await Promise.all([
         MentoringSchedule.find({ pairId: pair.pairId, cycleId: pair.cycleId }).lean(),
@@ -1679,10 +1999,15 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
       const deadline = schedule?.confirmedAt ? new Date(schedule.confirmedAt).getTime() + 24 * 3600000 : null;
       const submittedRoles = new Set(related.filter((item) => ['SUBMITTED', 'APPROVED', 'LATE'].includes(item.status)).map((item) => item.role));
       const late = related.some((item) => item.status === 'LATE') || Boolean(deadline && Date.now() > deadline);
-      const status = !schedule ? 'CHƯA CÓ LỊCH' : submittedRoles.size < 2
+      const importedCompleted = Object.values(pair.importedRecapStatus || {}).some((monthStatus) => {
+        const values = [monthStatus?.mentor, monthStatus?.mentee]
+          .map((value) => String(value || '').trim().toLowerCase());
+        return values.length === 2 && values.every((value) => ['đã xong', 'da xong', 'completed', 'approved'].includes(value));
+      });
+      const status = !schedule && importedCompleted ? 'ĐÃ NỘP/ĐÃ XONG' : !schedule ? 'CHƯA CÓ LỊCH' : submittedRoles.size < 2
         ? (late ? 'CHƯA XONG' : 'CHỜ')
         : (related.some((item) => item.status === 'LATE') ? 'NỘP MUỘN' : 'ĐÃ NỘP/ĐÃ XONG');
-      return { ...pair, monthlyCode: pair.monthlyCode || `${String(new Date(schedule?.startTime || Date.now()).getUTCMonth() + 1).padStart(2, '0')}${pair.mentorId}${pair.menteeId}`, scheduleCount: schedules.length, completedScheduleCount: schedules.filter((s) => s.status === 'COMPLETED').length, recapStatus: status };
+      return { ...pair, pairCode: pairCodeForRecord(pair), monthlyCode: pair.monthlyCode || `${String(new Date(schedule?.startTime || Date.now()).getUTCMonth() + 1).padStart(2, '0')}${pair.mentorId}${pair.menteeId}`, scheduleCount: schedules.length, completedScheduleCount: schedules.filter((s) => s.status === 'COMPLETED').length, recapStatus: status, importedRecapStatus: pair.importedRecapStatus || {} };
     }));
     res.json({ success: true, data });
   } catch (error) {

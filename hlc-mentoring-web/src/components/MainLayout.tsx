@@ -4,7 +4,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { Layout, Menu, Button, Tag } from 'antd';
 import {
   TeamOutlined,
-  LogoutOutlined
+  LogoutOutlined,
+  DashboardOutlined
 } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
@@ -36,6 +37,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   if (!user) return null;
 
   const adminMenuItems = [
+    { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Báo cáo Tổng quan' },
     { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý Ghép cặp' },
   ];
 

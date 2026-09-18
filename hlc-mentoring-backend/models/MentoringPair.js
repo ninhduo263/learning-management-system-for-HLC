@@ -2,8 +2,12 @@ const mongoose = require('mongoose');
 
 const mentoringPairSchema = new mongoose.Schema({
   pairId: { type: String, required: true, unique: true, trim: true },
+  orderIndex: { type: Number, index: true },
+  isLocked: { type: Boolean, default: false, index: true },
+  pairCode: { type: String, index: true, trim: true },
   cycleId: { type: String, required: true, index: true },
   monthlyCode: { type: String, index: true, trim: true },
+  importedRecapStatus: { type: mongoose.Schema.Types.Mixed, default: {} },
   mentorId: { type: String, required: true, index: true },
   menteeId: { type: String, required: true, index: true },
   status: {

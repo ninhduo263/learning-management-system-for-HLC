@@ -11,7 +11,8 @@ const cycleSchema = new mongoose.Schema({
     default: 'OPEN'
   },
   pointRate: { type: Number, default: 0, min: 0 },
-  baseAllowance: { type: Number, default: 0, min: 0 }
+  baseAllowance: { type: Number, default: 0, min: 0 },
+  isLocked: { type: Boolean, default: false }
 }, { timestamps: true });
 
 cycleSchema.path('endDate').validate(function validateDateRange(value) {

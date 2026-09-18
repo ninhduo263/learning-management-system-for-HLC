@@ -1,21 +1,34 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Table, Tag, Typography, Upload } from 'antd';
-import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined } from '@ant-design/icons';
-import { apiFetch, getAuthToken } from '@/lib/api';
+import { App, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined } from '@ant-design/icons';
+import { apiFetch } from '@/lib/api';
 
 interface Cycle { code: string; name: string; }
 interface UserOption { userId: string; fullName: string; mentorId?: string; }
 interface Pair {
   _id: string;
   pairId: string;
+  pairCode?: string;
   monthlyCode?: string;
   cycleId: string;
   mentorId: string;
   menteeId: string;
   status: string;
   recapStatus?: string;
+}
+
+function pairMonth(pair: Pair, cycleId: string) {
+  const code = pair.pairCode || pair.monthlyCode || '';
+  const formattedMatch = /^(\d{2})\/\d{4}-\d{5}-\d{5}$/.exec(code);
+  if (formattedMatch) return Number(formattedMatch[1]);
+  const numericMonth = Number(code.slice(0, 2));
+  if (numericMonth >= 1 && numericMonth <= 12) return numericMonth;
+  const match = new RegExp(`^${cycleId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}M([1-3])$`, 'i').exec(code);
+  if (!match) return undefined;
+  const quarter = Number(cycleId.slice(-1));
+  return (quarter - 1) * 3 + Number(match[1]);
 }
 interface Schedule {
   _id: string;
@@ -78,15 +91,14 @@ export default function AdminMentoringPage() {
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recaps, setRecaps] = useState<Recap[]>([]);
-  const [selectedCycle, setSelectedCycle] = useState('');
+  const ADMIN_PAIRING_CYCLE = '2026Q4';
+  const [selectedCycle, setSelectedCycle] = useState(ADMIN_PAIRING_CYCLE);
   const [selectedPair, setSelectedPair] = useState<Pair | null>(null);
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<'create' | 'edit' | 'detail' | null>(null);
   const [overrideSchedule, setOverrideSchedule] = useState<Schedule | null>(null);
   const [reviewingRecap, setReviewingRecap] = useState<Recap | null>(null);
   const [reviewNote, setReviewNote] = useState('');
-  const [importOpen, setImportOpen] = useState(false);
-  const [importLoading, setImportLoading] = useState(false);
   const unlockCycle = async () => {
     if (!selectedCycle) return;
     try {
@@ -97,47 +109,6 @@ export default function AdminMentoringPage() {
       await loadData(selectedCycle);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể mở khóa quý');
-    }
-  };
-
-  const importUsers = async (file: File) => {
-    setImportLoading(true);
-    try {
-      if (!getAuthToken()) {
-        throw new Error('Phiên đăng nhập Admin không tồn tại. Vui lòng đăng nhập lại.');
-      }
-      const body = new FormData();
-      body.append('file', file);
-      const response = await apiFetch('/users/import', { method: 'POST', body });
-      const result = await response.json();
-      if (response.status === 401) {
-        throw new Error('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.');
-      }
-      if (response.status === 403) {
-        throw new Error('Tài khoản hiện tại không có quyền Admin để import dữ liệu.');
-      }
-      if (!result.success) throw new Error(result.message);
-      const summary = result.data;
-      message.success(`Đã tạo ${summary.imported}, cập nhật ${summary.updated}, lỗi ${summary.failed}`);
-      if (summary.errors?.length) {
-        Modal.warning({
-          title: 'Import hoàn tất nhưng có dòng lỗi',
-          content: (
-            <div className="max-h-60 overflow-auto">
-              {summary.errors.slice(0, 50).map((item: { row: number; message: string }, index: number) => (
-                <div key={`${item.row}-${index}`}>Dòng {item.row}: {item.message}</div>
-              ))}
-              {summary.errors.length > 50 && <div>... còn {summary.errors.length - 50} lỗi khác</div>}
-            </div>
-          )
-        });
-      }
-      setImportOpen(false);
-      await loadData(selectedCycle);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : 'Không thể import dữ liệu');
-    } finally {
-      setImportLoading(false);
     }
   };
 
@@ -161,14 +132,19 @@ export default function AdminMentoringPage() {
       const [cycleResult, mentorResult, menteeResult, pairResult, scheduleResult, recapResult, statusResult] = results;
       if (cycleResult.success) {
         setCycles(cycleResult.data);
-        if (!selectedCycle && cycleResult.data[0]) setSelectedCycle(cycleResult.data[0].code);
+        if (!cycleResult.data.some((cycle: Cycle) => cycle.code === ADMIN_PAIRING_CYCLE)) {
+          message.warning(`Không tìm thấy kỳ ${ADMIN_PAIRING_CYCLE} trong danh sách kỳ hoạt động`);
+        }
       }
       if (mentorResult.success) setMentors(mentorResult.data);
       if (menteeResult.success) setMentees(menteeResult.data);
       if (scheduleResult.success) setSchedules(scheduleResult.data);
       if (recapResult.success) setRecaps(recapResult.data);
-      if (statusResult.success) setPairs(statusResult.data);
-      else if (pairResult.success) setPairs(pairResult.data);
+      if (statusResult.success) {
+        setPairs(cycleId ? statusResult.data.filter((item: Pair) => item.cycleId === cycleId) : statusResult.data);
+      } else if (pairResult.success) {
+        setPairs(cycleId ? pairResult.data.filter((item: Pair) => item.cycleId === cycleId) : pairResult.data);
+      }
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể tải danh sách ghép cặp');
     } finally {
@@ -176,10 +152,12 @@ export default function AdminMentoringPage() {
     }
   };
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(ADMIN_PAIRING_CYCLE); }, []);
   useEffect(() => { if (selectedCycle) loadData(selectedCycle); }, [selectedCycle]);
 
-  const cycleOptions = cycles.map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
+  const cycleOptions = cycles
+    .filter((cycle) => cycle.code === ADMIN_PAIRING_CYCLE)
+    .map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
   const createCycleCode = Form.useWatch('cycleId', createForm) || selectedCycle;
   const createMonth = Form.useWatch('month', createForm);
   const monthOptions = monthsForCycleOptions(createCycleCode);
@@ -191,11 +169,18 @@ export default function AdminMentoringPage() {
     [pairs, createCycleCode, createMonth]
   );
   const availableMentees = mentees.filter((mentee) => !pairedMenteeIds.has(mentee.userId));
+  const monthlyPairs = useMemo(
+    () => [10, 11, 12].map((month) => ({
+      month,
+      pairs: pairs.filter((pair) => {
+        if (pair.cycleId !== ADMIN_PAIRING_CYCLE) return false;
+        return pairMonth(pair, ADMIN_PAIRING_CYCLE) === month;
+      })
+    })),
+    [pairs]
+  );
   const buildMonthlyCode = (values: PairForm) => {
-    const mentor = mentors.find((item) => item.userId === values.mentorId);
-    const mentee = mentees.find((item) => item.userId === values.menteeId);
-    const monthNumber = String(values.month).padStart(2, '0');
-    return `${monthNumber}${mentor?.userId || values.mentorId}${mentee?.userId || values.menteeId}`;
+    return String(values.month);
   };
 
   function monthsForCycleOptions(cycleCode: string) {
@@ -265,12 +250,36 @@ export default function AdminMentoringPage() {
   };
 
   const columns = [
-    { title: 'Mã ghép cặp', dataIndex: 'monthlyCode', render: (value: string, row: Pair) => value || row.pairId },
+    { title: 'Mã mentoring', dataIndex: 'pairCode', render: (value: string, row: Pair) => value || row.pairCode || row.pairId },
     { title: 'Họ và tên Mentee', dataIndex: 'menteeId', render: (value: string) => menteeName(value) },
     { title: 'Mentor phụ trách', dataIndex: 'mentorId', render: (value: string) => mentorName(value) },
     { title: 'Trạng thái recap', dataIndex: 'recapStatus', render: (value: string) => <Tag color={recapColor(value)}>{recapLabels[value] || value || 'Chờ'}</Tag> },
     { title: 'Trạng thái hoạt động', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : value === 'COMPLETED' ? 'blue' : 'default'}>{value}</Tag> },
-    { title: 'Chi tiết', render: (_: unknown, row: Pair) => <Button type="text" icon={<EyeOutlined />} onClick={(event) => { event.stopPropagation(); setSelectedPair(row); setModal('detail'); }} /> }
+    {
+      title: 'Thao tác',
+      render: (_: unknown, row: Pair) => (
+        <Space>
+          <Button type="text" icon={<EyeOutlined />} onClick={(event) => { event.stopPropagation(); setSelectedPair(row); setModal('detail'); }} />
+          <Button
+            type="link"
+            icon={<EditOutlined />}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedPair(row);
+              editForm.setFieldsValue({
+                cycleId: row.cycleId,
+                mentorId: row.mentorId,
+                menteeId: row.menteeId,
+                month: pairMonth(row, row.cycleId) || monthOptions[0]?.value
+              });
+              setModal('edit');
+            }}
+          >
+            Chỉnh sửa
+          </Button>
+        </Space>
+      )
+    }
   ];
 
   return (
@@ -278,42 +287,31 @@ export default function AdminMentoringPage() {
       <div className="flex items-center justify-between">
         <Typography.Title level={3} className="!mb-0">Quản lý Ghép cặp</Typography.Title>
         <Space>
-          <Select value={selectedCycle || undefined} placeholder="Chọn quý" options={cycleOptions} onChange={setSelectedCycle} className="min-w-52" />
+          <Select value={ADMIN_PAIRING_CYCLE} options={cycleOptions} className="min-w-52" disabled />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.setFieldsValue({ cycleId: selectedCycle, month: monthOptions[0]?.value }); setModal('create'); }}>Thêm mới</Button>
-          <Button icon={<EditOutlined />} disabled={!selectedPair} onClick={() => { if (selectedPair) { editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: Number(selectedPair.monthlyCode?.slice(0, 2)) || monthOptions[0]?.value }); setModal('edit'); } }}>Sửa</Button>
+          <Button icon={<EditOutlined />} disabled={!selectedPair} onClick={() => { if (selectedPair) { editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: pairMonth(selectedPair, selectedPair.cycleId) || monthOptions[0]?.value }); setModal('edit'); } }}>Chỉnh sửa</Button>
           <Button onClick={unlockCycle} disabled={!selectedCycle}>Mở khóa quý</Button>
-          <Button onClick={() => setImportOpen(true)}>Import dữ liệu</Button>
         </Space>
       </div>
 
-      <Modal title="Import dữ liệu Mentor/Mentee" open={importOpen} onCancel={() => setImportOpen(false)} footer={null} destroyOnHidden>
-        <Typography.Paragraph type="secondary">
-          Upload file .xlsx hoặc .csv theo mẫu nhân sự. Dữ liệu sẽ được lưu vào backend và MongoDB cloud.
-        </Typography.Paragraph>
-        <Upload.Dragger
-          accept=".xlsx,.csv"
-          showUploadList={false}
-          disabled={importLoading}
-          beforeUpload={(file) => {
-            void importUsers(file);
-            return Upload.LIST_IGNORE;
-          }}
-        >
-          <p className="ant-upload-drag-icon"><InboxOutlined /></p>
-          <p className="ant-upload-text">{importLoading ? 'Đang import...' : 'Kéo thả file hoặc bấm để chọn'}</p>
-          <p className="ant-upload-hint">Tối đa 5MB</p>
-        </Upload.Dragger>
-      </Modal>
-
       <Card styles={{ body: { padding: 0 } }}>
-        <Table
-          rowKey="_id"
-          loading={loading}
-          columns={columns}
-          dataSource={pairs}
-          pagination={{ pageSize: 10 }}
-          onRow={(row) => ({ onClick: () => { setSelectedPair(row); setModal('detail'); }, className: 'cursor-pointer' })}
-          locale={{ emptyText: 'Chưa có dữ liệu ghép cặp trong quý này' }}
+        <Tabs
+          defaultActiveKey="10"
+          items={monthlyPairs.map(({ month, pairs: monthPairs }) => ({
+            key: String(month),
+            label: `Q4-T${month}`,
+            children: (
+              <Table
+                rowKey="_id"
+                loading={loading}
+                columns={columns}
+                dataSource={monthPairs}
+                pagination={{ pageSize: 10 }}
+                onRow={(row) => ({ onClick: () => { setSelectedPair(row); setModal('detail'); }, className: 'cursor-pointer' })}
+                locale={{ emptyText: `Chưa có dữ liệu ghép cặp tháng ${month}/2026` }}
+              />
+            )
+          }))}
         />
       </Card>
 
@@ -345,7 +343,7 @@ export default function AdminMentoringPage() {
         {selectedPair && (
           <div className="space-y-5">
             <Descriptions bordered column={2} size="small">
-              <Descriptions.Item label="Mã cặp">{selectedPair.monthlyCode || selectedPair.pairId}</Descriptions.Item>
+              <Descriptions.Item label="Mã mentoring">{selectedPair.pairCode || selectedPair.pairId}</Descriptions.Item>
               <Descriptions.Item label="Quý">{selectedPair.cycleId}</Descriptions.Item>
               <Descriptions.Item label="Mentee">{menteeName(selectedPair.menteeId)}</Descriptions.Item>
               <Descriptions.Item label="Mentor">{mentorName(selectedPair.mentorId)}</Descriptions.Item>
