@@ -284,9 +284,9 @@ export default function AdminMentoringPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <Typography.Title level={3} className="!mb-0">Quản lý Ghép cặp</Typography.Title>
-        <Space>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Typography.Title level={3} className="!mb-0 !whitespace-nowrap shrink-0">Quản lý Ghép cặp</Typography.Title>
+        <Space wrap className="max-w-full justify-end">
           <Select value={ADMIN_PAIRING_CYCLE} options={cycleOptions} className="min-w-52" disabled />
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.setFieldsValue({ cycleId: selectedCycle, month: monthOptions[0]?.value }); setModal('create'); }}>Thêm mới</Button>
           <Button icon={<EditOutlined />} disabled={!selectedPair} onClick={() => { if (selectedPair) { editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: pairMonth(selectedPair, selectedPair.cycleId) || monthOptions[0]?.value }); setModal('edit'); } }}>Chỉnh sửa</Button>
