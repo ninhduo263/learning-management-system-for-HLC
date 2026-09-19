@@ -1949,7 +1949,9 @@ app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
 app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res) => {
   try {
     const { status, rating, ratingComment, mentorId, menteeId, monthlyCode } = req.body;
-    const currentPair = await MentoringPair.findOne({ pairId: req.params.pairId });
+    const requestedPairId = decodeURIComponent(String(req.params.pairId || ''));
+    console.log('[pairs:update] pairId:', requestedPairId);
+    const currentPair = await MentoringPair.findOne({ pairId: requestedPairId });
     if (!currentPair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
     const currentCycle = await Cycle.findOne({ code: currentPair.cycleId });
     if (currentPair.isLocked || currentCycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(currentCycle?.status)) {
@@ -1990,7 +1992,7 @@ app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res)
       );
       syncedPairs.push(pair);
     }
-    const pair = syncedPairs.find((item) => item.pairId === req.params.pairId) || syncedPairs[0];
+    const pair = syncedPairs.find((item) => item.pairId === requestedPairId) || syncedPairs[0];
 
     if (Number(rating) >= 4) {
       const rule = await RewardRule.findOne({ code: 'PAIR_RATING', isActive: true });
@@ -2018,7 +2020,8 @@ app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res)
 
 app.delete('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res) => {
   try {
-    const pair = await MentoringPair.findOne({ pairId: req.params.pairId });
+    const requestedPairId = decodeURIComponent(String(req.params.pairId || ''));
+    const pair = await MentoringPair.findOne({ pairId: requestedPairId });
     if (!pair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
     const cycle = await Cycle.findOne({ code: pair.cycleId });
     if (pair.isLocked || cycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle?.status)) {
@@ -2029,7 +2032,7 @@ app.delete('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res
       menteeId: pair.menteeId,
       mentorId: pair.mentorId
     });
-    return res.json({ success: true, data: { pairId: req.params.pairId } });
+    return res.json({ success: true, data: { pairId: requestedPairId } });
   } catch (error) {
     console.error('Lỗi xóa cặp mentoring:', error);
     return res.status(500).json({ success: false, message: 'Không thể xóa cặp mentoring' });

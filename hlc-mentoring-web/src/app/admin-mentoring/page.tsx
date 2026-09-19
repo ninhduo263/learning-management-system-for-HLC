@@ -299,13 +299,28 @@ export default function AdminMentoringPage() {
   const submitEdit = async (values: PairForm) => {
     if (!selectedPair) return;
     try {
-      const response = await apiFetch(`/mentoring/pairs/${selectedPair.pairId}`, {
+      const cleanValues = {
+        mentorId: cleanUserId(values.mentorId, 'MTO'),
+        menteeId: cleanUserId(values.menteeId, 'MTE'),
+        monthlyCode: String(cleanMonth(values.month))
+      };
+      console.log('Payload sửa chuẩn bị gửi:', cleanValues);
+      if (!cleanValues.mentorId || !cleanValues.menteeId || !Number.isInteger(Number(cleanValues.monthlyCode))) {
+        throw new Error('Thông tin tháng, mentor hoặc mentee không hợp lệ');
+      }
+      const response = await apiFetch(`/mentoring/pairs/${encodeURIComponent(selectedPair.pairId)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mentorId: values.mentorId, menteeId: values.menteeId, monthlyCode: buildMonthlyCode(values) })
+        body: JSON.stringify(cleanValues)
       });
       const result = await response.json();
-      if (!result.success) throw new Error(result.message);
+      if (!result.success) {
+        const details = result.details || result.errors;
+        const detailText = details
+          ? `: ${Object.entries(details).map(([field, detail]) => `${field}: ${typeof detail === 'object' ? JSON.stringify(detail) : detail}`).join('; ')}`
+          : '';
+        throw new Error(`${result.message || 'Không thể cập nhật cặp mentoring'}${detailText}`);
+      }
       message.success('Đã cập nhật cặp mentoring');
       setModal(null);
       await loadData(values.cycleId);
