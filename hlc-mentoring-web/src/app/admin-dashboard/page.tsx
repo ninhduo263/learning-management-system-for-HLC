@@ -185,8 +185,8 @@ export default function AdminDashboardPage() {
     ];
     return (
       <div className="space-y-3">
-        <div className="flex justify-end gap-2">
-          <Button disabled={locked} onClick={() => { setImportQuarter(quarter); setImportOpen(true); }}>Import dữ liệu</Button>
+        <div className="flex flex-col sm:flex-row sm:justify-end gap-2">
+          <Button block className="sm:!w-auto" disabled={locked} onClick={() => { setImportQuarter(quarter); setImportOpen(true); }}>Import dữ liệu</Button>
           <Popconfirm
             title={locked ? 'Mở khóa để cho phép ghi đè dữ liệu?' : `Khóa dữ liệu ${config.label}?`}
             description={locked ? 'Sau khi mở khóa, file import có thể cập nhật các cặp trong quý.' : 'Các bản ghi trong quý sẽ không bị import ghi đè.'}
@@ -194,22 +194,22 @@ export default function AdminDashboardPage() {
             okText={locked ? 'Mở khóa' : 'Khóa dữ liệu'}
             cancelText="Hủy"
           >
-            <Button danger={!locked} type={locked ? 'primary' : 'default'}>
+            <Button block className="sm:!w-auto" danger={!locked} type={locked ? 'primary' : 'default'}>
               {locked ? '🔓 Mở khóa ghi đè' : '🔒 Khóa dữ liệu'}
             </Button>
           </Popconfirm>
         </div>
-        <Table<DisplayRow> rowKey="key" columns={columns} dataSource={rows} loading={loading} scroll={{ x: 1000 }} pagination={{ pageSize: 20 }} locale={{ emptyText: `Chưa có dữ liệu ${config.label.toLowerCase()}` }} />
+        <Table<DisplayRow> rowKey="key" columns={columns} dataSource={rows} loading={loading} scroll={{ x: 'max-content' }} pagination={{ pageSize: 20 }} locale={{ emptyText: `Chưa có dữ liệu ${config.label.toLowerCase()}` }} />
       </div>
     );
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <Typography.Title level={3} className="!mb-0">Báo cáo danh sách mentoring</Typography.Title>
         <div className="flex gap-2">
-          <Button type="primary" onClick={handleShowData}>Xem danh sách</Button>
+          <Button type="primary" block className="sm:!w-auto" onClick={handleShowData}>Xem danh sách</Button>
         </div>
       </div>
       <Modal title={`Import dữ liệu mentoring ${QUARTERS[importQuarter].label}`} open={importOpen} onCancel={() => setImportOpen(false)} footer={null} destroyOnHidden>

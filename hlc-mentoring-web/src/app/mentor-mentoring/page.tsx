@@ -71,6 +71,7 @@ export default function MentorMentoringPage() {
           rowKey="_id"
           loading={loading}
           dataSource={data?.pairs ?? []}
+          scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
@@ -85,6 +86,7 @@ export default function MentorMentoringPage() {
           rowKey="_id"
           loading={loading}
           dataSource={data?.schedules ?? []}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Pair', dataIndex: 'pairId' },

@@ -147,7 +147,7 @@ export default function AdminModulesPage() {
 
       {/* KHU VỰC 2: BẢNG DANH SÁCH */}
       <Card title="Danh sách các hoạt động đang mở" className="shadow-sm">
-        <Table columns={columns} dataSource={modules} rowKey="_id" loading={loading} pagination={false} />
+        <Table columns={columns} dataSource={modules} rowKey="_id" loading={loading} pagination={false} scroll={{ x: 'max-content' }} />
       </Card>
     </div>
   );

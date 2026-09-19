@@ -74,6 +74,7 @@ export default function MenteeFundPage() {
           rowKey="_id"
           dataSource={submissions}
           loading={loading}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Ngày', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Nội dung', dataIndex: 'content', render: (value: any) => value?.text || '—' },

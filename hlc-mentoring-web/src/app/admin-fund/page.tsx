@@ -130,6 +130,7 @@ export default function AdminFundPage() {
         dataSource={submissions} 
         rowKey="_id" 
         loading={loading}
+        scroll={{ x: 'max-content' }}
         pagination={{ pageSize: 5 }}
       />
     </div>

@@ -31,14 +31,14 @@ export default function MenteeDashboardPage() {
       <h1 className="text-2xl font-bold text-gray-800">Dashboard cá nhân - Mentee</h1>
 
       <Row gutter={[16, 16]}>
-        <Col span={6}><Card><Statistic title="Tổng điểm" value={data?.totalPoints ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Bài đã duyệt" value={data?.approvedCount ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Bài chờ duyệt" value={data?.pendingCount ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Cặp mentoring" value={data?.pairCount ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Tổng điểm" value={data?.totalPoints ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Bài đã duyệt" value={data?.approvedCount ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Bài chờ duyệt" value={data?.pendingCount ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Cặp mentoring" value={data?.pairCount ?? 0} /></Card></Col>
       </Row>
 
       <Row gutter={[16, 16]}>
-        <Col span={12}>
+        <Col xs={24} md={12}>
           <Card title="Điểm theo danh mục">
             {data && Object.keys(data.scoreByCategory || {}).length > 0 ? (
               <div className="space-y-2">
@@ -55,7 +55,7 @@ export default function MenteeDashboardPage() {
           </Card>
         </Col>
 
-        <Col span={12}>
+        <Col xs={24} md={12}>
           <Card title="Thông tin kỳ hiện tại">
             <div className="space-y-2 text-sm">
               <div className="flex justify-between"><span>Kỳ</span><strong>{data?.cycleId || 'Chưa có'}</strong></div>
@@ -71,6 +71,7 @@ export default function MenteeDashboardPage() {
         <Table
           rowKey="_id"
           dataSource={data?.recentSubmissions ?? []}
+          scroll={{ x: 'max-content' }}
           loading={loading}
           pagination={{ pageSize: 5 }}
           columns={[
@@ -86,6 +87,7 @@ export default function MenteeDashboardPage() {
         <Table
           rowKey="_id"
           dataSource={data?.pairs ?? []}
+          scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Pair', dataIndex: 'pairId' },

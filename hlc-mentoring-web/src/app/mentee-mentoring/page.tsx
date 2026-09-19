@@ -230,6 +230,7 @@ export default function MenteeMentoringPage() {
           loading={loading}
           pagination={{ pageSize: 5 }}
           dataSource={data?.pairs ?? []}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Pair', dataIndex: 'pairId' },
@@ -245,6 +246,7 @@ export default function MenteeMentoringPage() {
           rowKey="_id"
           loading={loading}
           dataSource={data?.schedules ?? []}
+          scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },

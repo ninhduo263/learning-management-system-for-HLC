@@ -1,1 +1,22 @@
 @import "tailwindcss";
+
+@media (max-width: 575px) {
+  .ant-btn {
+    min-height: 40px;
+  }
+
+  .ant-input,
+  .ant-input-affix-wrapper,
+  .ant-select-selector,
+  .ant-picker {
+    min-height: 40px;
+  }
+
+  .ant-card .ant-card-head {
+    min-height: 52px;
+  }
+
+  .ant-card .ant-card-body {
+    padding: 16px;
+  }
+}

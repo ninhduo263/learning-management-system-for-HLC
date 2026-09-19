@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined } from '@ant-design/icons';
 import { apiFetch } from '@/lib/api';
 
@@ -306,6 +306,7 @@ export default function AdminMentoringPage() {
                 loading={loading}
                 columns={columns}
                 dataSource={monthPairs}
+                scroll={{ x: 'max-content' }}
                 pagination={{ pageSize: 10 }}
                 onRow={(row) => ({ onClick: () => { setSelectedPair(row); setModal('detail'); }, className: 'cursor-pointer' })}
                 locale={{ emptyText: `Chưa có dữ liệu ghép cặp tháng ${month}/2026` }}
@@ -321,6 +322,7 @@ export default function AdminMentoringPage() {
           size="small"
           loading={loading}
           dataSource={recaps}
+          scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 8 }}
           columns={[
             { title: 'Cặp', dataIndex: 'pairId' },
@@ -350,7 +352,7 @@ export default function AdminMentoringPage() {
             </Descriptions>
             <div>
               <Typography.Title level={5}>Lịch mentoring</Typography.Title>
-              <Table rowKey="_id" size="small" pagination={false} dataSource={detailSchedules} columns={[
+              <Table rowKey="_id" size="small" pagination={false} dataSource={detailSchedules} scroll={{ x: 'max-content' }} columns={[
                 { title: 'Tháng', dataIndex: 'monthCode' },
                 { title: 'Thời gian', render: (row: Schedule) => `${new Date(row.startTime).toLocaleString()} - ${new Date(row.endTime).toLocaleString()}` },
                 { title: 'Đã chốt', render: (row: Schedule) => row.confirmedAt ? new Date(row.confirmedAt).toLocaleString() : 'Chưa chốt' },
@@ -454,10 +456,12 @@ function PairForm({ form, cycles, months, mentors, mentees, onFinish }: {
   onFinish: (values: PairForm) => void;
 }) {
   return <Form form={form} layout="vertical" onFinish={onFinish}>
-    <Form.Item name="cycleId" label="Quý" rules={[{ required: true, message: 'Chọn quý' }]}><Select options={cycles} /></Form.Item>
-    <Form.Item name="month" label="Tháng mentoring trong quý" rules={[{ required: true, message: 'Chọn tháng' }]}><Select options={months} /></Form.Item>
-    <Form.Item name="mentorId" label="Mentor" rules={[{ required: true, message: 'Chọn mentor' }]}><Select showSearch optionFilterProp="label" options={mentors.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}` }))} /></Form.Item>
-    <Form.Item name="menteeId" label="Mentee" rules={[{ required: true, message: 'Chọn mentee' }]}><Select showSearch optionFilterProp="label" options={mentees.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}` }))} /></Form.Item>
+    <Row gutter={[12, 0]}>
+      <Col xs={24} md={12}><Form.Item name="cycleId" label="Quý" rules={[{ required: true, message: 'Chọn quý' }]}><Select options={cycles} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="month" label="Tháng mentoring trong quý" rules={[{ required: true, message: 'Chọn tháng' }]}><Select options={months} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="mentorId" label="Mentor" rules={[{ required: true, message: 'Chọn mentor' }]}><Select showSearch optionFilterProp="label" options={mentors.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}` }))} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="menteeId" label="Mentee" rules={[{ required: true, message: 'Chọn mentee' }]}><Select showSearch optionFilterProp="label" options={mentees.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}` }))} /></Form.Item></Col>
+    </Row>
     <Button type="primary" htmlType="submit" block>Lưu</Button>
   </Form>;
 }

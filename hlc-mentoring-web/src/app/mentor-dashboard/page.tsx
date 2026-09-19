@@ -26,16 +26,17 @@ export default function MentorDashboardPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">Dashboard - Mentor</h1>
       <Row gutter={[16, 16]}>
-        <Col span={6}><Card><Statistic title="Tổng điểm" value={data?.totalPoints ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Cặp mentoring" value={data?.pairCount ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Lịch đã tạo" value={data?.scheduleCount ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="Recap" value={data?.recapCount ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Tổng điểm" value={data?.totalPoints ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Cặp mentoring" value={data?.pairCount ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Lịch đã tạo" value={data?.scheduleCount ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="Recap" value={data?.recapCount ?? 0} /></Card></Col>
       </Row>
 
       <Card title="Danh sách cặp đang phụ trách">
         <Table
           rowKey="_id"
           dataSource={data?.pairs ?? []}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Pair', dataIndex: 'pairId' },
             { title: 'Mentor', dataIndex: 'mentorId' },

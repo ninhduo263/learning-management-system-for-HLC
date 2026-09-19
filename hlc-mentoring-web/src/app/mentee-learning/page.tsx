@@ -83,6 +83,7 @@ export default function MenteeLearningPage() {
           rowKey="_id"
           dataSource={submissions}
           loading={loading}
+          scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Module', dataIndex: 'moduleCode' },

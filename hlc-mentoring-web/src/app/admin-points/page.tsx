@@ -85,6 +85,7 @@ export default function AdminPointsPage() {
         <Table
           rowKey="_id"
           dataSource={rules}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Mã', dataIndex: 'code' },
             { title: 'Tên rule', dataIndex: 'name' },
