@@ -3,10 +3,7 @@
 import { Form, Input, Button, Card, App } from 'antd';
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
-
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'https://learning-management-system-for-hlc.onrender.com/api'
-).replace(/\/+$/, '');
+import { apiFetch } from '@/lib/api';
 
 interface LoginValues {
   userId: string;
@@ -19,7 +16,7 @@ export default function LoginPage() {
 
   const onFinish = async (values: LoginValues) => {
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
+      const response = await apiFetch('/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: values.userId.toUpperCase(), password: values.password })

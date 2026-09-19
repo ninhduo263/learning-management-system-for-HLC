@@ -1,6 +1,7 @@
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'https://learning-management-system-for-hlc.onrender.com/api'
+const configuredApiUrl = (
+  process.env.NEXT_PUBLIC_API_URL || 'https://learning-management-system-for-hlc.onrender.com'
 ).replace(/\/+$/, '');
+const API_URL = configuredApiUrl.endsWith('/api') ? configuredApiUrl : `${configuredApiUrl}/api`;
 
 export function apiUrl(path: string) {
   return `${API_URL}/${path.replace(/^\/+/, '')}`;
