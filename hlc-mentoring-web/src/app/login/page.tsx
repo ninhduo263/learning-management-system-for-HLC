@@ -4,7 +4,7 @@ import { Form, Input, Button, Card, App } from 'antd';
 import { LockOutlined, UserOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = 'https://learning-management-system-for-hlc.onrender.com/api';
 
 interface LoginValues {
   userId: string;
