@@ -1,7 +1,9 @@
-﻿const API_URL = 'https://learning-management-system-for-hlc.onrender.com';
+const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || 'https://learning-management-system-for-hlc.onrender.com/api'
+).replace(/\/+$/, '');
 
 export function apiUrl(path: string) {
-  return `${API_URL}${path}`;
+  return `${API_URL}/${path.replace(/^\/+/, '')}`;
 }
 
 export function getAuthToken() {
