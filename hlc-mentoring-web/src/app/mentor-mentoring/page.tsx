@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Table, Tag } from 'antd';
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
+import { useMentoringData } from '@/utils/useMentoringData';
 
 export default function MentorMentoringPage() {
   const { message } = App.useApp();
@@ -28,6 +29,7 @@ export default function MentorMentoringPage() {
   };
 
   useEffect(() => { loadData(); }, []);
+  const mentoringData = useMentoringData(data?.pairs);
 
   const handleSubmitRecap = async (values: any) => {
     if (!values.mediaUrl) {
@@ -70,7 +72,7 @@ export default function MentorMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={data?.pairs ?? []}
+          dataSource={mentoringData.pastPairs}
           scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
@@ -85,7 +87,9 @@ export default function MentorMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={data?.schedules ?? []}
+          dataSource={(data?.schedules ?? []).filter((schedule: any) =>
+            mentoringData.currentPairs.some((pair) => pair.pairId === schedule.pairId)
+          )}
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },

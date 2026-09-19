@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Form, Input, Modal, Select, Steps, Table, Tag, Typography } from 'antd';
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
+import { useMentoringData } from '@/utils/useMentoringData';
 
 export default function MenteeMentoringPage() {
   const { message } = App.useApp();
@@ -52,6 +53,7 @@ export default function MenteeMentoringPage() {
   };
 
   useEffect(() => { loadData(); }, []);
+  const mentoringData = useMentoringData(data?.pairs);
 
   const proposeSchedule = async (values: any) => {
     const pair = data?.pairs?.find((item: any) => item.pairId === values.pairId);
@@ -229,7 +231,7 @@ export default function MenteeMentoringPage() {
           rowKey="_id"
           loading={loading}
           pagination={{ pageSize: 5 }}
-          dataSource={data?.pairs ?? []}
+          dataSource={mentoringData.pastPairs}
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
@@ -245,7 +247,9 @@ export default function MenteeMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={data?.schedules ?? []}
+          dataSource={(data?.schedules ?? []).filter((schedule: any) =>
+            mentoringData.currentPairs.some((pair) => pair.pairId === schedule.pairId)
+          )}
           scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
@@ -328,7 +332,7 @@ export default function MenteeMentoringPage() {
                 showSearch
                 optionFilterProp="label"
                 placeholder="Chọn cặp mentoring"
-                options={(data?.pairs ?? []).map((pair: any) => ({
+                options={mentoringData.currentPairs.map((pair) => ({
                   value: pair.pairId,
                   label: `${pair.cycleId} - ${pair.pairId} - Mentor ${pair.mentorId}`
                 }))}
