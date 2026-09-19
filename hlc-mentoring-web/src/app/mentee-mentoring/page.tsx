@@ -226,12 +226,12 @@ export default function MenteeMentoringPage() {
       {!loading && data && data.pairs.length === 0 && data.schedules.length === 0 && (
         <Alert type="info" showIcon title="Chưa có dữ liệu mentoring" description="Admin chưa ghép cặp hoặc chưa tạo request lịch cho tài khoản này." />
       )}
-      <Card title="Thông tin cặp hiện tại">
+      <Card title={`Thông tin cặp hiện tại (${mentoringData.currentCycleId})`}>
         <Table
           rowKey="_id"
           loading={loading}
           pagination={{ pageSize: 5 }}
-          dataSource={mentoringData.pastPairs}
+          dataSource={mentoringData.currentPairs}
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
@@ -247,47 +247,35 @@ export default function MenteeMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={(data?.schedules ?? []).filter((schedule: any) =>
-            mentoringData.currentPairs.some((pair) => pair.pairId === schedule.pairId)
-          )}
+          dataSource={mentoringData.pastPairs}
           scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
+          columns={[
+            { title: 'Quý', dataIndex: 'cycleId' },
+            { title: 'Pair', dataIndex: 'pairId' },
+            { title: 'Mentor', dataIndex: 'mentorId' },
+            { title: 'Mentee', dataIndex: 'menteeId' },
+            { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
+          ]}
+        />
+      </Card>
+      <Card title="Lịch mentoring của mentee">
+        <Table
+          rowKey="_id"
+          loading={loading}
+          dataSource={(data?.schedules ?? []).filter((schedule: any) => {
+            const scheduleDate = new Date(schedule.startTime);
+            const today = new Date();
+            return scheduleDate.getFullYear() === today.getFullYear() && scheduleDate.getMonth() === today.getMonth();
+          })}
+          scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Mã tháng', dataIndex: 'monthCode' },
             { title: 'Thời gian', render: (record: any) => `${new Date(record.startTime).toLocaleString()} - ${new Date(record.endTime).toLocaleString()}` },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'CONFIRMED' ? 'green' : value === 'COMPLETED' ? 'blue' : 'gold'}>{value}</Tag> },
-            {
-              title: 'Thao tác',
-              render: (_: unknown, record: any) => (
-                <Button
-                  disabled={record.status !== 'PROPOSED'}
-                  onClick={() => {
-                    setEditingSchedule(record);
-                    editScheduleForm.setFieldsValue({
-                      startTime: toDateTimeLocal(record.startTime),
-                      endTime: toDateTimeLocal(record.endTime),
-                      meetingLink: record.meetingLink,
-                      location: record.location,
-                      note: record.note
-                    });
-                  }}
-                >
-                  Sửa
-                </Button>
-              )
-            },
-            {
-              title: 'Recap',
-              render: (_: unknown, record: any) => (
-                <Button
-                  disabled={record.status !== 'COMPLETED'}
-                  onClick={() => setSelectedSchedule(record)}
-                >
-                  Viết recap
-                </Button>
-              )
-            }
+            { title: 'Thao tác', render: (_: unknown, record: any) => <Button disabled={record.status !== 'PROPOSED'} onClick={() => { setEditingSchedule(record); editScheduleForm.setFieldsValue({ startTime: toDateTimeLocal(record.startTime), endTime: toDateTimeLocal(record.endTime), meetingLink: record.meetingLink, location: record.location, note: record.note }); }}>Sửa</Button> },
+            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={record.status !== 'COMPLETED'} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
           ]}
         />
       </Card>

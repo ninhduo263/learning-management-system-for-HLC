@@ -77,6 +77,36 @@ function normalizeEnvValue(value) {
   return normalized.replace(/^(['"])(.*)\1$/, '$2').trim();
 }
 
+function exactUserIdRegex(userId) {
+  const escaped = String(userId || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+async function getPairsByUser(userId, cycleId) {
+  const filter = {
+    $or: [
+      { menteeId: exactUserIdRegex(userId) },
+      { mentorId: exactUserIdRegex(userId) }
+    ]
+  };
+  if (cycleId) filter.cycleId = String(cycleId).trim().toUpperCase();
+
+  console.log('[pairs:user] userId:', userId);
+  console.log('[pairs:user] cycleId:', cycleId || '(all)');
+  console.log('[pairs:user] Mongoose Query:', filter);
+
+  const pairs = await MentoringPair.find(filter)
+    .sort({ orderIndex: 1, createdAt: 1 })
+    .lean();
+
+  console.log('[pairs:user] result count:', pairs.length);
+  console.log('[pairs:user] result cycles:', [...new Set(pairs.map((pair) => pair.cycleId))]);
+  return pairs.map((pair) => ({
+    ...pair,
+    pairCode: pairCodeForRecord(pair)
+  }));
+}
+
 const BOOTSTRAP_ADMIN_KEY = normalizeEnvValue(process.env.BOOTSTRAP_ADMIN_KEY);
 const ADMIN_PATHS = [
   '/api/cycles',
@@ -335,15 +365,19 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
       : cycleCandidates.find((cycle) => isCycleVisibleToMember(cycle));
     const visibleCycles = cycleCandidates.filter((cycle) => req.user.role === 'ADMIN' || isCycleVisibleToMember(cycle));
     const cycleId = req.query.cycleId || (latestCycle && latestCycle.code);
-    const visibleCycleIds = visibleCycles.map((cycle) => String(cycle.code).replace(/-/g, '').toUpperCase());
     const [scoreSummary, submissions, pairs, schedules, recapCount, allowanceSummary] = await Promise.all([
       ScoreEvent.aggregate([
         { $match: { userId, ...(cycleId ? { cycleId } : {}) } },
         { $group: { _id: '$category', total: { $sum: '$points' } } }
       ]),
       Submission.find({ userId, ...(cycleId ? { cycleId } : {}) }).sort({ createdAt: -1 }).limit(20),
-      MentoringPair.find({ $or: [{ menteeId: userId }, { mentorId: userId }] }).sort({ createdAt: -1 }),
-      MentoringSchedule.find({ $or: [{ menteeId: userId }, { mentorId: userId }] }).sort({ startTime: 1 }),
+      getPairsByUser(userId),
+      MentoringSchedule.find({
+        $or: [
+          { menteeId: exactUserIdRegex(userId) },
+          { mentorId: exactUserIdRegex(userId) }
+        ]
+      }).sort({ startTime: 1 }),
       MentoringRecap.countDocuments({ userId }),
       AllowanceSummary.findOne({ userId, ...(cycleId ? { cycleId } : {}) }).sort({ calculatedAt: -1 })
     ]);
@@ -360,12 +394,12 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
         submissionCount: submissions.length,
         approvedCount: submissions.filter((item) => item.status === 'APPROVED').length,
         pendingCount: submissions.filter((item) => item.status === 'PENDING' || item.status === 'IN_REVIEW').length,
-        pairCount: pairs.filter((pair) => !visibleCycleIds.length || visibleCycleIds.includes(String(pair.cycleId).replace(/-/g, '').toUpperCase())).length,
-        scheduleCount: schedules.filter((schedule) => !visibleCycleIds.length || visibleCycleIds.includes(String(schedule.cycleId).replace(/-/g, '').toUpperCase())).length,
+        pairCount: pairs.length,
+        scheduleCount: schedules.length,
         recapCount,
         recentSubmissions: submissions,
-        pairs: pairs.filter((pair) => !visibleCycleIds.length || visibleCycleIds.includes(String(pair.cycleId).replace(/-/g, '').toUpperCase())),
-        schedules: schedules.filter((schedule) => !visibleCycleIds.length || visibleCycleIds.includes(String(schedule.cycleId).replace(/-/g, '').toUpperCase()))
+        pairs,
+        schedules
       }
     });
   } catch (error) {
@@ -1129,6 +1163,11 @@ app.put('/api/mentoring/quarter-lock', requireRole('ADMIN'), async (req, res) =>
 
 app.post('/api/mentoring/import-pairs', requireRole('ADMIN'), importUpload.single('file'), async (req, res) => {
   try {
+    const requestedCycleId = String(req.body.cycleId || '').trim().toUpperCase();
+    if (requestedCycleId && !/^\d{4}Q[1-4]$/.test(requestedCycleId)) {
+      return res.status(400).json({ success: false, message: 'cycleId import không hợp lệ' });
+    }
+    console.log('[pairs:import] cycleId requested:', requestedCycleId || '(derive from pair code)');
     if (!req.file) return res.status(400).json({ success: false, message: 'Vui lòng chọn file Excel hoặc CSV' });
     const extension = String(req.file.originalname).toLowerCase().split('.').pop();
     if (!['xlsx', 'csv'].includes(extension)) {
@@ -1243,7 +1282,14 @@ app.post('/api/mentoring/import-pairs', requireRole('ADMIN'), importUpload.singl
         const mentorId = cleanId(mentorData.hlcid);
         const menteeId = cleanId(menteeData.hlcid);
         const sourcePairCode = cleanPairCode(mentorData.mamentoring);
-        const date = parsePairCode(sourcePairCode);
+        const requestedCycleMonth = requestedCycleId
+          ? (Number(requestedCycleId.slice(-1)) - 1) * 3 + 1
+          : null;
+        const date = parsePairCode(sourcePairCode) || (
+          requestedCycleId
+            ? { month: requestedCycleMonth, year: Number(requestedCycleId.slice(0, 4)) }
+            : null
+        );
 
         if (!date || !mentorId || !menteeId) {
           errors.push({
@@ -1263,16 +1309,24 @@ app.post('/api/mentoring/import-pairs', requireRole('ADMIN'), importUpload.singl
             })
         );
         const pairCode = formatMentoringPairCode(date.month, date.year, mentorId, menteeId);
+        const cycleId = cycleFromDate(date.year, date.month);
         pairs.push({
           orderIndex: orderIndex++,
           pairCode,
           sourcePairCode,
-          cycleId: cycleFromDate(date.year, date.month),
+          cycleId,
           monthlyCode: `${String(date.month).padStart(2, '0')}${mentorId}${menteeId}`,
           mentorId,
           menteeId,
           importedRecapStatus,
           sourceRow: currentMentorRow.sourceRow
+        });
+        console.log('[pairs:import] parsed pair:', {
+          sourceRow: currentMentorRow.sourceRow,
+          pairCode,
+          cycleId,
+          mentorId,
+          menteeId
         });
         currentMentorRow = null;
       }
@@ -1307,7 +1361,12 @@ app.post('/api/mentoring/import-pairs', requireRole('ADMIN'), importUpload.singl
           { pairCode: pair.pairCode },
           { pairCode: pair.sourcePairCode },
           { pairId: pair.pairCode },
-          { pairId: pair.sourcePairCode }
+          { pairId: pair.sourcePairCode },
+          {
+            cycleId: pair.cycleId,
+            menteeId: pair.menteeId,
+            monthlyCode: pair.monthlyCode
+          }
         ]
       });
       if (existing) {
@@ -1331,12 +1390,22 @@ app.post('/api/mentoring/import-pairs', requireRole('ADMIN'), importUpload.singl
       }
     }
 
+    console.log('[pairs:import] summary:', {
+      requestedCycleId: requestedCycleId || null,
+      rowsRead: rows.length,
+      pairsRead: pairs.length,
+      inserted,
+      updated,
+      skipped,
+      failed: errors.length
+    });
     return res.json({
       success: true,
       data: {
         sheet: sheetName,
         rowsRead: rows.length,
         pairsRead: pairs.length,
+        importedCycleId: requestedCycleId || null,
         inserted,
         updated,
         skipped,
@@ -1657,16 +1726,31 @@ app.post('/api/cycles', async (req, res) => {
 
 app.get('/api/mentoring/pairs', async (req, res) => {
   try {
-    const filter = req.query.cycleId ? { cycleId: String(req.query.cycleId) } : {};
-    if (req.user.role !== 'ADMIN') filter[req.user.role === 'MENTOR' ? 'mentorId' : 'menteeId'] = req.user.userId;
-    const pairs = await MentoringPair.find(filter).sort({ orderIndex: 1, createdAt: 1 });
-    if (req.user.role === 'ADMIN') {
-      return res.json({ success: true, data: pairs.map((pair) => ({ ...pair.toObject(), pairCode: pairCodeForRecord(pair) })) });
+    const query = {};
+    console.log('[pairs:request] role:', req.user?.role);
+    console.log('[pairs:request] UserID đang gọi:', req.user?._id);
+    console.log('[pairs:request] userId from token:', req.user?.userId);
+    console.log('[pairs:request] Query Params:', req.query);
+    const requestedCycleId = req.query.cycleId
+      ? String(req.query.cycleId).trim().toUpperCase()
+      : '';
+    if (requestedCycleId) query.cycleId = requestedCycleId;
+    if (req.user.role !== 'ADMIN') {
+      query.$or = [
+        { mentorId: exactUserIdRegex(req.user.userId) },
+        { menteeId: exactUserIdRegex(req.user.userId) }
+      ];
     }
-    const cycles = await Cycle.find({ code: { $in: [...new Set(pairs.map((pair) => pair.cycleId))] } });
-    const visible = new Set(cycles.filter((cycle) => isCycleVisibleToMember(cycle)).map((cycle) => cycle.code));
-    res.json({ success: true, data: pairs.filter((pair) => visible.has(pair.cycleId))
-      .map((pair) => ({ ...pair.toObject(), pairCode: pairCodeForRecord(pair) })) });
+    console.log('[pairs:request] Query tìm kiếm:', query);
+    const pairs = await MentoringPair.find(query)
+      .sort({ orderIndex: 1, createdAt: 1 })
+      .lean();
+    console.log('[pairs:request] result count:', pairs.length);
+    console.log('[pairs:request] result cycles:', [...new Set(pairs.map((pair) => pair.cycleId))]);
+    if (req.user.role === 'ADMIN') {
+      return res.json({ success: true, data: pairs.map((pair) => ({ ...pair, pairCode: pairCodeForRecord(pair) })) });
+    }
+    res.json({ success: true, data: pairs });
   } catch (error) {
     console.error('Lỗi lấy cặp mentoring:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
@@ -1675,43 +1759,128 @@ app.get('/api/mentoring/pairs', async (req, res) => {
 
 app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
   try {
-    const { cycleId, mentorId, menteeId, pairId, status, monthCode } = req.body;
+    console.log('[pairs:create] Payload nhận được:', req.body);
+    const { cycleId: rawCycleId, mentorId: rawMentorId, menteeId: rawMenteeId, status, monthCode } = req.body;
+    const cycleId = String(rawCycleId || '').trim().toUpperCase();
+    const mentorId = String(rawMentorId || '').trim().toUpperCase();
+    const menteeId = String(rawMenteeId || '').trim().toUpperCase();
     if (!cycleId || !mentorId || !menteeId) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin ghép cặp' });
     }
 
     const cycle = await Cycle.findOne({ code: cycleId });
     if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
-    if (new Date() < pairingStartDate(cycle)) {
-      return res.status(409).json({ success: false, message: 'Admin chỉ được ghép cặp từ ngày 10 tháng cuối quý' });
+    if (cycle.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle.status)) {
+      return res.status(409).json({ success: false, message: 'Quý đã bị khóa, không thể tạo hoặc sửa cặp mentoring' });
     }
-    const mentor = await User.findOne({ userId: mentorId, role: 'MENTOR', isActive: true });
-    const mentee = await User.findOne({ userId: menteeId, role: 'MENTEE', isActive: true });
-    if (!mentor || !mentee) return res.status(400).json({ success: false, message: 'Mentor hoặc mentee không hợp lệ' });
+    const now = new Date();
+    const pairingOpensAt = pairingStartDate(cycle);
+    console.log('[pairs:create] pairing window:', {
+      now: now.toISOString(),
+      pairingOpensAt: pairingOpensAt.toISOString(),
+      isOpen: now >= pairingOpensAt,
+      cycleStart: new Date(cycle.startDate).toISOString()
+    });
+    if (now < pairingOpensAt) {
+      return res.status(409).json({
+        success: false,
+        code: 'PAIRING_WINDOW_NOT_OPEN',
+        message: `Admin chỉ được ghép cặp từ ${pairingOpensAt.toISOString()}`
+      });
+    }
+    const activeUserFilter = {
+      $or: [{ isActive: true }, { isActive: { $exists: false } }]
+    };
+    const mentor = await User.findOne({
+      userId: exactUserIdRegex(mentorId),
+      role: 'MENTOR',
+      ...activeUserFilter
+    }).lean();
+    const mentee = await User.findOne({
+      userId: exactUserIdRegex(menteeId),
+      role: 'MENTEE',
+      ...activeUserFilter
+    }).lean();
+    console.log('[pairs:create] participant lookup:', {
+      mentor: mentor ? { userId: mentor.userId, role: mentor.role, isActive: mentor.isActive } : null,
+      mentee: mentee ? { userId: mentee.userId, role: mentee.role, isActive: mentee.isActive } : null
+    });
+    if (!mentor || !mentee) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_PARTICIPANT',
+        message: 'Mentor hoặc mentee không hợp lệ hoặc đã ngừng hoạt động',
+        details: {
+          mentorId,
+          menteeId,
+          mentorFound: Boolean(mentor),
+          menteeFound: Boolean(mentee)
+        }
+      });
+    }
     const cycleStart = new Date(cycle.startDate);
     const firstMonth = cycleStart.getUTCMonth() + 1;
-    const requestedMonth = String(monthCode || '').match(/^(0?[1-9]|1[0-2])/);
+    const monthText = String(monthCode ?? '').trim();
+    const requestedMonth = /^(?:tháng\s*)?(0?[1-9]|1[0-2])(?:\s*\/\s*\d{4})?$/i.exec(monthText);
     const selectedMonth = requestedMonth ? Number(requestedMonth[1]) : firstMonth;
     const months = [firstMonth, firstMonth + 1, firstMonth + 2];
+    console.log('[pairs:create] normalized:', {
+      cycleId,
+      mentorId,
+      menteeId,
+      monthCode,
+      firstMonth,
+      selectedMonth,
+      months
+    });
+    if (monthText && !requestedMonth) {
+      return res.status(400).json({
+        success: false,
+        code: 'INVALID_MONTH',
+        message: 'monthCode phải là số từ 1 đến 12, ví dụ 10 hoặc Tháng 10',
+        details: { received: monthCode, cycleId, allowedMonths: months }
+      });
+    }
     if (!months.includes(selectedMonth)) {
       return res.status(400).json({ success: false, message: 'Tháng ghép cặp không thuộc quý đã chọn' });
     }
 
     const existing = await MentoringPair.findOne({
       cycleId,
+      menteeId: exactUserIdRegex(menteeId),
+      status: { $ne: 'CANCELLED' }
+    });
+    console.log('[pairs:create] duplicate query:', {
+      cycleId,
       menteeId,
       status: { $ne: 'CANCELLED' }
     });
-    if (existing && existing.mentorId !== mentorId) {
+    console.log('[pairs:create] existing pair:', existing ? {
+      pairId: existing.pairId,
+      cycleId: existing.cycleId,
+      monthlyCode: existing.monthlyCode,
+      mentorId: existing.mentorId,
+      menteeId: existing.menteeId,
+      status: existing.status
+    } : null);
+    if (existing && !exactUserIdRegex(mentorId).test(existing.mentorId)) {
       return res.status(409).json({ success: false, message: 'Mentee này đã được ghép với mentor khác trong quý đã chọn' });
+    }
+    if (existing?.isLocked) {
+      return res.status(409).json({ success: false, message: 'Cặp mentoring đã bị khóa' });
     }
 
     const syncedPairs = [];
     for (const month of months) {
       const code = `${String(month).padStart(2, '0')}${mentorId}${menteeId}`;
       const pairCode = formatMentoringPairCode(month, cycleStart.getUTCFullYear(), mentorId, menteeId);
+      console.log('[pairs:create] month upsert:', {
+        month,
+        monthlyCode: code,
+        pairCode
+      });
       const syncedPair = await MentoringPair.findOneAndUpdate(
-        { cycleId, menteeId, monthlyCode: new RegExp(`^${String(month).padStart(2, '0')}`) },
+        { cycleId, menteeId, monthlyCode: `${String(month).padStart(2, '0')}${mentorId}${menteeId}` },
         {
           $set: { pairCode, mentorId, menteeId, status: status || 'ACTIVE', createdBy: req.user.userId },
           $setOnInsert: {
@@ -1727,8 +1896,53 @@ app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
 
     res.status(201).json({ success: true, data: syncedPairs[0], syncedMonths: months });
   } catch (error) {
-    console.error('Lỗi ghép cặp:', error);
-    res.status(400).json({ success: false, message: error.message });
+    console.error('[pairs:create] Lỗi ghép cặp:', error);
+    console.error('[pairs:create] error.message:', error?.message);
+    console.error('[pairs:create] error.errors:', error?.errors);
+    console.error('[pairs:create] error.name/code/keyValue:', {
+      name: error?.name,
+      code: error?.code,
+      keyValue: error?.keyValue
+    });
+    if (error && error.name === 'ValidationError') {
+      console.error('[pairs:create] Mongoose validation errors:', error.errors);
+      const validationErrors = Object.fromEntries(
+        Object.entries(error.errors || {}).map(([field, detail]) => [field, {
+          message: detail.message,
+          kind: detail.kind,
+          value: detail.value,
+          path: detail.path
+        }])
+      );
+      return res.status(400).json({
+        success: false,
+        message: 'Dữ liệu ghép cặp không hợp lệ',
+        errors: validationErrors,
+        details: {
+          name: error.name,
+          message: error.message
+        }
+      });
+    }
+    if (error && error.code === 11000) {
+      console.error('[pairs:create] Duplicate key:', error.keyValue);
+      return res.status(409).json({
+        success: false,
+        message: 'Cặp mentoring đã tồn tại',
+        keyValue: error.keyValue
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: error instanceof Error ? error.message : 'Dữ liệu không hợp lệ',
+      details: error && typeof error === 'object' ? {
+        name: error.name,
+        code: error.code,
+        keyValue: error.keyValue,
+        errors: error.errors,
+        message: error.message
+      } : undefined
+    });
   }
 });
 
@@ -1737,10 +1951,14 @@ app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res)
     const { status, rating, ratingComment, mentorId, menteeId, monthlyCode } = req.body;
     const currentPair = await MentoringPair.findOne({ pairId: req.params.pairId });
     if (!currentPair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
+    const currentCycle = await Cycle.findOne({ code: currentPair.cycleId });
+    if (currentPair.isLocked || currentCycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(currentCycle?.status)) {
+      return res.status(409).json({ success: false, message: 'Quý đã bị khóa, không thể sửa cặp mentoring' });
+    }
 
     const targetMentorId = mentorId || currentPair.mentorId;
     const targetMenteeId = menteeId || currentPair.menteeId;
-    const cycle = await Cycle.findOne({ code: currentPair.cycleId });
+    const cycle = currentCycle;
     if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
     const firstMonth = new Date(cycle.startDate).getUTCMonth() + 1;
     const months = [firstMonth, firstMonth + 1, firstMonth + 2];
@@ -1752,6 +1970,7 @@ app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res)
         menteeId: currentPair.menteeId,
         monthlyCode: { $regex: '^(0?[1-9]|1[0-2])' }
       });
+
     }
     const syncedPairs = [];
     for (const month of months) {
@@ -1794,6 +2013,26 @@ app.patch('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res)
   } catch (error) {
     console.error('Lỗi cập nhật cặp mentoring:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+});
+
+app.delete('/api/mentoring/pairs/:pairId', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const pair = await MentoringPair.findOne({ pairId: req.params.pairId });
+    if (!pair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
+    const cycle = await Cycle.findOne({ code: pair.cycleId });
+    if (pair.isLocked || cycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle?.status)) {
+      return res.status(409).json({ success: false, message: 'Quý đã bị khóa, không thể xóa cặp mentoring' });
+    }
+    await MentoringPair.deleteMany({
+      cycleId: pair.cycleId,
+      menteeId: pair.menteeId,
+      mentorId: pair.mentorId
+    });
+    return res.json({ success: true, data: { pairId: req.params.pairId } });
+  } catch (error) {
+    console.error('Lỗi xóa cặp mentoring:', error);
+    return res.status(500).json({ success: false, message: 'Không thể xóa cặp mentoring' });
   }
 });
 

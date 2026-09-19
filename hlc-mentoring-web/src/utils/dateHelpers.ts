@@ -10,13 +10,30 @@ export function getQuarter(date = new Date()): Quarter {
   };
 }
 
+export const getCurrentQuarter = getQuarter;
+
 export function quarterKey({ year, quarter }: Quarter) {
   return year * 4 + quarter;
 }
 
 export function parseCycleQuarter(cycleId?: string | null): Quarter | null {
-  const match = /^(\d{4})Q([1-4])$/i.exec(String(cycleId || '').trim());
-  return match ? { year: Number(match[1]), quarter: Number(match[2]) } : null;
+  const value = String(cycleId || '').trim().toUpperCase();
+  const match =
+    /^(\d{4})-?Q([1-4])$/.exec(value) ||
+    /^Q([1-4])[-/]?(\d{4})$/.exec(value);
+
+  if (!match) return null;
+
+  const year = match[1].length === 4 ? Number(match[1]) : Number(match[2]);
+  const quarter = match[1].length === 4 ? Number(match[2]) : Number(match[1]);
+  return { year, quarter };
+}
+
+export function isPastQuarter(
+  pairQuarter: Quarter,
+  currentQuarter: Quarter
+) {
+  return quarterKey(pairQuarter) < quarterKey(currentQuarter);
 }
 
 export function isOnOrAfterLastQuarterMonthDay(

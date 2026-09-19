@@ -68,7 +68,22 @@ export default function MentorMentoringPage() {
       {!loading && data && data.pairs.length === 0 && data.schedules.length === 0 && (
         <Alert type="info" showIcon title="Chưa có dữ liệu mentoring" description="Admin chưa ghép cặp hoặc chưa tạo request lịch cho tài khoản này." />
       )}
-      <Card title="Danh sách Mentee đã ghép theo quý">
+      <Card title={`Thông tin cặp hiện tại (${mentoringData.currentCycleId})`}>
+        <Table
+          rowKey="_id"
+          loading={loading}
+          dataSource={mentoringData.currentPairs}
+          scroll={{ x: 'max-content' }}
+          pagination={{ pageSize: 5 }}
+          columns={[
+            { title: 'Quý', dataIndex: 'cycleId' },
+            { title: 'Mã mentoring tháng', dataIndex: 'monthlyCode' },
+            { title: 'Mentee', dataIndex: 'menteeId' },
+            { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
+          ]}
+        />
+      </Card>
+      <Card title="Danh sách ghép cặp theo quý">
         <Table
           rowKey="_id"
           loading={loading}
@@ -87,9 +102,11 @@ export default function MentorMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={(data?.schedules ?? []).filter((schedule: any) =>
-            mentoringData.currentPairs.some((pair) => pair.pairId === schedule.pairId)
-          )}
+          dataSource={(data?.schedules ?? []).filter((schedule: any) => {
+            const scheduleDate = new Date(schedule.startTime);
+            const today = new Date();
+            return scheduleDate.getFullYear() === today.getFullYear() && scheduleDate.getMonth() === today.getMonth();
+          })}
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },

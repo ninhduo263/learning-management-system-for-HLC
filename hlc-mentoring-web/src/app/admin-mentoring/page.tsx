@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
-import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined } from '@ant-design/icons';
+import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
+import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, LockOutlined, UnlockOutlined } from '@ant-design/icons';
 import { apiFetch } from '@/lib/api';
 
 interface Cycle { code: string; name: string; }
@@ -99,6 +99,8 @@ export default function AdminMentoringPage() {
   const [overrideSchedule, setOverrideSchedule] = useState<Schedule | null>(null);
   const [reviewingRecap, setReviewingRecap] = useState<Recap | null>(null);
   const [reviewNote, setReviewNote] = useState('');
+  const [cycleLocked, setCycleLocked] = useState(false);
+  const [importing, setImporting] = useState(false);
   const unlockCycle = async () => {
     if (!selectedCycle) return;
     try {
@@ -132,6 +134,7 @@ export default function AdminMentoringPage() {
       const [cycleResult, mentorResult, menteeResult, pairResult, scheduleResult, recapResult, statusResult] = results;
       if (cycleResult.success) {
         setCycles(cycleResult.data);
+        setCycleLocked(Boolean(cycleResult.data.find((cycle: Cycle & { isLocked?: boolean }) => cycle.code === cycleId)?.isLocked));
         if (!cycleResult.data.some((cycle: Cycle) => cycle.code === ADMIN_PAIRING_CYCLE)) {
           message.warning(`Không tìm thấy kỳ ${ADMIN_PAIRING_CYCLE} trong danh sách kỳ hoạt động`);
         }
@@ -140,11 +143,21 @@ export default function AdminMentoringPage() {
       if (menteeResult.success) setMentees(menteeResult.data);
       if (scheduleResult.success) setSchedules(scheduleResult.data);
       if (recapResult.success) setRecaps(recapResult.data);
-      if (statusResult.success) {
-        setPairs(cycleId ? statusResult.data.filter((item: Pair) => item.cycleId === cycleId) : statusResult.data);
-      } else if (pairResult.success) {
-        setPairs(cycleId ? pairResult.data.filter((item: Pair) => item.cycleId === cycleId) : pairResult.data);
+      if (!pairResult.success) {
+        throw new Error(pairResult.message || 'Không thể tải danh sách cặp mentoring');
       }
+      const basePairs: Pair[] = cycleId
+        ? pairResult.data.filter((item: Pair) => String(item.cycleId).toUpperCase() === String(cycleId).toUpperCase())
+        : pairResult.data;
+      const statusByPairId = new Map<string, Partial<Pair>>(
+        statusResult.success
+          ? statusResult.data.map((item: Pair) => [item.pairId, item])
+          : []
+      );
+      setPairs(basePairs.map((pair) => ({
+        ...pair,
+        ...(statusByPairId.get(pair.pairId) || {})
+      })));
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể tải danh sách ghép cặp');
     } finally {
@@ -154,6 +167,48 @@ export default function AdminMentoringPage() {
 
   useEffect(() => { loadData(ADMIN_PAIRING_CYCLE); }, []);
   useEffect(() => { if (selectedCycle) loadData(selectedCycle); }, [selectedCycle]);
+
+  const toggleCycleLock = async () => {
+    try {
+      const response = await apiFetch('/mentoring/quarter-lock', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cycleId: selectedCycle, isLocked: !cycleLocked })
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.message);
+      setCycleLocked(!cycleLocked);
+      message.success(!cycleLocked ? 'Đã khóa quý' : 'Đã mở khóa quý');
+      await loadData(selectedCycle);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể đổi trạng thái khóa quý');
+    }
+  };
+
+  const importPairs = async (file: File) => {
+    setImporting(true);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('cycleId', selectedCycle);
+      const response = await apiFetch('/mentoring/import-pairs', { method: 'POST', body });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.message);
+      const importData = result.data;
+      const failed = Number(importData.failed || 0);
+      const skipped = Number(importData.skipped || 0);
+      message.success(
+        `Đã import ${Number(importData.inserted || 0)} cặp mới, cập nhật ${Number(importData.updated || 0)} cặp` +
+        `${skipped ? `, bỏ qua ${skipped} cặp` : ''}` +
+        `${failed ? `, lỗi ${failed} dòng` : ''}`
+      );
+      await loadData(selectedCycle);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể import cặp mentoring');
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const cycleOptions = cycles
     .filter((cycle) => cycle.code === ADMIN_PAIRING_CYCLE)
@@ -183,6 +238,21 @@ export default function AdminMentoringPage() {
     return String(values.month);
   };
 
+  const cleanCycleId = (value: unknown) => {
+    const match = /^(\d{4}Q[1-4])/i.exec(String(value || '').trim());
+    return match ? match[1].toUpperCase() : '';
+  };
+
+  const cleanMonth = (value: unknown) => {
+    const match = /(?:^|\D)(1[0-2]|[1-9])(?:\D|$)/.exec(String(value || '').trim());
+    return match ? Number(match[1]) : NaN;
+  };
+
+  const cleanUserId = (value: unknown, role: 'MTO' | 'MTE') => {
+    const match = new RegExp(`(HLC-${role}-\\d+)`, 'i').exec(String(value || '').trim());
+    return match ? match[1].toUpperCase() : '';
+  };
+
   function monthsForCycleOptions(cycleCode: string) {
     const match = /^(\d{4})Q([1-4])$/i.exec(String(cycleCode || '').replace('-', ''));
     const firstMonth = match ? (Number(match[2]) - 1) * 3 + 1 : 1;
@@ -194,13 +264,29 @@ export default function AdminMentoringPage() {
 
   const submitCreate = async (values: PairForm) => {
     try {
+      const cleanValues = {
+        cycleId: cleanCycleId(values.cycleId),
+        monthCode: cleanMonth(values.month),
+        mentorId: cleanUserId(values.mentorId, 'MTO'),
+        menteeId: cleanUserId(values.menteeId, 'MTE')
+      };
+      console.log('Payload chuẩn bị gửi:', cleanValues);
+      if (!cleanValues.cycleId || !Number.isInteger(cleanValues.monthCode) || !cleanValues.mentorId || !cleanValues.menteeId) {
+        throw new Error('Thông tin quý, tháng, mentor hoặc mentee không hợp lệ');
+      }
       const response = await apiFetch('/mentoring/pairs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...values, monthCode: buildMonthlyCode(values) })
+        body: JSON.stringify(cleanValues)
       });
       const result = await response.json();
-      if (!result.success) throw new Error(result.message);
+      if (!result.success) {
+        const details = result.details || result.errors;
+        const detailText = details
+          ? `: ${Object.entries(details).map(([field, message]) => `${field}: ${message}`).join('; ')}`
+          : '';
+        throw new Error(`${result.message || 'Không thể thêm cặp mentoring'}${detailText}`);
+      }
       message.success('Đã thêm cặp mentoring');
       createForm.resetFields();
       setModal(null);
@@ -263,6 +349,7 @@ export default function AdminMentoringPage() {
           <Button
             type="link"
             icon={<EditOutlined />}
+            disabled={cycleLocked}
             onClick={(event) => {
               event.stopPropagation();
               setSelectedPair(row);
@@ -288,9 +375,12 @@ export default function AdminMentoringPage() {
         <Typography.Title level={3} className="!mb-0 !whitespace-nowrap shrink-0">Quản lý Ghép cặp</Typography.Title>
         <Space wrap className="max-w-full justify-end">
           <Select value={ADMIN_PAIRING_CYCLE} options={cycleOptions} className="min-w-52" disabled />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.setFieldsValue({ cycleId: selectedCycle, month: monthOptions[0]?.value }); setModal('create'); }}>Thêm mới</Button>
-          <Button icon={<EditOutlined />} disabled={!selectedPair} onClick={() => { if (selectedPair) { editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: pairMonth(selectedPair, selectedPair.cycleId) || monthOptions[0]?.value }); setModal('edit'); } }}>Chỉnh sửa</Button>
-          <Button onClick={unlockCycle} disabled={!selectedCycle}>Mở khóa quý</Button>
+          <Upload accept=".xlsx,.csv" showUploadList={false} disabled={importing || cycleLocked} beforeUpload={(file) => { void importPairs(file); return Upload.LIST_IGNORE; }}>
+            <Button icon={<InboxOutlined />} disabled={importing || cycleLocked}>Import file</Button>
+          </Upload>
+          <Button type="primary" icon={<PlusOutlined />} disabled={cycleLocked} onClick={() => { createForm.setFieldsValue({ cycleId: selectedCycle, month: monthOptions[0]?.value }); setModal('create'); }}>Thêm mới</Button>
+          <Button icon={<EditOutlined />} disabled={cycleLocked || !selectedPair} onClick={() => { if (selectedPair) { editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: pairMonth(selectedPair, selectedPair.cycleId) || monthOptions[0]?.value }); setModal('edit'); } }}>Chỉnh sửa</Button>
+          <Button icon={cycleLocked ? <UnlockOutlined /> : <LockOutlined />} onClick={toggleCycleLock} disabled={!selectedCycle}>{cycleLocked ? 'Mở khóa quý' : 'Khóa quý'}</Button>
         </Space>
       </div>
 
