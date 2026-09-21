@@ -30,6 +30,8 @@ export default function MentorMentoringPage() {
 
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
+  const visiblePairIds = new Set(mentoringData.currentPairs.map((pair) => pair.pairId));
+  const visibleSchedules = (data?.schedules ?? []).filter((schedule: any) => visiblePairIds.has(schedule.pairId));
 
   const handleSubmitRecap = async (values: any) => {
     if (!values.mediaUrl) {
@@ -102,11 +104,7 @@ export default function MentorMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={(data?.schedules ?? []).filter((schedule: any) => {
-            const scheduleDate = new Date(schedule.startTime);
-            const today = new Date();
-            return scheduleDate.getFullYear() === today.getFullYear() && scheduleDate.getMonth() === today.getMonth();
-          })}
+          dataSource={visibleSchedules}
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },

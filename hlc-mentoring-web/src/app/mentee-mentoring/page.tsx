@@ -54,6 +54,24 @@ export default function MenteeMentoringPage() {
 
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
+  const visiblePairIds = new Set(mentoringData.currentPairs.map((pair) => pair.pairId));
+  const visibleSchedules = (data?.schedules ?? []).filter((schedule: any) => visiblePairIds.has(schedule.pairId));
+
+  const confirmSchedule = async (schedule: any) => {
+    try {
+      const response = await apiFetch(`/mentoring/schedules/${schedule._id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CONFIRMED' })
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.message);
+      message.success('Đã chốt lịch mentoring');
+      await loadData();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể chốt lịch mentoring');
+    }
+  };
 
   const proposeSchedule = async (values: any) => {
     const pair = data?.pairs?.find((item: any) => item.pairId === values.pairId);
@@ -263,18 +281,17 @@ export default function MenteeMentoringPage() {
         <Table
           rowKey="_id"
           loading={loading}
-          dataSource={(data?.schedules ?? []).filter((schedule: any) => {
-            const scheduleDate = new Date(schedule.startTime);
-            const today = new Date();
-            return scheduleDate.getFullYear() === today.getFullYear() && scheduleDate.getMonth() === today.getMonth();
-          })}
+          dataSource={visibleSchedules}
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Mã tháng', dataIndex: 'monthCode' },
             { title: 'Thời gian', render: (record: any) => `${new Date(record.startTime).toLocaleString()} - ${new Date(record.endTime).toLocaleString()}` },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'CONFIRMED' ? 'green' : value === 'COMPLETED' ? 'blue' : 'gold'}>{value}</Tag> },
-            { title: 'Thao tác', render: (_: unknown, record: any) => <Button disabled={record.status !== 'PROPOSED'} onClick={() => { setEditingSchedule(record); editScheduleForm.setFieldsValue({ startTime: toDateTimeLocal(record.startTime), endTime: toDateTimeLocal(record.endTime), meetingLink: record.meetingLink, location: record.location, note: record.note }); }}>Sửa</Button> },
+            { title: 'Thao tác', render: (_: unknown, record: any) => <div className="flex flex-wrap gap-2">
+              <Button disabled={record.status !== 'PROPOSED'} onClick={() => { setEditingSchedule(record); editScheduleForm.setFieldsValue({ startTime: toDateTimeLocal(record.startTime), endTime: toDateTimeLocal(record.endTime), meetingLink: record.meetingLink, location: record.location, note: record.note }); }}>Sửa</Button>
+              <Button type="primary" disabled={record.status !== 'PROPOSED'} onClick={() => confirmSchedule(record)}>Chốt lịch</Button>
+            </div> },
             { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={record.status !== 'COMPLETED'} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
           ]}
         />

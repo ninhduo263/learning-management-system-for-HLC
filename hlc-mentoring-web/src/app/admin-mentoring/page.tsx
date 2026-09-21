@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
-import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, LockOutlined, UnlockOutlined } from '@ant-design/icons';
+import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import { apiFetch } from '@/lib/api';
 
 interface Cycle { code: string; name: string; }
@@ -81,7 +81,7 @@ function toDateTimeLocal(value?: string) {
 }
 
 export default function AdminMentoringPage() {
-  const { message } = App.useApp();
+  const { message, notification } = App.useApp();
   const [createForm] = Form.useForm<PairForm>();
   const [editForm] = Form.useForm<PairForm>();
   const [overrideForm] = Form.useForm();
@@ -186,7 +186,15 @@ export default function AdminMentoringPage() {
   };
 
   const importPairs = async (file: File) => {
+    const notificationKey = 'mentoring-pair-import';
     setImporting(true);
+    notification.open({
+      key: notificationKey,
+      message: 'Đang import dữ liệu ghép cặp',
+      description: 'Hệ thống đang đọc file và đồng bộ cặp mentoring cho cả 3 tháng. Vui lòng không đóng trang.',
+      icon: <LoadingOutlined spin />,
+      duration: 0
+    });
     try {
       const body = new FormData();
       body.append('file', file);
@@ -202,8 +210,20 @@ export default function AdminMentoringPage() {
         `${skipped ? `, bỏ qua ${skipped} cặp` : ''}` +
         `${failed ? `, lỗi ${failed} dòng` : ''}`
       );
+      notification.success({
+        key: notificationKey,
+        message: 'Import hoàn tất',
+        description: `Đã xử lý ${Number(importData.pairsRead || 0)} cặp. Danh sách sẽ được tải lại.`,
+        duration: 4
+      });
       await loadData(selectedCycle);
     } catch (error) {
+      notification.error({
+        key: notificationKey,
+        message: 'Import thất bại',
+        description: error instanceof Error ? error.message : 'Không thể import cặp mentoring',
+        duration: 6
+      });
       message.error(error instanceof Error ? error.message : 'Không thể import cặp mentoring');
     } finally {
       setImporting(false);
@@ -214,14 +234,12 @@ export default function AdminMentoringPage() {
     .filter((cycle) => cycle.code === ADMIN_PAIRING_CYCLE)
     .map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
   const createCycleCode = Form.useWatch('cycleId', createForm) || selectedCycle;
-  const createMonth = Form.useWatch('month', createForm);
   const monthOptions = monthsForCycleOptions(createCycleCode);
   const pairedMenteeIds = useMemo(
     () => new Set(pairs
       .filter((pair) => pair.cycleId === createCycleCode && pair.status !== 'CANCELLED')
-      .filter((pair) => !createMonth || Number(pair.monthlyCode?.slice(0, 2)) === Number(createMonth))
       .map((pair) => pair.menteeId)),
-    [pairs, createCycleCode, createMonth]
+    [pairs, createCycleCode]
   );
   const availableMentees = mentees.filter((mentee) => !pairedMenteeIds.has(mentee.userId));
   const monthlyPairs = useMemo(
@@ -329,6 +347,22 @@ export default function AdminMentoringPage() {
     }
   };
 
+  const deletePair = async (pair: Pair) => {
+    try {
+      const response = await apiFetch(`/mentoring/pairs/${encodeURIComponent(pair.pairId)}`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.message);
+      message.success('Đã xóa cặp mentoring của cả 3 tháng');
+      setSelectedPair(null);
+      setModal(null);
+      await loadData(selectedCycle);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể xóa cặp mentoring');
+    }
+  };
+
   const detailSchedules = useMemo(() => schedules.filter((item) => item.pairId === selectedPair?.pairId), [schedules, selectedPair]);
   const detailRecaps = useMemo(() => recaps.filter((item) => item.pairId === selectedPair?.pairId), [recaps, selectedPair]);
 
@@ -379,6 +413,24 @@ export default function AdminMentoringPage() {
           >
             Chỉnh sửa
           </Button>
+          <Popconfirm
+            title="Xóa cặp mentoring?"
+            description="Thao tác này sẽ xóa cặp tương ứng ở cả tháng 10, 11 và 12."
+            okText="Xóa"
+            cancelText="Hủy"
+            onConfirm={() => deletePair(row)}
+            disabled={cycleLocked}
+          >
+            <Button
+              type="link"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={cycleLocked}
+              onClick={(event) => event.stopPropagation()}
+            >
+              Xóa
+            </Button>
+          </Popconfirm>
         </Space>
       )
     }

@@ -360,10 +360,26 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
     if (!user || !user.isActive) return res.status(404).json({ success: false, message: 'Không tìm thấy người dùng' });
 
     const cycleCandidates = await Cycle.find().sort({ startDate: -1 });
+    const memberPairFilter = {
+      $or: [
+        { menteeId: exactUserIdRegex(userId) },
+        { mentorId: exactUserIdRegex(userId) }
+      ]
+    };
+    const memberPairCycleIds = req.user.role === 'ADMIN'
+      ? []
+      : await MentoringPair.distinct('cycleId', memberPairFilter);
+    const memberPairCycleSet = new Set(memberPairCycleIds.map((cycleId) => String(cycleId).toUpperCase()));
     const latestCycle = req.user.role === 'ADMIN'
       ? cycleCandidates[0]
-      : cycleCandidates.find((cycle) => isCycleVisibleToMember(cycle));
-    const visibleCycles = cycleCandidates.filter((cycle) => req.user.role === 'ADMIN' || isCycleVisibleToMember(cycle));
+      : cycleCandidates.find((cycle) =>
+        isCycleVisibleToMember(cycle) || memberPairCycleSet.has(String(cycle.code).toUpperCase())
+      );
+    const visibleCycles = cycleCandidates.filter((cycle) =>
+      req.user.role === 'ADMIN'
+      || isCycleVisibleToMember(cycle)
+      || memberPairCycleSet.has(String(cycle.code).toUpperCase())
+    );
     const cycleId = req.query.cycleId || (latestCycle && latestCycle.code);
     const [scoreSummary, submissions, pairs, schedules, recapCount, allowanceSummary] = await Promise.all([
       ScoreEvent.aggregate([
@@ -2111,8 +2127,8 @@ app.patch('/api/mentoring/schedules/:id', async (req, res) => {
 app.patch('/api/mentoring/schedules/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
-    if (status === 'CONFIRMED' && !['ADMIN'].includes(req.user.role)) {
-      return res.status(403).json({ success: false, message: 'Chỉ Admin được chốt lịch mentoring' });
+    if (status === 'CONFIRMED' && !['ADMIN', 'MENTEE'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Chỉ Mentee thuộc cặp hoặc Admin được chốt lịch mentoring' });
     }
     if (!['CONFIRMED', 'COMPLETED', 'CANCELLED'].includes(status)) {
       return res.status(400).json({ success: false, message: 'Trạng thái lịch không hợp lệ' });
@@ -2124,7 +2140,7 @@ app.patch('/api/mentoring/schedules/:id/status', async (req, res) => {
     }
     const cycle = await Cycle.findOne({ code: current.cycleId });
     const isParticipant = [current.mentorId, current.menteeId].includes(req.user.userId);
-    if (req.user.role !== 'ADMIN' && (isCycleLocked(cycle) || !isParticipant)) {
+    if (req.user.role !== 'ADMIN' && (isCycleLocked(cycle) || !isParticipant || (status === 'CONFIRMED' && (req.user.role !== 'MENTEE' || current.menteeId !== req.user.userId)))) {
       return res.status(409).json({ success: false, message: 'Lịch đã khóa hoặc không thể chỉnh sửa' });
     }
     const update = { status };

@@ -23,12 +23,25 @@ export interface CategorizedPairs {
   currentCycleId: string;
 }
 
+function getNearestCurrentOrUpcomingCycleId(
+  pairs: MentoringPair[] | null | undefined,
+  now: Date
+) {
+  const currentKey = quarterKey(getCurrentQuarter(now));
+  return [...new Set((pairs || []).map((pair) => pair.cycleId))]
+    .map((cycleId) => ({ cycleId, quarter: parseCycleQuarter(cycleId) }))
+    .filter((item) => item.quarter && quarterKey(item.quarter) >= currentKey)
+    .sort((left, right) => quarterKey(left.quarter!) - quarterKey(right.quarter!))[0]?.cycleId;
+}
+
 export function categorizePairs(
   pairs: MentoringPair[] | null | undefined,
   now = new Date(),
   selectedCycleId?: string
 ): CategorizedPairs {
-  const selectedQuarter = parseCycleQuarter(selectedCycleId);
+  const selectedQuarter = parseCycleQuarter(
+    selectedCycleId || getNearestCurrentOrUpcomingCycleId(pairs, now)
+  );
   const currentQuarter = selectedQuarter || getCurrentQuarter(now);
   const currentKey = quarterKey(currentQuarter);
   const nextKey = currentKey + 1;
