@@ -1,9 +1,11 @@
+import { getCurrentTime } from './time';
+
 export interface Quarter {
   year: number;
   quarter: number;
 }
 
-export function getQuarter(date = new Date()): Quarter {
+export function getQuarter(date = getCurrentTime()): Quarter {
   return {
     year: date.getFullYear(),
     quarter: Math.floor(date.getMonth() / 3) + 1
@@ -37,7 +39,7 @@ export function isPastQuarter(
 }
 
 export function isOnOrAfterLastQuarterMonthDay(
-  date = new Date(),
+  date = getCurrentTime(),
   day = 25
 ) {
   const quarter = getQuarter(date);
@@ -45,6 +47,6 @@ export function isOnOrAfterLastQuarterMonthDay(
   return date.getMonth() === lastMonthOfQuarter && date.getDate() >= day;
 }
 
-export function canViewNextQuarter(date = new Date()) {
+export function canViewNextQuarter(date = getCurrentTime()) {
   return isOnOrAfterLastQuarterMonthDay(date);
 }

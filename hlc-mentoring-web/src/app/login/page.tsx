@@ -52,7 +52,7 @@ export default function LoginPage() {
           </Form.Item>
           <Button type="primary" htmlType="submit" block>Đăng nhập</Button>
           <p className="mt-4 text-center text-xs text-gray-500">
-            Tài khoản dữ liệu cũ dùng mật khẩu mặc định do quản trị viên cung cấp.
+            Tài khoản mật khẩu mặc định do quản trị viên cung cấp.
           </p>
         </Form>
       </Card>

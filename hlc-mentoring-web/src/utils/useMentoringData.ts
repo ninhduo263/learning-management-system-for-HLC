@@ -6,6 +6,7 @@ import {
   parseCycleQuarter,
   quarterKey
 } from './dateHelpers';
+import { getCurrentTime } from './time';
 
 export interface MentoringPair {
   _id?: string;
@@ -36,7 +37,7 @@ function getNearestCurrentOrUpcomingCycleId(
 
 export function categorizePairs(
   pairs: MentoringPair[] | null | undefined,
-  now = new Date(),
+  now = getCurrentTime(),
   selectedCycleId?: string
 ): CategorizedPairs {
   const selectedQuarter = parseCycleQuarter(
@@ -86,7 +87,7 @@ export function categorizePairs(
 
 export function useMentoringData(
   allPairs: MentoringPair[] | null | undefined,
-  now = new Date(),
+  now = getCurrentTime(),
   selectedCycleId?: string
 ) {
   return useMemo(

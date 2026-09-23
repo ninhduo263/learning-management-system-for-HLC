@@ -5,6 +5,7 @@ import { Alert, App, Button, Card, Form, Input, Modal, Select, Steps, Table, Tag
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
 import { useMentoringData } from '@/utils/useMentoringData';
+import { getCurrentTime, isSameMonth } from '@/utils/time';
 
 export default function MenteeMentoringPage() {
   const { message } = App.useApp();
@@ -30,7 +31,7 @@ export default function MenteeMentoringPage() {
       if (!result.success) throw new Error(result.message);
       setData(result.data);
       const nextCycle = (result.data.cycles || [])
-        .filter((cycle: any) => new Date(cycle.startDate).getTime() > Date.now())
+        .filter((cycle: any) => new Date(cycle.startDate).getTime() > getCurrentTime().getTime())
         .sort((a: any, b: any) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())[0];
       if (nextCycle) {
         setPreferenceCycleId(nextCycle.code);
@@ -55,7 +56,9 @@ export default function MenteeMentoringPage() {
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
   const visiblePairIds = new Set(mentoringData.currentPairs.map((pair) => pair.pairId));
-  const visibleSchedules = (data?.schedules ?? []).filter((schedule: any) => visiblePairIds.has(schedule.pairId));
+  const visibleSchedules = (data?.schedules ?? []).filter(
+    (schedule: any) => visiblePairIds.has(schedule.pairId) && isSameMonth(schedule.startTime)
+  );
 
   const confirmSchedule = async (schedule: any) => {
     try {

@@ -1,5 +1,7 @@
 'use strict';
 
+const { getCurrentTime } = require('./time');
+
 function quarterOf(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error('Ngày không hợp lệ');
@@ -64,7 +66,7 @@ function isCycleLocked(cycle) {
   return cycle && ['LOCKED', 'EXPORTED', 'PAID'].includes(String(cycle.status).toUpperCase());
 }
 
-function canEditSchedule(schedule, actor, now = new Date()) {
+function canEditSchedule(schedule, actor, now = getCurrentTime()) {
   if (!schedule || ['CANCELLED', 'COMPLETED'].includes(schedule.status)) return false;
   if (new Date(schedule.startTime) <= new Date(now)) return false;
   if (actor && actor.role === 'ADMIN') return true;

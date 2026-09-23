@@ -41,6 +41,7 @@ const {
   validateQuarter, quarterDates, monthlyMentoringCode, isCycleLocked, canEditSchedule,
   recapStatus, timingPoints, topThreeAwards, quarterPreferenceDeadline, pairingStartDate
 } = require('./quarterlyRules');
+const { getCurrentTime } = require('./time');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'hlc-development-secret-change-me';
 const LEGACY_DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'HLC@123456';
@@ -68,7 +69,7 @@ function quarterKey(date) {
   return value.getUTCFullYear() * 4 + Math.floor(value.getUTCMonth() / 3);
 }
 
-function isCycleVisibleToMember(cycle, now = new Date()) {
+function isCycleVisibleToMember(cycle, now = getCurrentTime()) {
   const distance = quarterKey(cycle.startDate) - quarterKey(now);
   return distance <= 0 || (distance === 1 && new Date(now).getUTCDate() >= 25);
 }
@@ -546,12 +547,12 @@ app.post(['/api/mentoring/preferences', '/api/preferences'], async (req, res) =>
     const deadline = quarterPreferenceDeadline(cycle);
     const user = await User.findOne({ userId: req.user.userId }).select('createdAt');
     const lateJoiner = new Date(user?.createdAt || 0) > deadline;
-    if (new Date() > deadline && !lateJoiner) {
+    if (getCurrentTime() > deadline && !lateJoiner) {
       return res.status(409).json({ success: false, message: 'Đã quá hạn gửi nguyện vọng (ngày 5 tháng cuối quý)', deadline });
     }
     const preference = await MentorPreference.findOneAndUpdate(
       { cycleId, menteeId: req.user.userId },
-      { cycleId, menteeId: req.user.userId, mentorIds: ids, message: String(message || '').slice(0, 500), deadline, lateJoiner, submittedAt: new Date() },
+      { cycleId, menteeId: req.user.userId, mentorIds: ids, message: String(message || '').slice(0, 500), deadline, lateJoiner, submittedAt: getCurrentTime() },
       { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
     );
     res.status(201).json({ success: true, data: preference });
@@ -574,7 +575,7 @@ app.post('/api/mentoring/pairs/inherit', requireRole('ADMIN'), async (req, res) 
     if (!Number.isInteger(monthNumber) || monthNumber < 1 || monthNumber > 3) {
       return res.status(400).json({ success: false, message: 'Tháng mentoring phải từ 1 đến 3' });
     }
-    if (new Date() < pairingStartDate(cycle)) {
+    if (getCurrentTime() < pairingStartDate(cycle)) {
       return res.status(409).json({ success: false, message: 'Admin chỉ được ghép cặp từ ngày 10 tháng cuối quý' });
     }
     const targetCode = monthlyMentoringCode(cycle.code, monthNumber);
@@ -1588,7 +1589,7 @@ app.patch('/api/submissions/:id/status', requireRole('ADMIN'), async (req, res) 
     submission.status = status;
     submission.feedback = feedback || submission.feedback || '';
     submission.reviewerId = req.user.userId;
-    submission.reviewedAt = new Date();
+    submission.reviewedAt = getCurrentTime();
     await submission.save();
 
     if (status === 'APPROVED') {
@@ -1712,7 +1713,7 @@ app.post('/api/cycles', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Thông tin kỳ hoạt động không hợp lệ' });
     }
     const quarter = validateQuarter(requestedDates.startDate, requestedDates.endDate);
-    const now = new Date();
+    const now = getCurrentTime();
     const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
     const currentQuarterEndMonth = currentQuarter * 3 - 1;
     const canOpenNextQuarter = now.getUTCMonth() === currentQuarterEndMonth && now.getUTCDate() >= 10;
@@ -1789,7 +1790,7 @@ app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
     if (cycle.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle.status)) {
       return res.status(409).json({ success: false, message: 'Quý đã bị khóa, không thể tạo hoặc sửa cặp mentoring' });
     }
-    const now = new Date();
+    const now = getCurrentTime();
     const pairingOpensAt = pairingStartDate(cycle);
     console.log('[pairs:create] pairing window:', {
       now: now.toISOString(),
@@ -2083,7 +2084,7 @@ app.post('/api/mentoring/schedules', async (req, res) => {
       return res.status(403).json({ success: false, message: 'Chỉ Mentee thuộc cặp mới được đề xuất lịch' });
     }
     if (new Date(startTime) >= new Date(endTime)) return res.status(400).json({ success: false, message: 'Thời gian lịch không hợp lệ' });
-    if (new Date(startTime) <= new Date()) return res.status(400).json({ success: false, message: 'Thời gian mentoring phải ở tương lai' });
+    if (new Date(startTime) <= getCurrentTime()) return res.status(400).json({ success: false, message: 'Thời gian mentoring phải ở tương lai' });
     const existingSchedule = await MentoringSchedule.findOne({ pairId, status: { $in: ['PROPOSED', 'CONFIRMED'] } });
     if (existingSchedule) return res.status(409).json({ success: false, message: 'Cặp đã có lịch đề xuất, hãy dùng nút Sửa để cập nhật' });
     const month = monthCode || `${String(new Date(startTime).getUTCMonth() + 1).padStart(2, '0')}${mentorId}${menteeId}`;
@@ -2144,7 +2145,7 @@ app.patch('/api/mentoring/schedules/:id/status', async (req, res) => {
       return res.status(409).json({ success: false, message: 'Lịch đã khóa hoặc không thể chỉnh sửa' });
     }
     const update = { status };
-    if (status === 'CONFIRMED' && !current.confirmedAt) update.confirmedAt = new Date();
+    if (status === 'CONFIRMED' && !current.confirmedAt) update.confirmedAt = getCurrentTime();
     const schedule = await MentoringSchedule.findByIdAndUpdate(req.params.id, update, { new: true });
     if (status === 'COMPLETED') {
       await awardMentoringCompletionScore(schedule);
@@ -2166,7 +2167,7 @@ app.patch('/api/mentoring/schedules/:id/override', requireRole('ADMIN'), async (
       return res.status(400).json({ success: false, message: 'Thời gian lịch không hợp lệ' });
     }
     schedule.status = 'CONFIRMED';
-    schedule.confirmedAt = new Date();
+    schedule.confirmedAt = getCurrentTime();
     schedule.proposedBy = req.user.userId;
     await schedule.save();
     res.json({ success: true, data: schedule });
@@ -2210,7 +2211,7 @@ app.post('/api/mentoring/recaps', async (req, res) => {
     const recap = await MentoringRecap.create({
       pairId, cycleId, userId, role, content, mediaUrls: mediaUrls.filter(Boolean), note,
       monthCode: schedule?.monthCode, scheduleId: schedule ? String(schedule._id) : undefined,
-      status: schedule?.confirmedAt && Date.now() - new Date(schedule.confirmedAt).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED'
+      status: schedule?.confirmedAt && getCurrentTime().getTime() - new Date(schedule.confirmedAt).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED'
     });
     res.status(201).json({ success: true, data: recap });
   } catch (error) {
@@ -2225,7 +2226,7 @@ async function reviewMentoringRecap(req, res, status) {
     if (!recap) return res.status(404).json({ success: false, message: 'Không tìm thấy recap mentoring' });
     recap.status = status;
     recap.reviewedBy = req.user.userId;
-    recap.reviewedAt = new Date();
+    recap.reviewedAt = getCurrentTime();
     if (req.body.note !== undefined) recap.note = req.body.note;
     await recap.save();
     res.json({ success: true, data: recap });
@@ -2256,7 +2257,7 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
       const related = schedule ? recaps.filter((item) => String(item.scheduleId) === String(schedule._id)) : recaps;
       const deadline = schedule?.confirmedAt ? new Date(schedule.confirmedAt).getTime() + 24 * 3600000 : null;
       const submittedRoles = new Set(related.filter((item) => ['SUBMITTED', 'APPROVED', 'LATE'].includes(item.status)).map((item) => item.role));
-      const late = related.some((item) => item.status === 'LATE') || Boolean(deadline && Date.now() > deadline);
+      const late = related.some((item) => item.status === 'LATE') || Boolean(deadline && getCurrentTime().getTime() > deadline);
       const importedCompleted = Object.values(pair.importedRecapStatus || {}).some((monthStatus) => {
         const values = [monthStatus?.mentor, monthStatus?.mentee]
           .map((value) => String(value || '').trim().toLowerCase());
@@ -2265,7 +2266,7 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
       const status = !schedule && importedCompleted ? 'ĐÃ NỘP/ĐÃ XONG' : !schedule ? 'CHƯA CÓ LỊCH' : submittedRoles.size < 2
         ? (late ? 'CHƯA XONG' : 'CHỜ')
         : (related.some((item) => item.status === 'LATE') ? 'NỘP MUỘN' : 'ĐÃ NỘP/ĐÃ XONG');
-      return { ...pair, pairCode: pairCodeForRecord(pair), monthlyCode: pair.monthlyCode || `${String(new Date(schedule?.startTime || Date.now()).getUTCMonth() + 1).padStart(2, '0')}${pair.mentorId}${pair.menteeId}`, scheduleCount: schedules.length, completedScheduleCount: schedules.filter((s) => s.status === 'COMPLETED').length, recapStatus: status, importedRecapStatus: pair.importedRecapStatus || {} };
+      return { ...pair, pairCode: pairCodeForRecord(pair), monthlyCode: pair.monthlyCode || `${String(new Date(schedule?.startTime || getCurrentTime()).getUTCMonth() + 1).padStart(2, '0')}${pair.mentorId}${pair.menteeId}`, scheduleCount: schedules.length, completedScheduleCount: schedules.filter((s) => s.status === 'COMPLETED').length, recapStatus: status, importedRecapStatus: pair.importedRecapStatus || {} };
     }));
     res.json({ success: true, data });
   } catch (error) {
@@ -2438,7 +2439,7 @@ async function calculateAllowanceSummaries(cycleId, options = {}) {
         deductionAmount,
         finalAmount: baseAllowance + bonusAmount - deductionAmount,
         status: 'DRAFT',
-        calculatedAt: new Date()
+        calculatedAt: getCurrentTime()
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );

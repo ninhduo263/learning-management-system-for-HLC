@@ -5,6 +5,7 @@ import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Table, Tag 
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
 import { useMentoringData } from '@/utils/useMentoringData';
+import { isSameMonth } from '@/utils/time';
 
 export default function MentorMentoringPage() {
   const { message } = App.useApp();
@@ -31,7 +32,9 @@ export default function MentorMentoringPage() {
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
   const visiblePairIds = new Set(mentoringData.currentPairs.map((pair) => pair.pairId));
-  const visibleSchedules = (data?.schedules ?? []).filter((schedule: any) => visiblePairIds.has(schedule.pairId));
+  const visibleSchedules = (data?.schedules ?? []).filter(
+    (schedule: any) => visiblePairIds.has(schedule.pairId) && isSameMonth(schedule.startTime)
+  );
 
   const handleSubmitRecap = async (values: any) => {
     if (!values.mediaUrl) {
