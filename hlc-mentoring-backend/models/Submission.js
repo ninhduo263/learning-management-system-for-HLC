@@ -16,7 +16,7 @@ const submissionSchema = new mongoose.Schema({
   },
   submissionType: { type: String, index: true },
   mentorId: { type: String, default: null },
-  pairId: { type: String, default: null },
+  monthlyId: { type: String, default: null, index: true },
   content: {
     text: { type: String, default: '' },
     imageUrls: [{ type: String }],

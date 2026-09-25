@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const mentoringScheduleSchema = new mongoose.Schema({
-  pairId: { type: String, required: true, index: true },
+  monthlyId: { type: String, required: true, index: true, trim: true },
   cycleId: { type: String, required: true, index: true },
   monthCode: { type: String, index: true, trim: true },
   scheduleCode: { type: String, index: true, trim: true },
@@ -21,6 +21,9 @@ const mentoringScheduleSchema = new mongoose.Schema({
   note: { type: String, default: '' }
 }, { timestamps: true });
 
-mentoringScheduleSchema.index({ cycleId: 1, monthCode: 1, pairId: 1 });
+mentoringScheduleSchema.index({ cycleId: 1, monthCode: 1, monthlyId: 1 });
+mentoringScheduleSchema.index({ cycleId: 1, monthlyId: 1, startTime: 1 });
+mentoringScheduleSchema.index({ cycleId: 1, menteeId: 1, startTime: 1 });
+mentoringScheduleSchema.index({ cycleId: 1, mentorId: 1, startTime: 1 });
 
 module.exports = mongoose.model('MentoringSchedule', mentoringScheduleSchema);

@@ -90,7 +90,7 @@ export default function MenteeDashboardPage() {
           scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 5 }}
           columns={[
-            { title: 'Pair', dataIndex: 'pairId' },
+            { title: 'Mã tháng', dataIndex: 'monthlyId' },
             { title: 'Mentor', dataIndex: 'mentorId' },
             { title: 'Mentee', dataIndex: 'menteeId' },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }

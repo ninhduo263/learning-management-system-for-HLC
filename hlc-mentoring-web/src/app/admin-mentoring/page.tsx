@@ -6,12 +6,13 @@ import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, 
 import { apiFetch } from '@/lib/api';
 
 interface Cycle { code: string; name: string; }
-interface UserOption { userId: string; fullName: string; mentorId?: string; }
+interface UserOption { userId: string; fullName: string; mentorId?: string; isActive?: 'yes' | 'no'; }
 interface Pair {
   _id: string;
-  pairId: string;
   pairCode?: string;
   monthlyCode?: string;
+  monthlyId?: string;
+  quarterlyId?: string;
   cycleId: string;
   mentorId: string;
   menteeId: string;
@@ -20,6 +21,8 @@ interface Pair {
 }
 
 function pairMonth(pair: Pair, cycleId: string) {
+  const monthlyMatch = /^T(1[0-2]|[1-9])Q[1-4]\d{4}O\d{5}E\d{5}$/i.exec(pair.monthlyId || '');
+  if (monthlyMatch) return Number(monthlyMatch[1]);
   const code = pair.pairCode || pair.monthlyCode || '';
   const formattedMatch = /^(\d{2})\/\d{4}-\d{5}-\d{5}$/.exec(code);
   if (formattedMatch) return Number(formattedMatch[1]);
@@ -30,9 +33,25 @@ function pairMonth(pair: Pair, cycleId: string) {
   const quarter = Number(cycleId.slice(-1));
   return (quarter - 1) * 3 + Number(match[1]);
 }
+
+function quarterlyIdForCycle(cycleId: string) {
+  const match = /^(\d{4})Q([1-4])$/i.exec(String(cycleId || '').trim());
+  return match ? `Q${match[2]}${match[1]}` : '';
+}
+
+function normalizeCycleId(cycleId: string) {
+  return String(cycleId || '').trim().toUpperCase().replace(/-/g, '');
+}
+
+function participantKey(userId: string) {
+  const normalized = String(userId || '').trim().toUpperCase();
+  const digits = normalized.replace(/\D/g, '');
+  return digits.length >= 5 ? digits.slice(-5) : normalized.replace(/[^A-Z0-9]/g, '');
+}
+
 interface Schedule {
   _id: string;
-  pairId: string;
+  monthlyId?: string;
   cycleId: string;
   monthCode?: string;
   startTime: string;
@@ -45,7 +64,7 @@ interface Schedule {
 }
 interface Recap {
   _id: string;
-  pairId: string;
+  monthlyId?: string;
   scheduleId?: string;
   userId: string;
   role: string;
@@ -120,15 +139,17 @@ export default function AdminMentoringPage() {
   const loadData = async (cycleId = selectedCycle) => {
     setLoading(true);
     try {
-      const query = cycleId ? `?cycleId=${encodeURIComponent(cycleId)}` : '';
+      const quarterlyId = quarterlyIdForCycle(cycleId);
+      const pairQuery = quarterlyId ? `?quarterlyId=${encodeURIComponent(quarterlyId)}` : '';
+      const cycleQuery = cycleId ? `?cycleId=${encodeURIComponent(cycleId)}` : '';
       const responses = await Promise.all([
         apiFetch('/cycles'),
-        apiFetch('/users/mentors'),
-        apiFetch('/users/mentees'),
-        apiFetch(`/mentoring/pairs${query}`),
-        apiFetch(`/mentoring/schedules${query}`),
-        apiFetch(`/mentoring/recaps${query}`),
-        apiFetch(`/mentoring/pairs/status${query}`)
+        apiFetch('/users/mentors?includeInactive=true'),
+        apiFetch('/users/mentees?includeInactive=true'),
+        apiFetch(`/mentoring/pairs${pairQuery}`),
+        apiFetch(`/mentoring/schedules${cycleQuery}`),
+        apiFetch(`/mentoring/recaps${cycleQuery}`),
+        apiFetch(`/mentoring/pairs/status${pairQuery}`)
       ]);
       const results = await Promise.all(responses.map((response) => response.json()));
       const [cycleResult, mentorResult, menteeResult, pairResult, scheduleResult, recapResult, statusResult] = results;
@@ -139,24 +160,28 @@ export default function AdminMentoringPage() {
           message.warning(`Không tìm thấy kỳ ${ADMIN_PAIRING_CYCLE} trong danh sách kỳ hoạt động`);
         }
       }
-      if (mentorResult.success) setMentors(mentorResult.data);
-      if (menteeResult.success) setMentees(menteeResult.data);
+      if (!mentorResult.success) throw new Error(mentorResult.message || 'Không thể tải danh sách Mentor');
+      if (!menteeResult.success) throw new Error(menteeResult.message || 'Không thể tải danh sách Mentee');
+      setMentors(mentorResult.data || []);
+      setMentees(menteeResult.data || []);
       if (scheduleResult.success) setSchedules(scheduleResult.data);
       if (recapResult.success) setRecaps(recapResult.data);
       if (!pairResult.success) {
         throw new Error(pairResult.message || 'Không thể tải danh sách cặp mentoring');
       }
       const basePairs: Pair[] = cycleId
-        ? pairResult.data.filter((item: Pair) => String(item.cycleId).toUpperCase() === String(cycleId).toUpperCase())
+        ? pairResult.data.filter((item: Pair) =>
+          String(item.quarterlyId || '').toUpperCase().startsWith(quarterlyId)
+        )
         : pairResult.data;
-      const statusByPairId = new Map<string, Partial<Pair>>(
+      const statusByMonthlyId = new Map<string, Partial<Pair>>(
         statusResult.success
-          ? statusResult.data.map((item: Pair) => [item.pairId, item])
+          ? statusResult.data.map((item: Pair) => [item.monthlyId, item])
           : []
       );
       setPairs(basePairs.map((pair) => ({
         ...pair,
-        ...(statusByPairId.get(pair.pairId) || {})
+        ...(pair.monthlyId ? statusByMonthlyId.get(pair.monthlyId) || {} : {})
       })));
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể tải danh sách ghép cặp');
@@ -165,7 +190,6 @@ export default function AdminMentoringPage() {
     }
   };
 
-  useEffect(() => { loadData(ADMIN_PAIRING_CYCLE); }, []);
   useEffect(() => { if (selectedCycle) loadData(selectedCycle); }, [selectedCycle]);
 
   const toggleCycleLock = async () => {
@@ -235,13 +259,19 @@ export default function AdminMentoringPage() {
     .map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
   const createCycleCode = Form.useWatch('cycleId', createForm) || selectedCycle;
   const monthOptions = monthsForCycleOptions(createCycleCode);
+  const availableMentors = mentors.filter((mentor) => mentor.isActive === 'yes');
   const pairedMenteeIds = useMemo(
     () => new Set(pairs
-      .filter((pair) => pair.cycleId === createCycleCode && pair.status !== 'CANCELLED')
-      .map((pair) => pair.menteeId)),
+      .filter((pair) =>
+        normalizeCycleId(pair.cycleId) === normalizeCycleId(createCycleCode) &&
+        String(pair.status || '').trim().toUpperCase() !== 'CANCELLED'
+      )
+      .map((pair) => participantKey(pair.menteeId))),
     [pairs, createCycleCode]
   );
-  const availableMentees = mentees.filter((mentee) => !pairedMenteeIds.has(mentee.userId));
+  const availableMentees = mentees.filter((mentee) =>
+    mentee.isActive === 'yes' && !pairedMenteeIds.has(participantKey(mentee.userId))
+  );
   const monthlyPairs = useMemo(
     () => [10, 11, 12].map((month) => ({
       month,
@@ -299,16 +329,22 @@ export default function AdminMentoringPage() {
       });
       const result = await response.json();
       if (!result.success) {
-        const details = result.details || result.errors;
+        if (response.status === 409) {
+          await loadData(cleanValues.cycleId);
+        }
+        const details = ['MENTEE_ALREADY_PAIRED', 'PAIRING_ID_CONFLICT'].includes(result.code)
+          ? undefined
+          : result.details || result.errors;
         const detailText = details
           ? `: ${Object.entries(details).map(([field, message]) => `${field}: ${message}`).join('; ')}`
           : '';
         throw new Error(`${result.message || 'Không thể thêm cặp mentoring'}${detailText}`);
       }
-      message.success('Đã thêm cặp mentoring');
+      const syncedMonths = Array.isArray(result.syncedMonths) ? result.syncedMonths : [cleanValues.monthCode];
+      message.success(`Đã thêm tháng ${cleanValues.monthCode} và đồng bộ tháng ${syncedMonths.join(', ')}`);
       createForm.resetFields();
       setModal(null);
-      await loadData(values.cycleId);
+      await loadData(cleanValues.cycleId);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể thêm cặp mentoring');
     }
@@ -326,10 +362,10 @@ export default function AdminMentoringPage() {
       if (!cleanValues.mentorId || !cleanValues.menteeId || !Number.isInteger(Number(cleanValues.monthlyCode))) {
         throw new Error('Thông tin tháng, mentor hoặc mentee không hợp lệ');
       }
-      const response = await apiFetch(`/mentoring/pairs/${encodeURIComponent(selectedPair.pairId)}`, {
+      const response = await apiFetch(`/mentoring/pairs/${encodeURIComponent(selectedPair.monthlyId || '')}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cleanValues)
+        body: JSON.stringify({ ...cleanValues, monthlyId: selectedPair.monthlyId })
       });
       const result = await response.json();
       if (!result.success) {
@@ -349,7 +385,7 @@ export default function AdminMentoringPage() {
 
   const deletePair = async (pair: Pair) => {
     try {
-      const response = await apiFetch(`/mentoring/pairs/${encodeURIComponent(pair.pairId)}`, {
+      const response = await apiFetch(`/mentoring/pairs/${encodeURIComponent(pair.monthlyId || '')}`, {
         method: 'DELETE'
       });
       const result = await response.json();
@@ -363,8 +399,12 @@ export default function AdminMentoringPage() {
     }
   };
 
-  const detailSchedules = useMemo(() => schedules.filter((item) => item.pairId === selectedPair?.pairId), [schedules, selectedPair]);
-  const detailRecaps = useMemo(() => recaps.filter((item) => item.pairId === selectedPair?.pairId), [recaps, selectedPair]);
+  const detailSchedules = useMemo(() => schedules.filter((item) =>
+    item.monthlyId === selectedPair?.monthlyId
+  ), [schedules, selectedPair]);
+  const detailRecaps = useMemo(() => recaps.filter((item) =>
+    item.monthlyId === selectedPair?.monthlyId
+  ), [recaps, selectedPair]);
 
   const reviewRecap = async (recap: Recap, status: 'APPROVED' | 'REJECTED') => {
     try {
@@ -385,7 +425,8 @@ export default function AdminMentoringPage() {
   };
 
   const columns = [
-    { title: 'Mã mentoring', dataIndex: 'pairCode', render: (value: string, row: Pair) => value || row.pairCode || row.pairId },
+    { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
+    { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
     { title: 'Họ và tên Mentee', dataIndex: 'menteeId', render: (value: string) => menteeName(value) },
     { title: 'Mentor phụ trách', dataIndex: 'mentorId', render: (value: string) => mentorName(value) },
     { title: 'Trạng thái recap', dataIndex: 'recapStatus', render: (value: string) => <Tag color={recapColor(value)}>{recapLabels[value] || value || 'Chờ'}</Tag> },
@@ -482,7 +523,7 @@ export default function AdminMentoringPage() {
           scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 8 }}
           columns={[
-            { title: 'Cặp', dataIndex: 'pairId' },
+            { title: 'Cặp', dataIndex: 'monthlyId' },
             { title: 'Vai trò', dataIndex: 'role', render: (value: string) => <Tag color={value === 'MENTOR' ? 'blue' : 'green'}>{value}</Tag> },
             { title: 'Ngày nộp', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={recapColor(value)}>{recapLabels[value] || value}</Tag> },
@@ -493,16 +534,17 @@ export default function AdminMentoringPage() {
       </Card>
 
       <Modal title="Thêm cặp mentoring" open={modal === 'create'} onCancel={() => setModal(null)} footer={null} forceRender destroyOnHidden>
-        <PairForm form={createForm} cycles={cycleOptions} months={monthOptions} mentors={mentors} mentees={availableMentees} onFinish={submitCreate} />
+        <PairForm form={createForm} cycles={cycleOptions} months={monthOptions} mentors={availableMentors} mentees={availableMentees} loading={loading} onFinish={submitCreate} />
       </Modal>
       <Modal title="Sửa cặp mentoring" open={modal === 'edit'} onCancel={() => { editForm.resetFields(); setModal(null); }} footer={null} forceRender destroyOnHidden>
-        <PairForm form={editForm} cycles={cycleOptions} months={monthOptions} mentors={mentors} mentees={mentees} onFinish={submitEdit} />
+        <PairForm form={editForm} cycles={cycleOptions} months={monthOptions} mentors={mentors} mentees={mentees} loading={loading} monthReadOnly onFinish={submitEdit} />
       </Modal>
       <Modal title="Chi tiết cặp mentoring" open={modal === 'detail'} onCancel={() => setModal(null)} footer={null} width={800}>
         {selectedPair && (
           <div className="space-y-5">
             <Descriptions bordered column={2} size="small">
-              <Descriptions.Item label="Mã mentoring">{selectedPair.pairCode || selectedPair.pairId}</Descriptions.Item>
+              <Descriptions.Item label="Mã tháng">{selectedPair.monthlyId}</Descriptions.Item>
+              <Descriptions.Item label="Mã quý">{selectedPair.quarterlyId || 'Chưa migration'}</Descriptions.Item>
               <Descriptions.Item label="Quý">{selectedPair.cycleId}</Descriptions.Item>
               <Descriptions.Item label="Mentee">{menteeName(selectedPair.menteeId)}</Descriptions.Item>
               <Descriptions.Item label="Mentor">{mentorName(selectedPair.mentorId)}</Descriptions.Item>
@@ -585,7 +627,7 @@ export default function AdminMentoringPage() {
         {reviewingRecap && (
           <div className="space-y-4">
             <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="Cặp">{reviewingRecap.pairId}</Descriptions.Item>
+              <Descriptions.Item label="Cặp">{reviewingRecap.monthlyId}</Descriptions.Item>
               <Descriptions.Item label="Vai trò">{reviewingRecap.role}</Descriptions.Item>
               <Descriptions.Item label="Nội dung">{reviewingRecap.content || 'Không có nội dung'}</Descriptions.Item>
               <Descriptions.Item label="Ảnh minh chứng">
@@ -604,21 +646,26 @@ export default function AdminMentoringPage() {
   );
 }
 
-function PairForm({ form, cycles, months, mentors, mentees, onFinish }: {
+function PairForm({ form, cycles, months, mentors, mentees, loading, monthReadOnly = false, onFinish }: {
   form: ReturnType<typeof Form.useForm<PairForm>>[0];
   cycles: { value: string; label: string }[];
   months: { value: number; label: string }[];
   mentors: UserOption[];
   mentees: UserOption[];
+  loading: boolean;
+  monthReadOnly?: boolean;
   onFinish: (values: PairForm) => void;
 }) {
   return <Form form={form} layout="vertical" onFinish={onFinish}>
     <Row gutter={[12, 0]}>
       <Col xs={24} md={12}><Form.Item name="cycleId" label="Quý" rules={[{ required: true, message: 'Chọn quý' }]}><Select options={cycles} /></Form.Item></Col>
-      <Col xs={24} md={12}><Form.Item name="month" label="Tháng mentoring trong quý" rules={[{ required: true, message: 'Chọn tháng' }]}><Select options={months} /></Form.Item></Col>
-      <Col xs={24} md={12}><Form.Item name="mentorId" label="Mentor" rules={[{ required: true, message: 'Chọn mentor' }]}><Select showSearch optionFilterProp="label" options={mentors.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}` }))} /></Form.Item></Col>
-      <Col xs={24} md={12}><Form.Item name="menteeId" label="Mentee" rules={[{ required: true, message: 'Chọn mentee' }]}><Select showSearch optionFilterProp="label" options={mentees.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}` }))} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="month" label="Tháng mentoring trong quý" rules={[{ required: true, message: 'Chọn tháng' }]}><Select disabled={monthReadOnly} options={months} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="mentorId" label="Mentor" rules={[{ required: true, message: 'Chọn mentor' }]}><Select showSearch optionFilterProp="label" options={mentors.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}`, disabled: item.isActive === 'no' }))} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="menteeId" label="Mentee" rules={[{ required: true, message: 'Chọn mentee' }]}><Select showSearch loading={loading} optionFilterProp="label" notFoundContent={loading ? 'Đang tải Mentee...' : 'Không có Mentee đang hoạt động, chưa ghép trong quý'} options={mentees.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}`, disabled: item.isActive === 'no' }))} /></Form.Item></Col>
     </Row>
+    <Typography.Text type="secondary">
+      Hệ thống sẽ tự động đồng bộ từ tháng đã chọn đến tháng cuối của quý.
+    </Typography.Text>
     <Button type="primary" htmlType="submit" block>Lưu</Button>
   </Form>;
 }

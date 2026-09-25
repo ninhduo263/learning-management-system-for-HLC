@@ -10,7 +10,7 @@ import { getCurrentTime } from './time';
 
 export interface MentoringPair {
   _id?: string;
-  pairId: string;
+  monthlyId: string;
   cycleId: string;
   [key: string]: unknown;
 }
@@ -31,7 +31,9 @@ function getNearestCurrentOrUpcomingCycleId(
   const currentKey = quarterKey(getCurrentQuarter(now));
   return [...new Set((pairs || []).map((pair) => pair.cycleId))]
     .map((cycleId) => ({ cycleId, quarter: parseCycleQuarter(cycleId) }))
-    .filter((item) => item.quarter && quarterKey(item.quarter) >= currentKey)
+    .filter((item) => item.quarter
+      && (quarterKey(item.quarter) === currentKey
+        || (canViewNextQuarter(now) && quarterKey(item.quarter) > currentKey)))
     .sort((left, right) => quarterKey(left.quarter!) - quarterKey(right.quarter!))[0]?.cycleId;
 }
 
@@ -57,7 +59,7 @@ export function categorizePairs(
   for (const pair of pairs || []) {
     const pairQuarter = parseCycleQuarter(pair.cycleId);
     console.log('[pairs:categorize] Item Quarter:', {
-      pairId: pair.pairId,
+      monthlyId: pair.monthlyId,
       cycleId: pair.cycleId,
       parsedQuarter: pairQuarter,
       itemKey: pairQuarter ? quarterKey(pairQuarter) : null

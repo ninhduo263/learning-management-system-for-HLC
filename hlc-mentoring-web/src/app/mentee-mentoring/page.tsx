@@ -6,6 +6,13 @@ import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
 import { useMentoringData } from '@/utils/useMentoringData';
 import { getCurrentTime, isSameMonth } from '@/utils/time';
+import { getMentoringTimeline } from '@/utils/mentoringTimeline';
+
+function renderProfileLink(value?: string) {
+  const url = String(value || '').trim();
+  if (!/^https?:\/\//i.test(url)) return 'Chưa có link';
+  return <a href={url} target="_blank" rel="noreferrer">Xem profile</a>;
+}
 
 export default function MenteeMentoringPage() {
   const { message } = App.useApp();
@@ -20,6 +27,7 @@ export default function MenteeMentoringPage() {
   const [preference, setPreference] = useState<any>(null);
   const [mentors, setMentors] = useState<any[]>([]);
   const [preferenceCycleId, setPreferenceCycleId] = useState('');
+  const [preferenceTimeline, setPreferenceTimeline] = useState<any>(null);
   const [preferenceModalOpen, setPreferenceModalOpen] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
 
@@ -30,11 +38,15 @@ export default function MenteeMentoringPage() {
       const result = await response.json();
       if (!result.success) throw new Error(result.message);
       setData(result.data);
-      const nextCycle = (result.data.cycles || [])
+      const nextCycle = result.data.preferenceCycle || (result.data.cycles || [])
         .filter((cycle: any) => new Date(cycle.startDate).getTime() > getCurrentTime().getTime())
         .sort((a: any, b: any) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())[0];
       if (nextCycle) {
         setPreferenceCycleId(nextCycle.code);
+        setPreferenceTimeline(
+          result.data.preferenceTimeline
+          || getMentoringTimeline(nextCycle, getCurrentTime())
+        );
         preferenceForm.setFieldValue('cycleId', nextCycle.code);
       }
       const mentorsResponse = await apiFetch('/users/mentors');
@@ -43,8 +55,14 @@ export default function MenteeMentoringPage() {
       const preferenceResponse = await apiFetch('/mentoring/preferences');
       const preferenceResult = await preferenceResponse.json();
       if (preferenceResult.success) {
-        setPreference(preferenceResult.data);
-        preferenceForm.setFieldsValue(preferenceResult.data);
+        const preferences = Array.isArray(preferenceResult.data)
+          ? preferenceResult.data
+          : [preferenceResult.data];
+        const currentPreference = preferences.find((item: any) => item.cycleId === nextCycle?.code)
+          || preferences[0]
+          || null;
+        setPreference(currentPreference);
+        if (currentPreference) preferenceForm.setFieldsValue(currentPreference);
       }
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Lỗi tải dữ liệu');
@@ -55,9 +73,12 @@ export default function MenteeMentoringPage() {
 
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
-  const visiblePairIds = new Set(mentoringData.currentPairs.map((pair) => pair.pairId));
+  const visibleMonthlyIds = new Set(mentoringData.currentPairs.map((pair) => pair.monthlyId).filter(Boolean));
   const visibleSchedules = (data?.schedules ?? []).filter(
-    (schedule: any) => visiblePairIds.has(schedule.pairId) && isSameMonth(schedule.startTime)
+    (schedule: any) => (
+      visibleMonthlyIds.has(schedule.monthlyId)
+      && isSameMonth(schedule.startTime)
+    )
   );
 
   const confirmSchedule = async (schedule: any) => {
@@ -77,7 +98,9 @@ export default function MenteeMentoringPage() {
   };
 
   const proposeSchedule = async (values: any) => {
-    const pair = data?.pairs?.find((item: any) => item.pairId === values.pairId);
+    const pair = data?.pairs?.find((item: any) =>
+      item.monthlyId === values.monthlyId
+    );
     if (!pair) {
       message.error('Vui lòng chọn cặp mentoring');
       return;
@@ -87,7 +110,7 @@ export default function MenteeMentoringPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pairId: pair.pairId,
+          monthlyId: pair.monthlyId,
           cycleId: pair.cycleId,
           mentorId: pair.mentorId,
           menteeId: pair.menteeId,
@@ -115,12 +138,14 @@ export default function MenteeMentoringPage() {
       return;
     }
     try {
-      const pair = data?.pairs?.find((item: any) => item.pairId === selectedSchedule?.pairId) || data?.pairs?.[0];
+      const pair = data?.pairs?.find((item: any) =>
+        item.monthlyId === selectedSchedule?.monthlyId
+      ) || data?.pairs?.[0];
       const response = await apiFetch('/mentoring/recaps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pairId: pair?.pairId,
+          monthlyId: pair?.monthlyId,
           cycleId: selectedSchedule?.cycleId,
           scheduleId: selectedSchedule?._id,
           userId: data?.user?.userId,
@@ -186,7 +211,7 @@ export default function MenteeMentoringPage() {
       <h1 className="text-2xl font-bold text-gray-800">Lịch Mentoring & Recap</h1>
       <Card title="Nguyện vọng mentor cho quý tiếp theo">
         <Typography.Paragraph type="secondary">
-          Chọn từ 3 đến 10 mentor theo thứ tự ưu tiên. Ban tổ chức sẽ dùng nguyện vọng này để ghép cặp và gửi thông báo theo timeline.
+          Chọn từ 3 đến 10 mentor theo thứ tự ưu tiên từ ngày 5 của tháng cuối quý.
         </Typography.Paragraph>
         <Steps
           size="small"
@@ -196,11 +221,15 @@ export default function MenteeMentoringPage() {
             { title: 'Admin ghép cặp', content: 'Bắt đầu từ ngày 10 tháng cuối quý' }
           ]}
         />
-        <Button type="primary" onClick={() => {
+        <Button
+          type="primary"
+          disabled={!preferenceCycleId || !preferenceTimeline?.canMenteeChoose}
+          onClick={() => {
           preferenceForm.setFieldsValue(preference || { cycleId: preferenceCycleId });
           setPreferenceModalOpen(true);
-        }}>
-          Tạo nguyện vọng
+        }}
+        >
+          {preferenceTimeline?.canMenteeChoose ? 'Tạo nguyện vọng' : 'Chưa đến thời gian chọn nguyện vọng'}
         </Button>
       </Card>
       <Modal
@@ -256,8 +285,12 @@ export default function MenteeMentoringPage() {
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Pair', dataIndex: 'pairId' },
+            { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
+            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
             { title: 'Mentor', dataIndex: 'mentorId' },
+            { title: 'Tên Mentor', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
+            { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
+            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
             { title: 'Mentee', dataIndex: 'menteeId' },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
           ]}
@@ -273,8 +306,12 @@ export default function MenteeMentoringPage() {
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Pair', dataIndex: 'pairId' },
+            { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
+            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
             { title: 'Mentor', dataIndex: 'mentorId' },
+            { title: 'Tên Mentor', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
+            { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
+            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
             { title: 'Mentee', dataIndex: 'menteeId' },
             { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
           ]}
@@ -315,7 +352,7 @@ export default function MenteeMentoringPage() {
         <p className="mb-4 text-sm text-gray-500">
           Mentee chọn ngày và giờ dự kiến. Lịch sẽ ở trạng thái đề xuất để Admin chốt.
         </p>
-        <Button type="primary" onClick={() => {
+        <Button type="primary" disabled={mentoringData.currentPairs.length === 0} onClick={() => {
           scheduleForm.resetFields();
           setScheduleModalOpen(true);
         }}>
@@ -335,14 +372,14 @@ export default function MenteeMentoringPage() {
       >
         <Form form={scheduleForm} layout="vertical" onFinish={proposeSchedule}>
           <div className="grid gap-4 md:grid-cols-2">
-            <Form.Item name="pairId" label="Cặp mentoring" rules={[{ required: true, message: 'Chọn cặp mentoring' }]}>
+            <Form.Item name="monthlyId" label="Cặp mentoring" rules={[{ required: true, message: 'Chọn cặp mentoring' }]}>
               <Select
                 showSearch
                 optionFilterProp="label"
                 placeholder="Chọn cặp mentoring"
                 options={mentoringData.currentPairs.map((pair) => ({
-                  value: pair.pairId,
-                  label: `${pair.cycleId} - ${pair.pairId} - Mentor ${pair.mentorId}`
+                  value: pair.monthlyId,
+                  label: `${pair.cycleId} - ${pair.monthlyId} - Mentor ${pair.mentorId}`
                 }))}
               />
             </Form.Item>
@@ -367,7 +404,7 @@ export default function MenteeMentoringPage() {
       </Modal>
 
       {selectedSchedule && selectedSchedule.status === 'COMPLETED' && (
-        <Card title={`Gửi recap - ${selectedSchedule.monthCode || selectedSchedule.pairId}`}>
+        <Card title={`Gửi recap - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}`}>
           <Form form={form} layout="vertical" onFinish={submitRecap}>
             <Form.Item name="content" label="Nội dung recap" rules={[{ required: true }]}>
               <Input.TextArea rows={5} placeholder="Tóm tắt buổi mentoring / kế hoạch tuần tới" />

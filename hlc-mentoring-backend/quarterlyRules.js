@@ -62,6 +62,40 @@ function pairingStartDate(cycle) {
   return new Date(Date.UTC(previous.year, previous.month, 10));
 }
 
+function timelineDate(cycle, day) {
+  const previous = previousQuarterFinalMonth(cycle);
+  return new Date(Date.UTC(previous.year, previous.month, day));
+}
+
+function canMenteeChoose(cycle, now = getCurrentTime()) {
+  const opensAt = timelineDate(cycle, 5);
+  return new Date(now) >= opensAt;
+}
+
+function canAdminPair(cycle, now = getCurrentTime()) {
+  return new Date(now) >= timelineDate(cycle, 10);
+}
+
+function canViewPairing(cycle, now = getCurrentTime()) {
+  return new Date(now) >= timelineDate(cycle, 25);
+}
+
+function timelineForCycle(cycle, now = getCurrentTime()) {
+  const preferenceOpensAt = timelineDate(cycle, 5);
+  const pairingOpensAt = timelineDate(cycle, 10);
+  const pairingVisibleAt = timelineDate(cycle, 25);
+  return {
+    cycleId: cycle.code,
+    now: new Date(now).toISOString(),
+    preferenceOpensAt: preferenceOpensAt.toISOString(),
+    pairingOpensAt: pairingOpensAt.toISOString(),
+    pairingVisibleAt: pairingVisibleAt.toISOString(),
+    canMenteeChoose: canMenteeChoose(cycle, now),
+    canAdminPair: canAdminPair(cycle, now),
+    canViewPairing: canViewPairing(cycle, now)
+  };
+}
+
 function isCycleLocked(cycle) {
   return cycle && ['LOCKED', 'EXPORTED', 'PAID'].includes(String(cycle.status).toUpperCase());
 }
@@ -99,5 +133,6 @@ function topThreeAwards(rows, points = [5, 3, 2]) {
 module.exports = {
   quarterOf, quarterCode, quarterDates, validateQuarter, monthlyMentoringCode,
   quarterPreferenceDeadline, pairingStartDate,
+  canMenteeChoose, canAdminPair, canViewPairing, timelineForCycle,
   isCycleLocked, canEditSchedule, recapStatus, timingPoints, topThreeAwards
 };

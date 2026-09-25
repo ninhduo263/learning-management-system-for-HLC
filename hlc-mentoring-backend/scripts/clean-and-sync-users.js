@@ -15,13 +15,13 @@ const SOURCE_COLUMNS = {
   bankName: 'NGÂN HÀNG (Chọn list)',
   dateOfBirth: 'NGÀY SINH',
   livingAllowanceType: 'DIỆN HỖ TRỢ SINH HOẠT PHÍ',
-  activityStatus: 'Trạng thái hoạt động (Chọn list)',
+  isActive: 'isActive',
   joinedAt: 'THỜI GIAN GIA NHẬP HLC (Chọn ngày)',
   allowanceStartDate: 'THỜI GIAN BẮT ĐẦU NHẬN TRỢ CẤP (Chọn ngày)'
 };
 const MERGEABLE_FIELDS = [
   'userId', 'fullName', 'phone', 'email', 'bankAccount', 'bankName',
-  'dateOfBirth', 'livingAllowanceType', 'activityStatus', 'joinedAt',
+  'dateOfBirth', 'livingAllowanceType', 'joinedAt',
   'allowanceStartDate', 'isActive', 'role'
 ];
 
@@ -65,10 +65,11 @@ function parseDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function isActive(value) {
+function normalizeIsActive(value) {
   const status = text(value).toLowerCase();
+  if (status === 'yes' || status === 'no') return status;
   if (!status) return undefined;
-  return !['nghỉ', 'đã nghỉ', 'không hoạt động', 'inactive', 'false', '0'].includes(status);
+  throw new Error('isActive chỉ chấp nhận yes hoặc no');
 }
 
 function roleFromUserId(userId) {
@@ -81,7 +82,6 @@ function normalizeRow(row) {
   const userId = text(value('userId')).toUpperCase();
   const email = text(value('email')).toLowerCase();
   const phone = normalizePhone(value('phone'));
-  const status = text(value('activityStatus'));
   const document = {
     userId,
     fullName: text(value('fullName')),
@@ -91,11 +91,10 @@ function normalizeRow(row) {
     bankName: text(value('bankName')),
     dateOfBirth: parseDate(value('dateOfBirth')),
     livingAllowanceType: text(value('livingAllowanceType')),
-    activityStatus: status,
     joinedAt: parseDate(value('joinedAt')),
     allowanceStartDate: parseDate(value('allowanceStartDate'))
   };
-  const active = isActive(status);
+  const active = normalizeIsActive(value('isActive'));
   if (active !== undefined) document.isActive = active;
   return document;
 }

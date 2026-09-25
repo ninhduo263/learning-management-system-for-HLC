@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const mentoringRecapSchema = new mongoose.Schema({
-  pairId: { type: String, required: true, index: true },
+  monthlyId: { type: String, required: true, index: true, trim: true },
   cycleId: { type: String, required: true, index: true },
   monthCode: { type: String, index: true, trim: true },
   scheduleId: { type: String, index: true },
@@ -22,5 +22,8 @@ const mentoringRecapSchema = new mongoose.Schema({
   reviewedBy: { type: String, default: null },
   reviewedAt: { type: Date, default: null }
 }, { timestamps: true });
+
+mentoringRecapSchema.index({ cycleId: 1, monthlyId: 1, scheduleId: 1 });
+mentoringRecapSchema.index({ cycleId: 1, userId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('MentoringRecap', mentoringRecapSchema);

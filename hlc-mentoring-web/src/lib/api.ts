@@ -1,10 +1,17 @@
-const configuredApiUrl = (
-  process.env.NEXT_PUBLIC_API_URL || 'https://learning-management-system-for-hlc.onrender.com'
-).replace(/\/+$/, '');
-const API_URL = configuredApiUrl.endsWith('/api') ? configuredApiUrl : `${configuredApiUrl}/api`;
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, '');
+
+function getApiBaseUrl() {
+  const isLocalBrowser = typeof window !== 'undefined'
+    && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
+  const defaultApiUrl = isLocalBrowser || process.env.NODE_ENV === 'development'
+    ? 'http://localhost:5000'
+    : 'https://learning-management-system-for-hlc.onrender.com';
+  const baseUrl = configuredApiUrl || defaultApiUrl;
+  return baseUrl.endsWith('/api') ? baseUrl : `${baseUrl}/api`;
+}
 
 export function apiUrl(path: string) {
-  return `${API_URL}/${path.replace(/^\/+/, '')}`;
+  return `${getApiBaseUrl()}/${path.replace(/^\/+/, '')}`;
 }
 
 export function getAuthToken() {

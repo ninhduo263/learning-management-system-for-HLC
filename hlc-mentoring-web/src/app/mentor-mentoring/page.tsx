@@ -7,6 +7,12 @@ import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
 import { useMentoringData } from '@/utils/useMentoringData';
 import { isSameMonth } from '@/utils/time';
 
+function renderProfileLink(value?: string) {
+  const url = String(value || '').trim();
+  if (!/^https?:\/\//i.test(url)) return 'Chưa có link';
+  return <a href={url} target="_blank" rel="noreferrer">Xem profile</a>;
+}
+
 export default function MentorMentoringPage() {
   const { message } = App.useApp();
   const [data, setData] = useState<any>(null);
@@ -31,9 +37,12 @@ export default function MentorMentoringPage() {
 
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
-  const visiblePairIds = new Set(mentoringData.currentPairs.map((pair) => pair.pairId));
+  const visibleMonthlyIds = new Set(mentoringData.currentPairs.map((pair) => pair.monthlyId).filter(Boolean));
   const visibleSchedules = (data?.schedules ?? []).filter(
-    (schedule: any) => visiblePairIds.has(schedule.pairId) && isSameMonth(schedule.startTime)
+    (schedule: any) => (
+      visibleMonthlyIds.has(schedule.monthlyId)
+      && isSameMonth(schedule.startTime)
+    )
   );
 
   const handleSubmitRecap = async (values: any) => {
@@ -42,12 +51,14 @@ export default function MentorMentoringPage() {
       return;
     }
     try {
-      const pair = data?.pairs?.find((item: any) => item.pairId === selectedSchedule?.pairId) || data?.pairs?.[0];
+      const pair = data?.pairs?.find((item: any) =>
+        item.monthlyId === selectedSchedule?.monthlyId
+      ) || data?.pairs?.[0];
       const response = await apiFetch('/mentoring/recaps', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pairId: pair?.pairId,
+          monthlyId: pair?.monthlyId,
           cycleId: selectedSchedule?.cycleId,
           scheduleId: selectedSchedule?._id,
           role: 'MENTOR',
@@ -82,8 +93,12 @@ export default function MentorMentoringPage() {
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Mã mentoring tháng', dataIndex: 'monthlyCode' },
+            { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
+            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
             { title: 'Mentee', dataIndex: 'menteeId' },
+            { title: 'Tên Mentee', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
+            { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
+            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
             { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
           ]}
         />
@@ -97,8 +112,12 @@ export default function MentorMentoringPage() {
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Mã mentoring tháng', dataIndex: 'monthlyCode' },
+            { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
+            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
             { title: 'Mentee', dataIndex: 'menteeId' },
+            { title: 'Tên Mentee', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
+            { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
+            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
             { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
           ]}
         />
@@ -111,7 +130,7 @@ export default function MentorMentoringPage() {
           scroll={{ x: 'max-content' }}
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Pair', dataIndex: 'pairId' },
+            { title: 'Mã tháng', dataIndex: 'monthlyId' },
             { title: 'Mentee', dataIndex: 'menteeId' },
             { title: 'Bắt đầu', dataIndex: 'startTime', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Kết thúc', dataIndex: 'endTime', render: (value: string) => new Date(value).toLocaleString() },
@@ -124,7 +143,7 @@ export default function MentorMentoringPage() {
 
       <Modal title="Chi tiết lịch hẹn" open={Boolean(detailSchedule)} onCancel={() => setDetailSchedule(null)} footer={null}>
         {detailSchedule && <Descriptions bordered column={1} size="small">
-          <Descriptions.Item label="Mã cặp">{detailSchedule.pairId}</Descriptions.Item>
+          <Descriptions.Item label="Mã cặp">{detailSchedule.monthlyId}</Descriptions.Item>
           <Descriptions.Item label="Quý">{detailSchedule.cycleId}</Descriptions.Item>
           <Descriptions.Item label="Mentee">{detailSchedule.menteeId}</Descriptions.Item>
           <Descriptions.Item label="Bắt đầu">{new Date(detailSchedule.startTime).toLocaleString()}</Descriptions.Item>
@@ -136,7 +155,7 @@ export default function MentorMentoringPage() {
         </Descriptions>}
       </Modal>
 
-      {selectedSchedule && selectedSchedule.status === 'COMPLETED' && <Card title={`Gửi recap mentor - ${selectedSchedule.monthCode || selectedSchedule.pairId}`}>
+      {selectedSchedule && selectedSchedule.status === 'COMPLETED' && <Card title={`Gửi recap mentor - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}`}>
         <Form form={form} layout="vertical" onFinish={handleSubmitRecap}>
           <Form.Item name="content" label="Nội dung recap" rules={[{ required: true }]}>
             <Input.TextArea rows={5} placeholder="Tóm tắt đầu buổi / nội dung mentor" />
