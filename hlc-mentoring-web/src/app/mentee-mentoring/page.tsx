@@ -1,18 +1,15 @@
 ﻿'use client';
 
 import { useEffect, useState } from 'react';
-import { Alert, App, Button, Card, Form, Input, Modal, Select, Steps, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Steps, Table, Tag, Typography } from 'antd';
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
+import MemberQuarterlyReport from '@/components/MemberQuarterlyReport';
+import ProfileLink from '@/components/ProfileLink';
 import { useMentoringData } from '@/utils/useMentoringData';
-import { getCurrentTime, isSameMonth } from '@/utils/time';
+import { getCurrentTime } from '@/utils/time';
+import { canWriteMentoringRecap } from '@/utils/mentoringSchedule';
 import { getMentoringTimeline } from '@/utils/mentoringTimeline';
-
-function renderProfileLink(value?: string) {
-  const url = String(value || '').trim();
-  if (!/^https?:\/\//i.test(url)) return 'Chưa có link';
-  return <a href={url} target="_blank" rel="noreferrer">Xem profile</a>;
-}
 
 export default function MenteeMentoringPage() {
   const { message } = App.useApp();
@@ -30,6 +27,7 @@ export default function MenteeMentoringPage() {
   const [preferenceTimeline, setPreferenceTimeline] = useState<any>(null);
   const [preferenceModalOpen, setPreferenceModalOpen] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleMonthBounds, setScheduleMonthBounds] = useState<{ min: string; max: string } | null>(null);
 
   const loadData = async () => {
     setLoading(true);
@@ -74,12 +72,22 @@ export default function MenteeMentoringPage() {
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
   const visibleMonthlyIds = new Set(mentoringData.currentPairs.map((pair) => pair.monthlyId).filter(Boolean));
-  const visibleSchedules = (data?.schedules ?? []).filter(
-    (schedule: any) => (
-      visibleMonthlyIds.has(schedule.monthlyId)
-      && isSameMonth(schedule.startTime)
-    )
+  const scheduledMonthlyIds = new Set(
+    (data?.schedules ?? [])
+      .filter((schedule: any) => schedule.status !== 'CANCELLED')
+      .map((schedule: any) => schedule.monthlyId)
   );
+  const availablePairs = mentoringData.currentPairs.filter((pair) => !scheduledMonthlyIds.has(pair.monthlyId));
+  const visibleSchedules = (data?.schedules ?? [])
+    .filter((schedule: any) => visibleMonthlyIds.has(schedule.monthlyId))
+    .map((schedule: any) => {
+      const pair = data?.pairs?.find((item: any) => item.monthlyId === schedule.monthlyId);
+      return {
+        ...schedule,
+        mentor: schedule.mentor?.fullName ? schedule.mentor : pair?.mentor,
+        mentee: schedule.mentee?.fullName ? schedule.mentee : pair?.mentee
+      };
+    });
 
   const confirmSchedule = async (schedule: any) => {
     try {
@@ -116,6 +124,8 @@ export default function MenteeMentoringPage() {
           menteeId: pair.menteeId,
           startTime: new Date(values.startTime).toISOString(),
           endTime: new Date(values.endTime).toISOString(),
+          startTimeZoneOffsetMinutes: new Date(values.startTime).getTimezoneOffset(),
+          endTimeZoneOffsetMinutes: new Date(values.endTime).getTimezoneOffset(),
           meetingLink: values.meetingLink || '',
           location: values.location || '',
           note: values.note || ''
@@ -159,7 +169,8 @@ export default function MenteeMentoringPage() {
       if (!result.success) throw new Error(result.message);
       message.success('Đã lưu recap mentoring');
       form.resetFields();
-      loadData();
+      setSelectedSchedule(null);
+      await loadData();
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể lưu recap');
     }
@@ -193,7 +204,9 @@ export default function MenteeMentoringPage() {
         body: JSON.stringify({
           ...values,
           startTime: new Date(values.startTime).toISOString(),
-          endTime: new Date(values.endTime).toISOString()
+          endTime: new Date(values.endTime).toISOString(),
+          startTimeZoneOffsetMinutes: new Date(values.startTime).getTimezoneOffset(),
+          endTimeZoneOffsetMinutes: new Date(values.endTime).getTimezoneOffset()
         })
       });
       const result = await response.json();
@@ -286,37 +299,16 @@ export default function MenteeMentoringPage() {
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
-            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
-            { title: 'Mentor', dataIndex: 'mentorId' },
-            { title: 'Tên Mentor', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
+            { title: 'Mentor', render: (_: unknown, record: any) => <div><strong>{record.mentor?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentor?.userId || record.mentorId || '—'}</div></div> },
+            { title: 'Mentee', render: (_: unknown, record: any) => <div><strong>{record.mentee?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentee?.userId || record.menteeId || '—'}</div></div> },
+            { title: 'Profile Mentor', render: (_: unknown, record: any) => <ProfileLink url={record.mentor?.profileUrl} /> },
+            { title: 'Profile Mentee', render: (_: unknown, record: any) => <ProfileLink url={record.mentee?.profileUrl} /> },
             { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
-            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
-            { title: 'Mentee', dataIndex: 'menteeId' },
-            { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
           ]}
         />
       </Card>
 
-      <Card title="Danh sách ghép cặp theo quý">
-        <Table
-          rowKey="_id"
-          loading={loading}
-          dataSource={mentoringData.pastPairs}
-          scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 5 }}
-          columns={[
-            { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
-            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
-            { title: 'Mentor', dataIndex: 'mentorId' },
-            { title: 'Tên Mentor', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
-            { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
-            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
-            { title: 'Mentee', dataIndex: 'menteeId' },
-            { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
-          ]}
-        />
-      </Card>
+      <MemberQuarterlyReport />
       <Card title="Lịch mentoring của mentee">
         <Table
           rowKey="_id"
@@ -326,13 +318,17 @@ export default function MenteeMentoringPage() {
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Mã tháng', dataIndex: 'monthCode' },
+            { title: 'Mentor', render: (_: unknown, record: any) => <div><strong>{record.mentor?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentor?.userId || record.mentorId || '—'}</div></div> },
+            { title: 'Mentee', render: (_: unknown, record: any) => <div><strong>{record.mentee?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentee?.userId || record.menteeId || '—'}</div></div> },
+            { title: 'Profile Mentor', render: (_: unknown, record: any) => <ProfileLink url={record.mentor?.profileUrl} /> },
+            { title: 'Profile Mentee', render: (_: unknown, record: any) => <ProfileLink url={record.mentee?.profileUrl} /> },
             { title: 'Thời gian', render: (record: any) => `${new Date(record.startTime).toLocaleString()} - ${new Date(record.endTime).toLocaleString()}` },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'CONFIRMED' ? 'green' : value === 'COMPLETED' ? 'blue' : 'gold'}>{value}</Tag> },
             { title: 'Thao tác', render: (_: unknown, record: any) => <div className="flex flex-wrap gap-2">
               <Button disabled={record.status !== 'PROPOSED'} onClick={() => { setEditingSchedule(record); editScheduleForm.setFieldsValue({ startTime: toDateTimeLocal(record.startTime), endTime: toDateTimeLocal(record.endTime), meetingLink: record.meetingLink, location: record.location, note: record.note }); }}>Sửa</Button>
               <Button type="primary" disabled={record.status !== 'PROPOSED'} onClick={() => confirmSchedule(record)}>Chốt lịch</Button>
             </div> },
-            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={record.status !== 'COMPLETED'} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
+            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={!canWriteMentoringRecap(record)} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
           ]}
         />
       </Card>
@@ -350,10 +346,14 @@ export default function MenteeMentoringPage() {
 
       <Card title="Lịch mentoring">
         <p className="mb-4 text-sm text-gray-500">
-          Mentee chọn ngày và giờ dự kiến. Lịch sẽ ở trạng thái đề xuất để Admin chốt.
+          Mỗi cặp mentoring tháng chỉ có một lịch (trừ lịch đã hủy). Ngày hẹn phải nằm trong đúng tháng của cặp đã chọn.
         </p>
-        <Button type="primary" disabled={mentoringData.currentPairs.length === 0} onClick={() => {
+        {mentoringData.currentPairs.length > 0 && availablePairs.length === 0 && (
+          <Alert className="mb-4" type="info" showIcon title="Các cặp trong tháng này đã có lịch mentoring." />
+        )}
+        <Button type="primary" disabled={availablePairs.length === 0} onClick={() => {
           scheduleForm.resetFields();
+          setScheduleMonthBounds(null);
           setScheduleModalOpen(true);
         }}>
           Tạo lịch mentoring
@@ -377,17 +377,83 @@ export default function MenteeMentoringPage() {
                 showSearch
                 optionFilterProp="label"
                 placeholder="Chọn cặp mentoring"
-                options={mentoringData.currentPairs.map((pair) => ({
+                options={availablePairs.map((pair) => ({
                   value: pair.monthlyId,
                   label: `${pair.cycleId} - ${pair.monthlyId} - Mentor ${pair.mentorId}`
                 }))}
+                onChange={(monthlyId) => {
+                  const pair = availablePairs.find((item) => item.monthlyId === monthlyId);
+                  const monthFromId = String(pair?.monthlyId || '').match(/^T(0?[1-9]|1[0-2])Q[1-4](\d{4})/i);
+                  const monthFromCode = String(pair?.monthlyCode || '').match(/^(0?[1-9]|1[0-2])/);
+                  const yearFromCycle = String(pair?.cycleId || '').match(/^(\d{4})Q[1-4]$/i);
+                  const month = Number(monthFromId?.[1] || monthFromCode?.[1]);
+                  const year = Number(monthFromId?.[2] || yearFromCycle?.[1]);
+                  if (!month || !year) {
+                    setScheduleMonthBounds(null);
+                    return;
+                  }
+                  const monthText = String(month).padStart(2, '0');
+                  const lastDay = new Date(year, month, 0).getDate();
+                  setScheduleMonthBounds({
+                    min: `${year}-${monthText}-01T00:00`,
+                    max: `${year}-${monthText}-${String(lastDay).padStart(2, '0')}T23:59`
+                  });
+                }}
               />
             </Form.Item>
-            <Form.Item name="startTime" label="Ngày và giờ bắt đầu" rules={[{ required: true, message: 'Chọn thời điểm bắt đầu' }]}>
-              <Input type="datetime-local" />
+            <Form.Item
+              name="startTime"
+              label="Ngày và giờ bắt đầu"
+              rules={[
+                { required: true, message: 'Chọn thời điểm bắt đầu' },
+                {
+                  validator: (_, value) => {
+                    if (value && new Date(value).getTime() <= getCurrentTime().getTime()) {
+                      return Promise.reject(new Error('Thời điểm bắt đầu phải ở tương lai'));
+                    }
+                    if (value && scheduleMonthBounds && (value < scheduleMonthBounds.min || value > scheduleMonthBounds.max)) {
+                      return Promise.reject(new Error('Thời điểm bắt đầu phải nằm trong tháng của cặp đã chọn'));
+                    }
+                    return Promise.resolve();
+                  }
+                }
+              ]}
+            >
+              <Input
+                type="datetime-local"
+                min={scheduleMonthBounds?.min}
+                max={scheduleMonthBounds?.max}
+                onChange={(event) => {
+                  const startTime = event.target.value;
+                  if (!startTime) return;
+                  const recommendedEnd = new Date(startTime);
+                  recommendedEnd.setHours(recommendedEnd.getHours() + 1);
+                  scheduleForm.setFieldsValue({ endTime: toDateTimeLocal(recommendedEnd.toISOString()) });
+                }}
+              />
             </Form.Item>
-            <Form.Item name="endTime" label="Ngày và giờ kết thúc" rules={[{ required: true, message: 'Chọn thời điểm kết thúc' }]}>
-              <Input type="datetime-local" />
+            <Form.Item
+              name="endTime"
+              label="Ngày và giờ kết thúc"
+              extra="Mặc định đề xuất sau 1 giờ; bạn có thể chỉnh lại."
+              dependencies={['startTime']}
+              rules={[
+                { required: true, message: 'Chọn thời điểm kết thúc' },
+                ({ getFieldValue }) => ({
+                  validator: (_, value) => {
+                    const startTime = getFieldValue('startTime');
+                    if (value && scheduleMonthBounds && (value < scheduleMonthBounds.min || value > scheduleMonthBounds.max)) {
+                      return Promise.reject(new Error('Thời điểm kết thúc phải nằm trong tháng của cặp đã chọn'));
+                    }
+                    if (value && startTime && new Date(value).getTime() <= new Date(startTime).getTime()) {
+                      return Promise.reject(new Error('Thời điểm kết thúc phải sau thời điểm bắt đầu'));
+                    }
+                    return Promise.resolve();
+                  }
+                })
+              ]}
+            >
+              <Input type="datetime-local" min={scheduleMonthBounds?.min} max={scheduleMonthBounds?.max} />
             </Form.Item>
             <Form.Item name="meetingLink" label="Link meeting">
               <Input placeholder="https://meet.google.com/..." />
@@ -403,8 +469,24 @@ export default function MenteeMentoringPage() {
         </Form>
       </Modal>
 
-      {selectedSchedule && selectedSchedule.status === 'COMPLETED' && (
-        <Card title={`Gửi recap - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}`}>
+      <Modal
+        title={selectedSchedule ? `Gửi recap - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}` : 'Gửi recap'}
+        open={Boolean(selectedSchedule && canWriteMentoringRecap(selectedSchedule))}
+        onCancel={() => {
+          form.resetFields();
+          setSelectedSchedule(null);
+        }}
+        footer={null}
+        destroyOnHidden
+      >
+        {selectedSchedule && canWriteMentoringRecap(selectedSchedule) && (
+          <>
+          <Descriptions bordered size="small" column={1} className="mb-4">
+            <Descriptions.Item label="HLC ID Mentee">{selectedSchedule.mentee?.userId || selectedSchedule.menteeId}</Descriptions.Item>
+            <Descriptions.Item label="Tên Mentee">{selectedSchedule.mentee?.fullName || '—'}</Descriptions.Item>
+            <Descriptions.Item label="HLC ID Mentor">{selectedSchedule.mentor?.userId || selectedSchedule.mentorId}</Descriptions.Item>
+            <Descriptions.Item label="Tên Mentor">{selectedSchedule.mentor?.fullName || '—'}</Descriptions.Item>
+          </Descriptions>
           <Form form={form} layout="vertical" onFinish={submitRecap}>
             <Form.Item name="content" label="Nội dung recap" rules={[{ required: true }]}>
               <Input.TextArea rows={5} placeholder="Tóm tắt buổi mentoring / kế hoạch tuần tới" />
@@ -417,8 +499,9 @@ export default function MenteeMentoringPage() {
             </Form.Item>
             <Button type="primary" htmlType="submit">Gửi recap</Button>
           </Form>
-        </Card>
-      )}
+          </>
+        )}
+      </Modal>
     </div>
   );
 }

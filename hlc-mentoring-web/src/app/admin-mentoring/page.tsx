@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
 import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import { apiFetch } from '@/lib/api';
+import { mentoringRecapDeadline } from '@/utils/mentoringSchedule';
+import ProfileLink from '@/components/ProfileLink';
 
 interface Cycle { code: string; name: string; }
-interface UserOption { userId: string; fullName: string; mentorId?: string; isActive?: 'yes' | 'no'; }
+interface UserOption { userId: string; fullName: string; mentorId?: string; isActive?: string; profileUrl?: string; }
 interface Pair {
   _id: string;
   pairCode?: string;
@@ -49,6 +51,11 @@ function participantKey(userId: string) {
   return digits.length >= 5 ? digits.slice(-5) : normalized.replace(/[^A-Z0-9]/g, '');
 }
 
+function isActiveUser(user: UserOption) {
+  const normalized = String(user.isActive || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return ['yes', 'co', 'active', 'true'].includes(normalized);
+}
+
 interface Schedule {
   _id: string;
   monthlyId?: string;
@@ -80,6 +87,7 @@ const recapLabels: Record<string, string> = {
   PENDING: 'Chờ',
   SUBMITTED: 'Đã nộp',
   APPROVED: 'Đã nộp',
+  REJECTED: 'Bị từ chối',
   'ĐÃ NỘP/ĐÃ XONG': 'Đã nộp',
   'CHƯA XONG': 'Chưa xong',
   'NỘP MUỘN': 'Nộp muộn',
@@ -88,7 +96,7 @@ const recapLabels: Record<string, string> = {
 
 function recapColor(status?: string) {
   if (status === 'SUBMITTED' || status === 'APPROVED' || status === 'ĐÃ NỘP/ĐÃ XONG') return 'green';
-  if (status === 'LATE' || status === 'NỘP MUỘN' || status === 'CHƯA XONG') return 'red';
+  if (status === 'REJECTED' || status === 'LATE' || status === 'NỘP MUỘN' || status === 'CHƯA XONG') return 'red';
   return 'gold';
 }
 
@@ -135,6 +143,8 @@ export default function AdminMentoringPage() {
 
   const mentorName = (id: string) => mentors.find((item) => item.userId === id)?.fullName || id;
   const menteeName = (id: string) => mentees.find((item) => item.userId === id)?.fullName || id;
+  const mentorProfile = (id: string) => mentors.find((item) => item.userId === id)?.profileUrl;
+  const menteeProfile = (id: string) => mentees.find((item) => item.userId === id)?.profileUrl;
 
   const loadData = async (cycleId = selectedCycle) => {
     setLoading(true);
@@ -259,7 +269,7 @@ export default function AdminMentoringPage() {
     .map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
   const createCycleCode = Form.useWatch('cycleId', createForm) || selectedCycle;
   const monthOptions = monthsForCycleOptions(createCycleCode);
-  const availableMentors = mentors.filter((mentor) => mentor.isActive === 'yes');
+  const availableMentors = mentors.filter(isActiveUser);
   const pairedMenteeIds = useMemo(
     () => new Set(pairs
       .filter((pair) =>
@@ -270,7 +280,7 @@ export default function AdminMentoringPage() {
     [pairs, createCycleCode]
   );
   const availableMentees = mentees.filter((mentee) =>
-    mentee.isActive === 'yes' && !pairedMenteeIds.has(participantKey(mentee.userId))
+    isActiveUser(mentee) && !pairedMenteeIds.has(participantKey(mentee.userId))
   );
   const monthlyPairs = useMemo(
     () => [10, 11, 12].map((month) => ({
@@ -390,7 +400,10 @@ export default function AdminMentoringPage() {
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.message);
-      message.success('Đã xóa cặp mentoring của cả 3 tháng');
+      const deleted = result.data?.deleted;
+      message.success(
+        `Đã xóa từ tháng được chọn trở đi: ${deleted?.pairs ?? 0} cặp, ${deleted?.schedules ?? 0} lịch, ${deleted?.recaps ?? 0} recap và ${deleted?.scoreEvents ?? 0} điểm liên quan`
+      );
       setSelectedPair(null);
       setModal(null);
       await loadData(selectedCycle);
@@ -426,11 +439,11 @@ export default function AdminMentoringPage() {
 
   const columns = [
     { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
-    { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
-    { title: 'Họ và tên Mentee', dataIndex: 'menteeId', render: (value: string) => menteeName(value) },
-    { title: 'Mentor phụ trách', dataIndex: 'mentorId', render: (value: string) => mentorName(value) },
+    { title: 'Mentee', render: (_: unknown, row: Pair) => <div><strong>{menteeName(row.menteeId)}</strong><div className="text-xs text-gray-500">{row.menteeId}</div></div> },
+    { title: 'Mentor', render: (_: unknown, row: Pair) => <div><strong>{mentorName(row.mentorId)}</strong><div className="text-xs text-gray-500">{row.mentorId}</div></div> },
+    { title: 'Profile Mentee', render: (_: unknown, row: Pair) => <ProfileLink url={menteeProfile(row.menteeId)} /> },
+    { title: 'Profile Mentor', render: (_: unknown, row: Pair) => <ProfileLink url={mentorProfile(row.mentorId)} /> },
     { title: 'Trạng thái recap', dataIndex: 'recapStatus', render: (value: string) => <Tag color={recapColor(value)}>{recapLabels[value] || value || 'Chờ'}</Tag> },
-    { title: 'Trạng thái hoạt động', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : value === 'COMPLETED' ? 'blue' : 'default'}>{value}</Tag> },
     {
       title: 'Thao tác',
       render: (_: unknown, row: Pair) => (
@@ -456,7 +469,7 @@ export default function AdminMentoringPage() {
           </Button>
           <Popconfirm
             title="Xóa cặp mentoring?"
-            description="Thao tác này sẽ xóa cặp tương ứng ở cả tháng 10, 11 và 12."
+            description="Xóa cặp của tháng này và các tháng sau trong cùng quý, kèm lịch, recap và điểm mentoring liên quan. Các tháng trước được giữ nguyên. Không thể hoàn tác."
             okText="Xóa"
             cancelText="Hủy"
             onConfirm={() => deletePair(row)}
@@ -523,7 +536,23 @@ export default function AdminMentoringPage() {
           scroll={{ x: 'max-content' }}
           pagination={{ pageSize: 8 }}
           columns={[
-            { title: 'Cặp', dataIndex: 'monthlyId' },
+            { title: 'Mã cặp', dataIndex: 'monthlyId' },
+            { title: 'Mentee', render: (_: unknown, recap: Recap) => {
+              const pair = pairs.find((item) => item.monthlyId === recap.monthlyId);
+              return pair ? <div><strong>{menteeName(pair.menteeId)}</strong><div className="text-xs text-gray-500">{pair.menteeId}</div></div> : '—';
+            } },
+            { title: 'Profile Mentee', render: (_: unknown, recap: Recap) => {
+              const pair = pairs.find((item) => item.monthlyId === recap.monthlyId);
+              return pair ? <ProfileLink url={menteeProfile(pair.menteeId)} /> : '—';
+            } },
+            { title: 'Mentor', render: (_: unknown, recap: Recap) => {
+              const pair = pairs.find((item) => item.monthlyId === recap.monthlyId);
+              return pair ? <div><strong>{mentorName(pair.mentorId)}</strong><div className="text-xs text-gray-500">{pair.mentorId}</div></div> : '—';
+            } },
+            { title: 'Profile Mentor', render: (_: unknown, recap: Recap) => {
+              const pair = pairs.find((item) => item.monthlyId === recap.monthlyId);
+              return pair ? <ProfileLink url={mentorProfile(pair.mentorId)} /> : '—';
+            } },
             { title: 'Vai trò', dataIndex: 'role', render: (value: string) => <Tag color={value === 'MENTOR' ? 'blue' : 'green'}>{value}</Tag> },
             { title: 'Ngày nộp', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={recapColor(value)}>{recapLabels[value] || value}</Tag> },
@@ -546,8 +575,10 @@ export default function AdminMentoringPage() {
               <Descriptions.Item label="Mã tháng">{selectedPair.monthlyId}</Descriptions.Item>
               <Descriptions.Item label="Mã quý">{selectedPair.quarterlyId || 'Chưa migration'}</Descriptions.Item>
               <Descriptions.Item label="Quý">{selectedPair.cycleId}</Descriptions.Item>
-              <Descriptions.Item label="Mentee">{menteeName(selectedPair.menteeId)}</Descriptions.Item>
-              <Descriptions.Item label="Mentor">{mentorName(selectedPair.mentorId)}</Descriptions.Item>
+              <Descriptions.Item label="HLC ID Mentee">{selectedPair.menteeId}</Descriptions.Item>
+              <Descriptions.Item label="Tên Mentee">{menteeName(selectedPair.menteeId)}</Descriptions.Item>
+              <Descriptions.Item label="HLC ID Mentor">{selectedPair.mentorId}</Descriptions.Item>
+              <Descriptions.Item label="Tên Mentor">{mentorName(selectedPair.mentorId)}</Descriptions.Item>
             </Descriptions>
             <div>
               <Typography.Title level={5}>Lịch mentoring</Typography.Title>
@@ -576,16 +607,22 @@ export default function AdminMentoringPage() {
             <div>
               <Typography.Title level={5}>Trạng thái recap</Typography.Title>
               {detailSchedules.map((schedule) => {
-                const deadline = schedule.confirmedAt ? new Date(new Date(schedule.confirmedAt).getTime() + 24 * 3600000) : null;
+                const deadline = mentoringRecapDeadline(schedule);
                 const scheduleRecaps = detailRecaps.filter((recap) => recap.scheduleId === schedule._id);
+                const legacyRecaps = detailRecaps.filter((recap) => !recap.scheduleId);
+                const relatedRecaps = scheduleRecaps.length > 0
+                  ? scheduleRecaps
+                  : detailSchedules.length === 1
+                    ? (legacyRecaps.length > 0 ? legacyRecaps : detailRecaps)
+                    : legacyRecaps;
                 return <Card size="small" key={schedule._id} className="mb-2">
                   <div className="flex flex-wrap justify-between gap-2">
                     <span>{schedule.monthCode || schedule._id}</span>
-                    <span>Mốc 24h: {deadline ? deadline.toLocaleString() : 'Chưa chốt lịch'}</span>
+                    <span>Hạn recap (24h sau khi kết thúc): {deadline.toLocaleString()}</span>
                   </div>
                   <Space wrap className="mt-2">
                     {['MENTEE', 'MENTOR'].map((role) => {
-                      const recap = scheduleRecaps.find((item) => item.role === role);
+                      const recap = relatedRecaps.find((item) => item.role === role);
                       return <Tag key={role} color={recapColor(recap?.status)}>{role}: {recapLabels[recap?.status || 'PENDING'] || 'Chờ'}</Tag>;
                     })}
                   </Space>
@@ -628,6 +665,16 @@ export default function AdminMentoringPage() {
           <div className="space-y-4">
             <Descriptions bordered column={1} size="small">
               <Descriptions.Item label="Cặp">{reviewingRecap.monthlyId}</Descriptions.Item>
+              <Descriptions.Item label="HLC ID Mentee">{pairs.find((pair) => pair.monthlyId === reviewingRecap.monthlyId)?.menteeId || '—'}</Descriptions.Item>
+              <Descriptions.Item label="Tên Mentee">{(() => {
+                const pair = pairs.find((item) => item.monthlyId === reviewingRecap.monthlyId);
+                return pair ? menteeName(pair.menteeId) : '—';
+              })()}</Descriptions.Item>
+              <Descriptions.Item label="HLC ID Mentor">{pairs.find((pair) => pair.monthlyId === reviewingRecap.monthlyId)?.mentorId || '—'}</Descriptions.Item>
+              <Descriptions.Item label="Tên Mentor">{(() => {
+                const pair = pairs.find((item) => item.monthlyId === reviewingRecap.monthlyId);
+                return pair ? mentorName(pair.mentorId) : '—';
+              })()}</Descriptions.Item>
               <Descriptions.Item label="Vai trò">{reviewingRecap.role}</Descriptions.Item>
               <Descriptions.Item label="Nội dung">{reviewingRecap.content || 'Không có nội dung'}</Descriptions.Item>
               <Descriptions.Item label="Ảnh minh chứng">

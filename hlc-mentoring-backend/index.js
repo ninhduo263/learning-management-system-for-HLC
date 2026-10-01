@@ -44,11 +44,18 @@ const {
 } = require('./quarterlyRules');
 const { getCurrentTime } = require('./time');
 const { generatePairingIds } = require('./pairingIds');
+const { pairsFromSelectedMonth } = require('./pairDeletion');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'hlc-development-secret-change-me';
 const LEGACY_DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'HLC@123456';
 const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
-const mentorUserFilter = { role: 'MENTOR', isActive: 'yes', userId: /^HLC-MTO-\d+$/i };
+const ACTIVE_USER_QUERY = { $in: [/^yes$/i, /^có$/i, /^co$/i, /^active$/i, /^true$/i] };
+const mentorUserFilter = { role: 'MENTOR', isActive: ACTIVE_USER_QUERY, userId: /^HLC-MTO-\d+$/i };
+
+function isActiveUser(user) {
+  const normalized = String(user?.isActive || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return ['yes', 'co', 'active', 'true'].includes(normalized);
+}
 
 function lastFiveUserDigits(userId) {
   const digits = String(userId || '').match(/\d/g)?.join('') || '';
@@ -147,33 +154,61 @@ async function getPairsByUser(userId, visibleCycleIds, now = getCurrentTime(), r
     ? pairs.filter((pair) => isPairVisibleToMember(pair, visibleIds, now))
     : pairs;
 
-  if (!['MENTOR', 'MENTEE'].includes(role) || visiblePairs.length === 0) return visiblePairs;
+  if (visiblePairs.length === 0) return visiblePairs;
 
-  const counterpartField = role === 'MENTOR' ? 'menteeId' : 'mentorId';
-  const counterpartIds = [...new Set(visiblePairs.map((pair) => pair[counterpartField]))];
-  const counterpartUsers = await User.find({ userId: { $in: counterpartIds } })
+  const participantIds = [...new Set(visiblePairs.flatMap((pair) => [pair.mentorId, pair.menteeId]))];
+  const participantUsers = await User.find({ userId: { $in: participantIds } })
     .select('userId fullName phone profileUrl')
     .lean();
-  const usersById = new Map(counterpartUsers.map((user) => [
+  const usersById = new Map(participantUsers.map((user) => [
     String(user.userId).trim().toUpperCase(),
     user
   ]));
 
   return visiblePairs.map((pair) => {
-    const counterpartId = pair[counterpartField];
+    const mentor = usersById.get(String(pair.mentorId).trim().toUpperCase());
+    const mentee = usersById.get(String(pair.menteeId).trim().toUpperCase());
+    const counterpartId = role === 'MENTOR' ? pair.menteeId : pair.mentorId;
     const counterpart = usersById.get(String(counterpartId).trim().toUpperCase());
+    const participantSummary = (id, user) => ({
+      userId: id,
+      fullName: user?.fullName || '',
+      phone: user?.phone || '',
+      profileUrl: user?.profileUrl || ''
+    });
     return {
       ...pair,
-      counterpart: {
-        userId: counterpartId,
-        fullName: counterpart?.fullName || '',
-        phone: counterpart?.phone || '',
-        profileUrl: counterpart?.profileUrl || ''
-      }
+      mentor: participantSummary(pair.mentorId, mentor),
+      mentee: participantSummary(pair.menteeId, mentee),
+      counterpart: participantSummary(counterpartId, counterpart)
     };
   });
 }
 
+async function attachScheduleParticipants(schedules) {
+  if (!schedules.length) return schedules;
+  const participantIds = [...new Set(schedules.flatMap((schedule) => [schedule.mentorId, schedule.menteeId]))];
+  const users = await User.find({ userId: { $in: participantIds } })
+    .select('userId fullName profileUrl')
+    .lean();
+  const usersById = new Map(users.map((user) => [
+    String(user.userId).trim().toUpperCase(),
+    user
+  ]));
+  return schedules.map((schedule) => ({
+    ...schedule,
+    mentor: {
+      userId: schedule.mentorId,
+      fullName: usersById.get(String(schedule.mentorId).trim().toUpperCase())?.fullName || '',
+      profileUrl: usersById.get(String(schedule.mentorId).trim().toUpperCase())?.profileUrl || ''
+    },
+    mentee: {
+      userId: schedule.menteeId,
+      fullName: usersById.get(String(schedule.menteeId).trim().toUpperCase())?.fullName || '',
+      profileUrl: usersById.get(String(schedule.menteeId).trim().toUpperCase())?.profileUrl || ''
+    }
+  }));
+}
 const BOOTSTRAP_ADMIN_KEY = normalizeEnvValue(process.env.BOOTSTRAP_ADMIN_KEY);
 const ADMIN_PATHS = [
   '/api/cycles',
@@ -362,7 +397,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Vui lòng nhập mã thành viên và mật khẩu' });
     }
     const user = await User.findOne({ userId: userId.trim().toUpperCase() }).select('+passwordHash');
-    if (!user || user.isActive !== 'yes') {
+    if (!isActiveUser(user)) {
       return res.status(401).json({ success: false, message: 'Mã thành viên hoặc mật khẩu không đúng' });
     }
 
@@ -415,7 +450,7 @@ app.post('/api/auth/bootstrap-admin', async (req, res) => {
 
 app.get('/api/auth/me', authenticate, async (req, res) => {
   const user = await User.findOne({ userId: req.user.userId }).select('userId fullName role mentorId team position isActive');
-  if (!user || user.isActive !== 'yes') return res.status(401).json({ success: false, message: 'Tài khoản không còn hoạt động' });
+  if (!isActiveUser(user)) return res.status(401).json({ success: false, message: 'Tài khoản không còn hoạt động' });
   res.json({ success: true, data: user });
 });
 
@@ -456,11 +491,12 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
           { menteeId: exactUserIdRegex(userId) },
           { mentorId: exactUserIdRegex(userId) }
         ]
-      }).sort({ startTime: 1 }),
+      }).sort({ startTime: 1 }).lean(),
       MentoringRecap.countDocuments({ userId }),
       AllowanceSummary.findOne({ userId, ...(cycleId ? { cycleId } : {}) }).sort({ calculatedAt: -1 })
     ]);
 
+    const schedulesWithParticipants = await attachScheduleParticipants(schedules);
     res.json({
       success: true,
       data: {
@@ -480,12 +516,140 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
         recapCount,
         recentSubmissions: submissions,
         pairs,
-        schedules
+        schedules: schedulesWithParticipants
       }
     });
   } catch (error) {
     console.error('Lỗi dashboard người dùng:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
+  }
+});
+
+app.get('/api/mentoring/member-quarterly-report', authenticate, requireRole('MENTOR', 'MENTEE'), async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+    const now = getCurrentTime();
+    const pairs = await getPairsByUser(userId, null, now, role);
+    if (!pairs.length) return res.json({ success: true, data: [] });
+
+    const monthlyIds = pairs.map((pair) => pair.monthlyId);
+    const cycleIds = [...new Set(pairs.map((pair) => pair.cycleId))];
+    const [schedules, recaps] = await Promise.all([
+      MentoringSchedule.find({ cycleId: { $in: cycleIds }, monthlyId: { $in: monthlyIds } })
+        .sort({ startTime: -1 })
+        .lean(),
+      MentoringRecap.find({
+        cycleId: { $in: cycleIds },
+        monthlyId: { $in: monthlyIds },
+        userId,
+        role
+      }).sort({ createdAt: -1 }).lean()
+    ]);
+    const schedulesByMonthlyId = new Map();
+    const recapsByMonthlyId = new Map();
+    schedules.forEach((schedule) => {
+      const list = schedulesByMonthlyId.get(schedule.monthlyId) || [];
+      list.push(schedule);
+      schedulesByMonthlyId.set(schedule.monthlyId, list);
+    });
+    recaps.forEach((recap) => {
+      const list = recapsByMonthlyId.get(recap.monthlyId) || [];
+      list.push(recap);
+      recapsByMonthlyId.set(recap.monthlyId, list);
+    });
+
+    const reportsByQuarterlyId = new Map();
+    for (const pair of pairs) {
+      const quarterMatch = /^Q([1-4])(\d{4})O\d{5}E\d{5}$/i.exec(String(pair.quarterlyId || ''));
+      const monthMatch = /^T(1[0-2]|[1-9])Q[1-4](\d{4})O\d{5}E\d{5}$/i.exec(String(pair.monthlyId || ''));
+      if (!quarterMatch || !monthMatch) continue;
+
+      const quarter = Number(quarterMatch[1]);
+      const year = Number(quarterMatch[2]);
+      const key = String(pair.quarterlyId).toUpperCase();
+      const report = reportsByQuarterlyId.get(key) || {
+        key,
+        cycleId: pair.cycleId,
+        quarterlyId: pair.quarterlyId,
+        quarter,
+        year,
+        role,
+        user: {
+          userId,
+          fullName: role === 'MENTOR' ? pair.mentor?.fullName : pair.mentee?.fullName
+        },
+        mentor: pair.mentor,
+        mentee: pair.mentee,
+        months: [],
+        hasRecap: false,
+        hasImportedStatus: Object.keys(pair.importedRecapStatus || {}).length > 0
+      };
+
+      const monthlySchedules = schedulesByMonthlyId.get(pair.monthlyId) || [];
+      const schedule = monthlySchedules.find((item) => item.status !== 'CANCELLED') || monthlySchedules[0] || null;
+      const monthlyRecaps = recapsByMonthlyId.get(pair.monthlyId) || [];
+      const matchingRecaps = schedule
+        ? monthlyRecaps.filter((item) => String(item.scheduleId || '') === String(schedule._id))
+          .concat(monthlySchedules.length === 1 ? monthlyRecaps.filter((item) => !item.scheduleId) : [])
+        : monthlyRecaps;
+      const recap = matchingRecaps[0] || null;
+      const month = Number(monthMatch[1]);
+      const monthKey = `${String(month).padStart(2, '0')}/${year}`;
+      const importedStatus = pair.importedRecapStatus?.[monthKey]
+        || pair.importedRecapStatus?.[`${String(month).padStart(2, '0')}${year}`]
+        || pair.importedRecapStatus?.[`${String(month).padStart(2, '0')}-${year}`];
+      const importedRoleStatus = importedStatus?.[role.toLowerCase()] ?? importedStatus?.[role];
+      const normalizedImportedStatus = String(importedRoleStatus || '').trim().toLowerCase();
+      const completed = (recap && ['SUBMITTED', 'APPROVED', 'LATE'].includes(recap.status))
+        || ['đã xong', 'da xong', 'completed', 'approved'].includes(normalizedImportedStatus);
+
+      report.months.push({
+        month,
+        monthKey,
+        monthlyId: pair.monthlyId,
+        status: completed ? 'Đã xong' : 'Chưa xong',
+        schedule: schedule ? {
+          id: String(schedule._id),
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+          status: schedule.status,
+          meetingLink: schedule.meetingLink,
+          location: schedule.location,
+          note: schedule.note
+        } : null,
+        recap: recap ? {
+          status: recap.status,
+          content: recap.content,
+          note: recap.note,
+          mediaUrls: recap.mediaUrls,
+          createdAt: recap.createdAt
+        } : importedRoleStatus !== undefined ? {
+          status: completed ? 'APPROVED' : 'PENDING',
+          content: '',
+          note: '',
+          mediaUrls: []
+        } : null
+      });
+      report.hasRecap ||= Boolean(recap);
+      report.hasImportedStatus ||= importedRoleStatus !== undefined;
+      reportsByQuarterlyId.set(key, report);
+    }
+
+    const reports = [...reportsByQuarterlyId.values()]
+      .map((report) => ({
+        ...report,
+        months: report.months.sort((left, right) => left.month - right.month),
+        visible: report.hasRecap || report.hasImportedStatus
+          || now.getTime() >= Date.UTC(report.year, report.quarter * 3, 1)
+      }))
+      .filter((report) => report.visible)
+      .sort((left, right) => left.year - right.year || left.quarter - right.quarter);
+
+    return res.json({ success: true, data: reports });
+  } catch (error) {
+    console.error('Lỗi lấy báo cáo mentoring thành viên:', error);
+    return res.status(500).json({ success: false, message: 'Không thể tải danh sách mentoring theo quý' });
   }
 });
 
@@ -758,9 +922,12 @@ app.get('/api/users/init-data', async (req, res) => {
 app.get('/api/users/mentors', async (req, res) => {
   const includeInactive = req.user.role === 'ADMIN' && req.query.includeInactive === 'true';
   const filter = includeInactive
-    ? { role: 'MENTOR', userId: /^HLC-MTO-\d+$/i }
+    ? { role: 'MENTOR' }
     : mentorUserFilter;
-  const mentors = await User.find(filter).select('userId fullName isActive');
+  const projection = includeInactive
+    ? 'userId fullName phone profileUrl email bankAccount bankName dateOfBirth livingAllowanceType joinedAt allowanceStartDate team position'
+    : 'userId fullName isActive profileUrl';
+  const mentors = await User.find(filter).select(projection);
   res.json({ success: true, data: mentors });
 });
 
@@ -768,8 +935,11 @@ app.get('/api/users/mentees', async (req, res) => {
   const includeInactive = req.user.role === 'ADMIN' && req.query.includeInactive === 'true';
   const filter = includeInactive
     ? { role: 'MENTEE' }
-    : { role: 'MENTEE', isActive: 'yes' };
-  const mentees = await User.find(filter).select('userId fullName mentorId isActive');
+    : { role: 'MENTEE', isActive: ACTIVE_USER_QUERY };
+  const projection = includeInactive
+    ? 'userId fullName phone profileUrl email bankAccount bankName dateOfBirth livingAllowanceType joinedAt allowanceStartDate mentorId team position'
+    : 'userId fullName mentorId isActive profileUrl';
+  const mentees = await User.find(filter).select(projection);
   res.json({ success: true, data: mentees });
 });
 
@@ -1644,7 +1814,15 @@ app.get('/api/submissions/fund', async (req, res) => {
   try {
     // Lấy tất cả bài nộp loại HLC_FUND, sắp xếp mới nhất lên đầu
     const submissions = await Submission.find({ submissionType: 'HLC_FUND' }).sort({ createdAt: -1 });
-    res.status(200).json({ success: true, data: submissions });
+    const users = await User.find({ userId: { $in: submissions.map((submission) => submission.userId) } })
+      .select('userId profileUrl')
+      .lean();
+    const profileByUserId = new Map(users.map((user) => [user.userId, user.profileUrl]));
+    const submissionsWithProfiles = submissions.map((submission) => ({
+      ...submission.toObject(),
+      profileUrl: profileByUserId.get(submission.userId) || ''
+    }));
+    res.status(200).json({ success: true, data: submissionsWithProfiles });
   } catch (error) {
     console.error('Lỗi lấy danh sách:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
@@ -1895,12 +2073,12 @@ app.post('/api/mentoring/pairs', requireRole('ADMIN'), async (req, res) => {
     const mentor = await User.findOne({
       userId: exactUserIdRegex(mentorId),
       role: 'MENTOR',
-      isActive: 'yes'
+      isActive: ACTIVE_USER_QUERY
     }).lean();
     const mentee = await User.findOne({
       userId: exactUserIdRegex(menteeId),
       role: 'MENTEE',
-      isActive: 'yes'
+      isActive: ACTIVE_USER_QUERY
     }).lean();
     console.log('[pairs:create] participant lookup:', {
       mentor: mentor ? { userId: mentor.userId, role: mentor.role, isActive: mentor.isActive } : null,
@@ -2091,10 +2269,10 @@ app.patch('/api/mentoring/pairs/:monthlyId', requireRole('ADMIN'), async (req, r
     if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
     const [targetMentor, targetMentee] = await Promise.all([
       targetMentorId !== currentPair.mentorId
-        ? User.findOne({ userId: exactUserIdRegex(targetMentorId), role: 'MENTOR', isActive: 'yes' }).select('userId')
+        ? User.findOne({ userId: exactUserIdRegex(targetMentorId), role: 'MENTOR', isActive: ACTIVE_USER_QUERY }).select('userId')
         : null,
       targetMenteeId !== currentPair.menteeId
-        ? User.findOne({ userId: exactUserIdRegex(targetMenteeId), role: 'MENTEE', isActive: 'yes' }).select('userId')
+        ? User.findOne({ userId: exactUserIdRegex(targetMenteeId), role: 'MENTEE', isActive: ACTIVE_USER_QUERY }).select('userId')
         : null
     ]);
     if (targetMentorId !== currentPair.mentorId && !targetMentor) {
@@ -2196,14 +2374,52 @@ app.delete('/api/mentoring/pairs/:monthlyId', requireRole('ADMIN'), async (req, 
     const pair = await findPairByMonthlyId(requestedMonthlyId);
     if (!pair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
     const cycle = await Cycle.findOne({ code: pair.cycleId });
-    if (pair.isLocked || cycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle?.status)) {
+    if (cycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle?.status)) {
       return res.status(409).json({ success: false, message: 'Quý đã bị khóa, không thể xóa cặp mentoring' });
     }
-    const pairFilter = pair.quarterlyId
+    const quarterFilter = pair.quarterlyId
       ? { cycleId: pair.cycleId, quarterlyId: pair.quarterlyId }
-      : { monthlyId: pair.monthlyId };
-    await MentoringPair.deleteMany(pairFilter);
-    return res.json({ success: true, data: { monthlyId: pair.monthlyId } });
+      : { cycleId: pair.cycleId };
+    const quarterPairs = await MentoringPair.find(quarterFilter).lean();
+    const pairsToDelete = pairsFromSelectedMonth(quarterPairs, pair);
+    if (!pairsToDelete.length) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
+    if (pairsToDelete.some((item) => item.isLocked)) {
+      return res.status(409).json({ success: false, message: 'Một hoặc nhiều cặp từ tháng đã chọn trở đi bị khóa, không thể xóa' });
+    }
+
+    const monthlyIds = pairsToDelete.map((item) => item.monthlyId);
+    const relatedFilter = { cycleId: pair.cycleId, monthlyId: { $in: monthlyIds } };
+    const schedules = await MentoringSchedule.find(relatedFilter).select('_id').lean();
+    const scheduleIds = schedules.map((schedule) => String(schedule._id));
+    const recapFilter = relatedFilter;
+
+    const [deletedRecaps, deletedSchedules, deletedScoreEvents] = await Promise.all([
+      MentoringRecap.deleteMany(recapFilter),
+      MentoringSchedule.deleteMany(relatedFilter),
+      ScoreEvent.deleteMany({
+        cycleId: pair.cycleId,
+        $or: [
+          { sourceType: 'MENTORING_SCHEDULE', sourceId: { $in: scheduleIds } },
+          { sourceType: 'PAIR_RATING', sourceId: { $in: monthlyIds } },
+          { sourceType: 'TOP_THREE_AWARD', sourceId: { $in: monthlyIds.map((monthlyId) => `${pair.cycleId}:${monthlyId}`) } }
+        ]
+      })
+    ]);
+    const deletedPairs = await MentoringPair.deleteMany(relatedFilter);
+
+    return res.json({
+      success: true,
+      data: {
+        monthlyId: pair.monthlyId,
+        deletedMonthlyIds: monthlyIds,
+        deleted: {
+          pairs: deletedPairs.deletedCount,
+          schedules: deletedSchedules.deletedCount,
+          recaps: deletedRecaps.deletedCount,
+          scoreEvents: deletedScoreEvents.deletedCount
+        }
+      }
+    });
   } catch (error) {
     console.error('Lỗi xóa cặp mentoring:', error);
     return res.status(500).json({ success: false, message: 'Không thể xóa cặp mentoring' });
@@ -2217,16 +2433,46 @@ app.get('/api/mentoring/schedules', async (req, res) => {
     if (req.user.role === 'MENTOR') filter.mentorId = req.user.userId;
     if (req.user.role === 'MENTEE') filter.menteeId = req.user.userId;
     const schedules = await MentoringSchedule.find(filter).sort({ startTime: 1 }).lean();
-    res.json({ success: true, data: schedules });
+    const schedulesWithParticipants = await attachScheduleParticipants(schedules);
+    res.json({ success: true, data: schedulesWithParticipants });
   } catch (error) {
     console.error('Lỗi lấy lịch mentoring:', error);
     res.status(500).json({ success: false, message: 'Lỗi server' });
   }
 });
 
+function getScheduleLocalMonth(value, offsetMinutes = 0) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const offset = Number(offsetMinutes);
+  if (!Number.isInteger(offset) || Math.abs(offset) > 840) return null;
+  const localDate = new Date(date.getTime() - offset * 60_000);
+  return `${localDate.getUTCFullYear()}-${String(localDate.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function getPairScheduleMonth(pair, cycle) {
+  const monthFromCode = /^(\d{1,2})/.exec(String(pair.monthlyCode || ''));
+  const monthFromId = /^T(0?[1-9]|1[0-2])Q[1-4](\d{4})/i.exec(String(pair.monthlyId || ''));
+  const cycleYear = /^(\d{4})Q[1-4]$/i.exec(String(pair.cycleId || ''));
+  const cycleStart = cycle?.startDate ? new Date(cycle.startDate) : null;
+  const month = Number(monthFromCode?.[1] || monthFromId?.[1]);
+  const year = Number(monthFromId?.[2] || cycleYear?.[1] || cycleStart?.getUTCFullYear());
+  if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(year)) return null;
+  return {
+    month,
+    year,
+    key: `${year}-${String(month).padStart(2, '0')}`,
+    code: pair.monthlyCode || `${String(month).padStart(2, '0')}${pair.mentorId}${pair.menteeId}`
+  };
+}
+
 app.post('/api/mentoring/schedules', async (req, res) => {
   try {
-    const { monthlyId, cycleId, mentorId, menteeId, proposedBy, startTime, endTime, location, meetingLink, note, monthCode } = req.body;
+    const {
+      monthlyId, cycleId, mentorId, menteeId, startTime, endTime,
+      startTimeZoneOffsetMinutes = 0, endTimeZoneOffsetMinutes = 0,
+      location, meetingLink, note
+    } = req.body;
     if (!monthlyId || !cycleId || !mentorId || !menteeId || !startTime || !endTime) {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin lịch mentoring' });
     }
@@ -2250,16 +2496,25 @@ app.post('/api/mentoring/schedules', async (req, res) => {
     if (req.user.role !== 'MENTEE' || req.user.userId !== pair.menteeId || menteeId !== pair.menteeId || mentorId !== pair.mentorId) {
       return res.status(403).json({ success: false, message: 'Chỉ Mentee thuộc cặp mới được đề xuất lịch' });
     }
+    const pairMonth = getPairScheduleMonth(pair, cycle);
+    const startMonth = getScheduleLocalMonth(startTime, startTimeZoneOffsetMinutes);
+    const endMonth = getScheduleLocalMonth(endTime, endTimeZoneOffsetMinutes);
+    if (!pairMonth || startMonth !== pairMonth.key || endMonth !== pairMonth.key) {
+      return res.status(400).json({
+        success: false,
+        message: `Lịch mentoring phải nằm trong tháng ${pairMonth?.month || ''}/${pairMonth?.year || ''} của cặp đã chọn`
+      });
+    }
     if (new Date(startTime) >= new Date(endTime)) return res.status(400).json({ success: false, message: 'Thời gian lịch không hợp lệ' });
     if (new Date(startTime) <= getCurrentTime()) return res.status(400).json({ success: false, message: 'Thời gian mentoring phải ở tương lai' });
     const existingSchedule = await MentoringSchedule.findOne({
       monthlyId: resolvedMonthlyId,
-      status: { $in: ['PROPOSED', 'CONFIRMED'] }
+      cycleId,
+      status: { $ne: 'CANCELLED' }
     });
-    if (existingSchedule) return res.status(409).json({ success: false, message: 'Cặp đã có lịch đề xuất, hãy dùng nút Sửa để cập nhật' });
-    const month = monthCode || `${String(new Date(startTime).getUTCMonth() + 1).padStart(2, '0')}${mentorId}${menteeId}`;
+    if (existingSchedule) return res.status(409).json({ success: false, message: 'Cặp mentoring tháng này đã có lịch, hãy dùng nút Sửa để cập nhật' });
     const schedule = await MentoringSchedule.create({
-      monthlyId: resolvedMonthlyId, cycleId, monthCode: month, scheduleCode: `${month}-${resolvedMonthlyId}`, mentorId, menteeId,
+      monthlyId: resolvedMonthlyId, cycleId, monthCode: pairMonth.code, scheduleCode: `${pairMonth.code}-${resolvedMonthlyId}`, mentorId, menteeId,
       proposedBy: req.user.userId, startTime, endTime, location, meetingLink, note
     });
     res.status(201).json({ success: true, data: schedule });
@@ -2285,6 +2540,20 @@ app.patch('/api/mentoring/schedules/:id', async (req, res) => {
     }
     const allowed = ['startTime', 'endTime', 'location', 'meetingLink', 'note'];
     for (const key of allowed) if (req.body[key] !== undefined) schedule[key] = req.body[key];
+    if (req.user.role !== 'ADMIN' && (req.body.startTime !== undefined || req.body.endTime !== undefined)) {
+      const pair = await MentoringPair.findOne({ cycleId: schedule.cycleId, monthlyId: schedule.monthlyId });
+      const pairMonth = pair && getPairScheduleMonth(pair, cycle);
+      const startOffset = req.body.startTimeZoneOffsetMinutes ?? 0;
+      const endOffset = req.body.endTimeZoneOffsetMinutes ?? 0;
+      if (!pairMonth
+        || getScheduleLocalMonth(schedule.startTime, startOffset) !== pairMonth.key
+        || getScheduleLocalMonth(schedule.endTime, endOffset) !== pairMonth.key) {
+        return res.status(400).json({
+          success: false,
+          message: `Lịch mentoring phải nằm trong tháng ${pairMonth?.month || ''}/${pairMonth?.year || ''} của cặp đã chọn`
+        });
+      }
+    }
     if (new Date(schedule.startTime) >= new Date(schedule.endTime)) {
       return res.status(400).json({ success: false, message: 'Thời gian lịch không hợp lệ' });
     }
@@ -2386,13 +2655,14 @@ app.post('/api/mentoring/recaps', async (req, res) => {
         cycleId,
         monthlyId: pair.monthlyId
       }).sort({ startTime: -1 });
-    if (!schedule || schedule.status !== 'COMPLETED') {
-      return res.status(409).json({ success: false, message: 'Chỉ được gửi recap sau khi buổi mentoring hoàn tất' });
+    const scheduleHasEnded = schedule && new Date(schedule.endTime) <= getCurrentTime();
+    if (!schedule || !scheduleHasEnded || !['COMPLETED', 'CONFIRMED'].includes(schedule.status)) {
+      return res.status(409).json({ success: false, message: 'Chỉ được gửi recap sau khi lịch mentoring hoàn tất' });
     }
     const recap = await MentoringRecap.create({
       monthlyId: pair.monthlyId, cycleId, userId, role, content, mediaUrls: mediaUrls.filter(Boolean), note,
       monthCode: schedule?.monthCode, scheduleId: schedule ? String(schedule._id) : undefined,
-      status: schedule?.confirmedAt && getCurrentTime().getTime() - new Date(schedule.confirmedAt).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED'
+      status: getCurrentTime().getTime() - new Date(schedule.endTime).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED'
     });
     res.status(201).json({ success: true, data: recap });
   } catch (error) {
@@ -2463,7 +2733,7 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
       const recaps = recapsByMonthlyId.get(pair.monthlyId) || [];
       const schedule = schedules.filter((item) => item.status === 'COMPLETED' || item.status === 'CONFIRMED').sort((a, b) => new Date(b.startTime) - new Date(a.startTime))[0];
       const related = schedule ? recaps.filter((item) => String(item.scheduleId) === String(schedule._id)) : recaps;
-      const deadline = schedule?.confirmedAt ? new Date(schedule.confirmedAt).getTime() + 24 * 3600000 : null;
+      const deadline = schedule ? new Date(schedule.endTime).getTime() + 24 * 3600000 : null;
       const submittedRoles = new Set(related.filter((item) => ['SUBMITTED', 'APPROVED', 'LATE'].includes(item.status)).map((item) => item.role));
       const late = related.some((item) => item.status === 'LATE') || Boolean(deadline && getCurrentTime().getTime() > deadline);
       const monthMatch = /^T(\d{1,2})Q[1-4](\d{4})/i.exec(pair.monthlyId || '');

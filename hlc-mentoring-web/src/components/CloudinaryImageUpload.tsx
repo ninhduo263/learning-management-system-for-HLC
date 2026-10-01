@@ -18,7 +18,7 @@ export default function CloudinaryImageUpload({ value, onChange, required = fals
       onSuccess={(result: any) => onChange?.(result?.info?.secure_url)}
     >
       {({ open }) => (
-        <Space direction="vertical" size="small">
+        <Space orientation="vertical" size="small">
           <Button icon={<UploadOutlined />} onClick={() => open()}>
             {value ? 'Tải lại ảnh' : 'Tải ảnh lên Cloudinary'}
           </Button>
@@ -28,7 +28,7 @@ export default function CloudinaryImageUpload({ value, onChange, required = fals
               <Image src={value} alt="Ảnh recap" width={180} height={120} className="object-contain" />
             </div>
           ) : required ? (
-            <Alert type="info" showIcon message="Bắt buộc tải lên ảnh minh chứng cho recap." />
+            <Alert type="info" showIcon title="Bắt buộc tải lên ảnh minh chứng cho recap." />
           ) : null}
         </Space>
       )}

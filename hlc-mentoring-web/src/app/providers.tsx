@@ -10,8 +10,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* ConfigProvider của AntD với màu chủ đạo là xanh lam */}
-      <ConfigProvider theme={{ token: { colorPrimary: '#1677ff' } }}>
+      <ConfigProvider theme={{ token: { colorPrimary: '#6d5dfc', borderRadius: 12, colorBgLayout: '#f6f7fb' }, components: { Card: { headerFontSize: 16 }, Tabs: { itemSelectedColor: '#6d5dfc', inkBarColor: '#6d5dfc' } } }}>
         <App>
           {children}
         </App>

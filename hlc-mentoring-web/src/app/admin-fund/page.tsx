@@ -4,6 +4,7 @@ import { Table, Tag, Button, App, Image, Space } from 'antd';
 import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import moment from 'moment';
 import { apiFetch } from '@/lib/api';
+import ProfileLink from '@/components/ProfileLink';
 
 export default function AdminFundPage() {
   const { message } = App.useApp();
@@ -62,6 +63,12 @@ export default function AdminFundPage() {
       dataIndex: 'userId',
       key: 'userId',
       render: (text: string) => <span className="font-semibold text-blue-600">{text}</span>,
+    },
+    {
+      title: 'Profile',
+      dataIndex: 'profileUrl',
+      key: 'profileUrl',
+      render: (url: string) => <ProfileLink url={url} />
     },
     {
       title: 'Minh chứng',

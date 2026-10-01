@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Card, Col, Row, Statistic, Table, Tag } from 'antd';
 import { apiFetch } from '@/lib/api';
+import ProfileLink from '@/components/ProfileLink';
 
 export default function MenteeDashboardPage() {
   const [data, setData] = useState<any>(null);
@@ -91,9 +92,10 @@ export default function MenteeDashboardPage() {
           pagination={{ pageSize: 5 }}
           columns={[
             { title: 'Mã tháng', dataIndex: 'monthlyId' },
-            { title: 'Mentor', dataIndex: 'mentorId' },
-            { title: 'Mentee', dataIndex: 'menteeId' },
-            { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
+            { title: 'Mentor', render: (_: unknown, row: any) => <div><strong>{row.mentor?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{row.mentor?.userId || row.mentorId || '—'}</div></div> },
+            { title: 'Mentee', render: (_: unknown, row: any) => <div><strong>{row.mentee?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{row.mentee?.userId || row.menteeId || '—'}</div></div> },
+            { title: 'Profile Mentor', render: (_: unknown, row: any) => <ProfileLink url={row.mentor?.profileUrl} /> },
+            { title: 'Profile Mentee', render: (_: unknown, row: any) => <ProfileLink url={row.mentee?.profileUrl} /> }
           ]}
         />
       </Card>

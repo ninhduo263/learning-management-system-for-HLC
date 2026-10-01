@@ -4,11 +4,15 @@ import { useMemo, useState } from 'react';
 import { Alert, App, Button, Card, Spin, Table, Tabs, Tag, Typography } from 'antd';
 import { apiFetch } from '@/lib/api';
 import { getCurrentTime } from '@/utils/time';
+import ProfileLink from '@/components/ProfileLink';
 
 interface UserOption {
   userId: string;
   fullName: string;
-  isActive?: 'yes' | 'no';
+  phone?: string;
+  email?: string;
+  mentorId?: string;
+  profileUrl?: string;
 }
 
 type MemberRole = 'mentor' | 'mentee';
@@ -40,6 +44,7 @@ interface DisplayRow {
   role: 'Mentor' | 'Mentee';
   userId: string;
   fullName: string;
+  profileUrl: string;
   [column: string]: string | number;
 }
 
@@ -93,7 +98,9 @@ function buildRows(
   pairs: Pair[][],
   months: string[],
   mentorNames: Map<string, string>,
-  menteeNames: Map<string, string>
+  menteeNames: Map<string, string>,
+  mentorProfiles: Map<string, string>,
+  menteeProfiles: Map<string, string>
 ) {
   return pairs.flatMap<DisplayRow>((monthlyPairs, index) => {
     const firstPair = monthlyPairs[0];
@@ -111,7 +118,8 @@ function buildRows(
         quarterlyId: firstPair.quarterlyId || '',
         role: isMentor ? 'Mentor' : 'Mentee',
         userId,
-        fullName: (isMentor ? mentorNames : menteeNames).get(userId) || userId
+        fullName: (isMentor ? mentorNames : menteeNames).get(userId) || userId,
+        profileUrl: (isMentor ? mentorProfiles : menteeProfiles).get(userId) || ''
       };
 
       for (const month of months) {
@@ -131,9 +139,13 @@ export default function AdminDashboardPage() {
   const { message } = App.useApp();
   const [isDataVisible, setIsDataVisible] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [membersVisible, setMembersVisible] = useState(false);
+  const [membersLoading, setMembersLoading] = useState(false);
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [mentors, setMentors] = useState<UserOption[]>([]);
   const [mentees, setMentees] = useState<UserOption[]>([]);
+  const [directoryMentors, setDirectoryMentors] = useState<UserOption[]>([]);
+  const [directoryMentees, setDirectoryMentees] = useState<UserOption[]>([]);
 
   const loadPairs = async () => {
     setLoading(true);
@@ -160,12 +172,45 @@ export default function AdminDashboardPage() {
   };
 
   const handleShowData = async () => {
+    if (isDataVisible) {
+      setIsDataVisible(false);
+      return;
+    }
     setIsDataVisible(true);
     await loadPairs();
   };
 
+  const handleShowMembers = async () => {
+    if (membersVisible) {
+      setMembersVisible(false);
+      return;
+    }
+    setMembersVisible(true);
+    setMembersLoading(true);
+    try {
+      const [mentorResponse, menteeResponse] = await Promise.all([
+        apiFetch('/users/mentors?includeInactive=true'),
+        apiFetch('/users/mentees?includeInactive=true')
+      ]);
+      const [mentorResult, menteeResult] = await Promise.all([
+        mentorResponse.json(),
+        menteeResponse.json()
+      ]);
+      if (!mentorResult.success) throw new Error(mentorResult.message || 'Không thể tải danh sách Mentor');
+      if (!menteeResult.success) throw new Error(menteeResult.message || 'Không thể tải danh sách Mentee');
+      setDirectoryMentors(mentorResult.data || []);
+      setDirectoryMentees(menteeResult.data || []);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể tải danh sách thành viên');
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
   const mentorNames = useMemo(() => new Map(mentors.map((user) => [user.userId, user.fullName])), [mentors]);
   const menteeNames = useMemo(() => new Map(mentees.map((user) => [user.userId, user.fullName])), [mentees]);
+  const mentorProfiles = useMemo(() => new Map(mentors.map((user) => [user.userId, user.profileUrl || ''])), [mentors]);
+  const menteeProfiles = useMemo(() => new Map(mentees.map((user) => [user.userId, user.profileUrl || ''])), [mentees]);
 
   const reports = useMemo(() => {
     const groups = new Map<string, Pair[]>();
@@ -209,13 +254,24 @@ export default function AdminDashboardPage() {
   }, [pairs]);
 
   const renderTable = (report: QuarterReport) => {
-    const rows = buildRows(report.quarterlyIds, report.months, mentorNames, menteeNames);
+    const rows = buildRows(report.quarterlyIds, report.months, mentorNames, menteeNames, mentorProfiles, menteeProfiles);
     const columns = [
       { title: 'STT', dataIndex: 'serial', width: 65 },
-      { title: 'MÃ THEO QUÝ', dataIndex: 'quarterlyId', width: 250 },
+      { title: 'QUÝ', render: () => `Q${report.quarter}/${report.year}`, width: 100 },
       { title: 'CHỨC DANH', dataIndex: 'role', width: 110, render: (value: string) => <Tag color={value === 'Mentor' ? 'blue' : 'green'}>{value}</Tag> },
-      { title: 'HLC ID', dataIndex: 'userId', width: 150 },
-      { title: 'HỌ VÀ TÊN', dataIndex: 'fullName', width: 220 },
+      {
+        title: 'THÀNH VIÊN',
+        width: 250,
+        render: (_: unknown, row: DisplayRow) => (
+          <div><strong>{row.fullName}</strong><div className="text-xs text-gray-500">{row.userId}</div></div>
+        )
+      },
+      {
+        title: 'PROFILE',
+        dataIndex: 'profileUrl',
+        width: 130,
+        render: (value: string) => <ProfileLink url={value} />
+      },
       ...report.months.map((month) => {
         const columnKey = month.replace('/', '_');
         return {
@@ -253,7 +309,9 @@ export default function AdminDashboardPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <Typography.Title level={3} className="!mb-0">Báo cáo danh sách mentoring</Typography.Title>
         <div className="flex gap-2">
-          <Button type="primary" block className="sm:!w-auto" onClick={handleShowData}>Xem danh sách</Button>
+          <Button type="primary" block className="sm:!w-auto" onClick={handleShowData}>
+            {isDataVisible ? 'Ẩn danh sách' : 'Xem danh sách'}
+          </Button>
         </div>
       </div>
       {!isDataVisible ? (
@@ -271,6 +329,67 @@ export default function AdminDashboardPage() {
           }))} />
         </Card>
       )}
+      <Card
+        title="Danh sách thành viên"
+        extra={(
+          <Button type="primary" onClick={handleShowMembers}>
+            {membersVisible ? 'Ẩn danh sách thành viên' : 'Xem danh sách thành viên'}
+          </Button>
+        )}
+      >
+        {!membersVisible ? (
+          <Typography.Text type="secondary">Bấm “Xem danh sách thành viên” để tải danh sách Mentor và Mentee.</Typography.Text>
+        ) : (
+          <Tabs
+            items={[
+              {
+                key: 'mentees',
+                label: `Danh sách Mentee (${directoryMentees.length})`,
+                children: (
+                  <Table<UserOption>
+                    rowKey="userId"
+                    size="small"
+                    loading={membersLoading}
+                    dataSource={directoryMentees}
+                    scroll={{ x: 'max-content' }}
+                    pagination={{ pageSize: 10 }}
+                    columns={[
+                      { title: 'STT', render: (_: unknown, _member: UserOption, index: number) => index + 1, width: 65 },
+                      { title: 'HỌ VÀ TÊN', dataIndex: 'fullName', render: (value: string) => value || 'Chưa có họ tên' },
+                      { title: 'HLC ID', dataIndex: 'userId' },
+                      { title: 'SỐ ĐIỆN THOẠI', dataIndex: 'phone', render: (value?: string) => value || '—' },
+                      { title: 'EMAIL', dataIndex: 'email', render: (value?: string) => value || '—' },
+                      { title: 'PROFILE', dataIndex: 'profileUrl', render: (value?: string) => <ProfileLink url={value} /> }
+                    ]}
+                  />
+                )
+              },
+              {
+                key: 'mentors',
+                label: `Danh sách Mentor (${directoryMentors.length})`,
+                children: (
+                  <Table<UserOption>
+                    rowKey="userId"
+                    size="small"
+                    loading={membersLoading}
+                    dataSource={directoryMentors}
+                    scroll={{ x: 'max-content' }}
+                    pagination={{ pageSize: 10 }}
+                    columns={[
+                      { title: 'STT', render: (_: unknown, _member: UserOption, index: number) => index + 1, width: 65 },
+                      { title: 'HỌ VÀ TÊN', dataIndex: 'fullName', render: (value: string) => value || 'Chưa có họ tên' },
+                      { title: 'HLC ID', dataIndex: 'userId' },
+                      { title: 'SỐ ĐIỆN THOẠI', dataIndex: 'phone', render: (value?: string) => value || '—' },
+                      { title: 'EMAIL', dataIndex: 'email', render: (value?: string) => value || '—' },
+                      { title: 'PROFILE', dataIndex: 'profileUrl', render: (value?: string) => <ProfileLink url={value} /> }
+                    ]}
+                  />
+                )
+              }
+            ]}
+          />
+        )}
+      </Card>
     </div>
   );
 }

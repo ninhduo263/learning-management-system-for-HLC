@@ -4,14 +4,10 @@ import { useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Table, Tag } from 'antd';
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
+import MemberQuarterlyReport from '@/components/MemberQuarterlyReport';
+import ProfileLink from '@/components/ProfileLink';
 import { useMentoringData } from '@/utils/useMentoringData';
-import { isSameMonth } from '@/utils/time';
-
-function renderProfileLink(value?: string) {
-  const url = String(value || '').trim();
-  if (!/^https?:\/\//i.test(url)) return 'Chưa có link';
-  return <a href={url} target="_blank" rel="noreferrer">Xem profile</a>;
-}
+import { canWriteMentoringRecap } from '@/utils/mentoringSchedule';
 
 export default function MentorMentoringPage() {
   const { message } = App.useApp();
@@ -38,12 +34,16 @@ export default function MentorMentoringPage() {
   useEffect(() => { loadData(); }, []);
   const mentoringData = useMentoringData(data?.pairs);
   const visibleMonthlyIds = new Set(mentoringData.currentPairs.map((pair) => pair.monthlyId).filter(Boolean));
-  const visibleSchedules = (data?.schedules ?? []).filter(
-    (schedule: any) => (
-      visibleMonthlyIds.has(schedule.monthlyId)
-      && isSameMonth(schedule.startTime)
-    )
-  );
+  const visibleSchedules = (data?.schedules ?? [])
+    .filter((schedule: any) => visibleMonthlyIds.has(schedule.monthlyId))
+    .map((schedule: any) => {
+      const pair = data?.pairs?.find((item: any) => item.monthlyId === schedule.monthlyId);
+      return {
+        ...schedule,
+        mentor: schedule.mentor?.fullName ? schedule.mentor : pair?.mentor,
+        mentee: schedule.mentee?.fullName ? schedule.mentee : pair?.mentee
+      };
+    });
 
   const handleSubmitRecap = async (values: any) => {
     if (!values.mediaUrl) {
@@ -71,7 +71,8 @@ export default function MentorMentoringPage() {
       if (!result.success) throw new Error(result.message);
       message.success('Đã lưu recap mentor');
       form.resetFields();
-      loadData();
+      setSelectedSchedule(null);
+      await loadData();
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể lưu recap mentor');
     }
@@ -94,34 +95,15 @@ export default function MentorMentoringPage() {
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
-            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
-            { title: 'Mentee', dataIndex: 'menteeId' },
-            { title: 'Tên Mentee', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
+            { title: 'Mentor', render: (_: unknown, record: any) => <div><strong>{record.mentor?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentor?.userId || record.mentorId || '—'}</div></div> },
+            { title: 'Mentee', render: (_: unknown, record: any) => <div><strong>{record.mentee?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentee?.userId || record.menteeId || '—'}</div></div> },
+            { title: 'Profile Mentor', render: (_: unknown, record: any) => <ProfileLink url={record.mentor?.profileUrl} /> },
+            { title: 'Profile Mentee', render: (_: unknown, record: any) => <ProfileLink url={record.mentee?.profileUrl} /> },
             { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
-            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
-            { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
           ]}
         />
       </Card>
-      <Card title="Danh sách ghép cặp theo quý">
-        <Table
-          rowKey="_id"
-          loading={loading}
-          dataSource={mentoringData.pastPairs}
-          scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 5 }}
-          columns={[
-            { title: 'Quý', dataIndex: 'cycleId' },
-            { title: 'Mã mentoring tháng', dataIndex: 'monthlyId' },
-            { title: 'Mã mentoring quý', dataIndex: 'quarterlyId' },
-            { title: 'Mentee', dataIndex: 'menteeId' },
-            { title: 'Tên Mentee', dataIndex: ['counterpart', 'fullName'], render: (value: string) => value || '—' },
-            { title: 'SĐT', dataIndex: ['counterpart', 'phone'], render: (value: string) => value || '—' },
-            { title: 'Profile', dataIndex: ['counterpart', 'profileUrl'], render: renderProfileLink },
-            { title: 'Trạng thái cặp', dataIndex: 'status', render: (value: string) => <Tag color={value === 'ACTIVE' ? 'green' : 'gold'}>{value}</Tag> }
-          ]}
-        />
-      </Card>
+      <MemberQuarterlyReport />
       <Card title="Lịch mentoring của mentor">
         <Table
           rowKey="_id"
@@ -131,12 +113,15 @@ export default function MentorMentoringPage() {
           columns={[
             { title: 'Quý', dataIndex: 'cycleId' },
             { title: 'Mã tháng', dataIndex: 'monthlyId' },
-            { title: 'Mentee', dataIndex: 'menteeId' },
+            { title: 'Mentor', render: (_: unknown, record: any) => <div><strong>{record.mentor?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentor?.userId || record.mentorId || '—'}</div></div> },
+            { title: 'Mentee', render: (_: unknown, record: any) => <div><strong>{record.mentee?.fullName || 'Chưa có họ tên'}</strong><div className="text-xs text-gray-500">{record.mentee?.userId || record.menteeId || '—'}</div></div> },
+            { title: 'Profile Mentor', render: (_: unknown, record: any) => <ProfileLink url={record.mentor?.profileUrl} /> },
+            { title: 'Profile Mentee', render: (_: unknown, record: any) => <ProfileLink url={record.mentee?.profileUrl} /> },
             { title: 'Bắt đầu', dataIndex: 'startTime', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Kết thúc', dataIndex: 'endTime', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'COMPLETED' ? 'green' : 'blue'}>{value}</Tag> },
             { title: 'Chi tiết', render: (_: unknown, record: any) => <Button onClick={() => setDetailSchedule(record)}>Xem chi tiết</Button> },
-            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={record.status !== 'COMPLETED'} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
+            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={!canWriteMentoringRecap(record)} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
           ]}
         />
       </Card>
@@ -145,7 +130,10 @@ export default function MentorMentoringPage() {
         {detailSchedule && <Descriptions bordered column={1} size="small">
           <Descriptions.Item label="Mã cặp">{detailSchedule.monthlyId}</Descriptions.Item>
           <Descriptions.Item label="Quý">{detailSchedule.cycleId}</Descriptions.Item>
-          <Descriptions.Item label="Mentee">{detailSchedule.menteeId}</Descriptions.Item>
+          <Descriptions.Item label="HLC ID Mentor">{detailSchedule.mentor?.userId || detailSchedule.mentorId}</Descriptions.Item>
+          <Descriptions.Item label="Tên Mentor">{detailSchedule.mentor?.fullName || '—'}</Descriptions.Item>
+          <Descriptions.Item label="HLC ID Mentee">{detailSchedule.mentee?.userId || detailSchedule.menteeId}</Descriptions.Item>
+          <Descriptions.Item label="Tên Mentee">{detailSchedule.mentee?.fullName || '—'}</Descriptions.Item>
           <Descriptions.Item label="Bắt đầu">{new Date(detailSchedule.startTime).toLocaleString()}</Descriptions.Item>
           <Descriptions.Item label="Kết thúc">{new Date(detailSchedule.endTime).toLocaleString()}</Descriptions.Item>
           <Descriptions.Item label="Trạng thái">{detailSchedule.status}</Descriptions.Item>
@@ -155,20 +143,39 @@ export default function MentorMentoringPage() {
         </Descriptions>}
       </Modal>
 
-      {selectedSchedule && selectedSchedule.status === 'COMPLETED' && <Card title={`Gửi recap mentor - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}`}>
-        <Form form={form} layout="vertical" onFinish={handleSubmitRecap}>
-          <Form.Item name="content" label="Nội dung recap" rules={[{ required: true }]}>
-            <Input.TextArea rows={5} placeholder="Tóm tắt đầu buổi / nội dung mentor" />
-          </Form.Item>
-          <Form.Item name="mediaUrl" label="Link ảnh / tài liệu">
-            <CloudinaryImageUpload required />
-          </Form.Item>
-          <Form.Item name="note" label="Ghi chú">
-            <Input placeholder="Ghi chú" />
-          </Form.Item>
-          <Button type="primary" htmlType="submit">Gửi recap</Button>
-        </Form>
-      </Card>}
+      <Modal
+        title={selectedSchedule ? `Gửi recap mentor - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}` : 'Gửi recap mentor'}
+        open={Boolean(selectedSchedule && canWriteMentoringRecap(selectedSchedule))}
+        onCancel={() => {
+          form.resetFields();
+          setSelectedSchedule(null);
+        }}
+        footer={null}
+        destroyOnHidden
+      >
+        {selectedSchedule && canWriteMentoringRecap(selectedSchedule) && (
+          <>
+          <Descriptions bordered size="small" column={1} className="mb-4">
+            <Descriptions.Item label="HLC ID Mentor">{selectedSchedule.mentor?.userId || selectedSchedule.mentorId}</Descriptions.Item>
+            <Descriptions.Item label="Tên Mentor">{selectedSchedule.mentor?.fullName || '—'}</Descriptions.Item>
+            <Descriptions.Item label="HLC ID Mentee">{selectedSchedule.mentee?.userId || selectedSchedule.menteeId}</Descriptions.Item>
+            <Descriptions.Item label="Tên Mentee">{selectedSchedule.mentee?.fullName || '—'}</Descriptions.Item>
+          </Descriptions>
+          <Form form={form} layout="vertical" onFinish={handleSubmitRecap}>
+            <Form.Item name="content" label="Nội dung recap" rules={[{ required: true }]}>
+              <Input.TextArea rows={5} placeholder="Tóm tắt đầu buổi / nội dung mentor" />
+            </Form.Item>
+            <Form.Item name="mediaUrl" label="Link ảnh / tài liệu">
+              <CloudinaryImageUpload required />
+            </Form.Item>
+            <Form.Item name="note" label="Ghi chú">
+              <Input placeholder="Ghi chú" />
+            </Form.Item>
+            <Button type="primary" htmlType="submit">Gửi recap</Button>
+          </Form>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
