@@ -2780,6 +2780,119 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
   }
 });
 
+app.get('/api/mentoring/quarterly-report/:year/:quarter/export.xlsx', requireRole('ADMIN'), async (req, res) => {
+  try {
+    const year = Number(req.params.year);
+    const quarter = Number(req.params.quarter);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100 || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
+      return res.status(400).json({ success: false, message: 'Năm hoặc quý không hợp lệ' });
+    }
+    const quarterEnd = Date.UTC(year, quarter * 3, 1);
+    if (getCurrentTime().getTime() < quarterEnd) {
+      return res.status(409).json({ success: false, message: 'Chỉ có thể xuất file sau khi quý hoàn thành' });
+    }
+
+    const cycleId = `${year}Q${quarter}`;
+    const quarterlyPattern = new RegExp(`^Q${quarter}${year}O\\d{5}E\\d{5}$`, 'i');
+    const pairs = await MentoringPair.find({ cycleId, quarterlyId: quarterlyPattern })
+      .sort({ orderIndex: 1, createdAt: 1 })
+      .lean();
+    if (!pairs.length) return res.status(404).json({ success: false, message: 'Quý này chưa có dữ liệu mentoring để xuất' });
+
+    const monthlyIds = pairs.map((pair) => pair.monthlyId);
+    const [schedules, recaps, users] = await Promise.all([
+      MentoringSchedule.find({ cycleId, monthlyId: { $in: monthlyIds } }).lean(),
+      MentoringRecap.find({ cycleId, monthlyId: { $in: monthlyIds } }).lean(),
+      User.find({ userId: { $in: [...new Set(pairs.flatMap((pair) => [pair.mentorId, pair.menteeId]))] } })
+        .select('userId fullName profileUrl')
+        .lean()
+    ]);
+    const usersById = new Map(users.map((user) => [user.userId, user]));
+    const schedulesByMonthlyId = new Map();
+    const recapsByMonthlyId = new Map();
+    schedules.forEach((schedule) => {
+      const monthSchedules = schedulesByMonthlyId.get(schedule.monthlyId) || [];
+      monthSchedules.push(schedule);
+      schedulesByMonthlyId.set(schedule.monthlyId, monthSchedules);
+    });
+    recaps.forEach((recap) => {
+      const monthRecaps = recapsByMonthlyId.get(recap.monthlyId) || [];
+      monthRecaps.push(recap);
+      recapsByMonthlyId.set(recap.monthlyId, monthRecaps);
+    });
+
+    const pairsByQuarterlyId = new Map();
+    pairs.forEach((pair) => {
+      const quarterPairs = pairsByQuarterlyId.get(pair.quarterlyId) || [];
+      quarterPairs.push(pair);
+      pairsByQuarterlyId.set(pair.quarterlyId, quarterPairs);
+    });
+    const months = [1, 2, 3].map((offset) => (quarter - 1) * 3 + offset);
+    const rows = [];
+    for (const quarterPairs of pairsByQuarterlyId.values()) {
+      const firstPair = quarterPairs[0];
+      const pairsByMonth = new Map(quarterPairs.map((pair) => {
+        const match = /^T(1[0-2]|[1-9])Q[1-4]\d{4}/i.exec(pair.monthlyId || '');
+        return [match ? Number(match[1]) : 0, pair];
+      }));
+      for (const role of ['MENTOR', 'MENTEE']) {
+        const userId = role === 'MENTOR' ? firstPair.mentorId : firstPair.menteeId;
+        const user = usersById.get(userId);
+        const row = {
+          STT: role === 'MENTOR' ? rows.length / 2 + 1 : '',
+          'Quý': `Q${quarter}/${year}`,
+          'Vai trò': role === 'MENTOR' ? 'Mentor' : 'Mentee',
+          'Họ và tên': user?.fullName || '',
+          'HLC ID': userId,
+          'Profile': user?.profileUrl || ''
+        };
+        for (const month of months) {
+          const pair = pairsByMonth.get(month);
+          const prefix = `Tháng ${String(month).padStart(2, '0')}`;
+          row[`${prefix} - Mã mentoring`] = pair?.monthlyId || '';
+          let status = '';
+          if (pair) {
+            const monthKey = `${String(month).padStart(2, '0')}/${year}`;
+            const importedMonthStatus = pair.importedRecapStatus?.[monthKey]
+              || pair.importedRecapStatus?.[`${String(month).padStart(2, '0')}${year}`]
+              || pair.importedRecapStatus?.[`${String(month).padStart(2, '0')}-${year}`];
+            const importedRoleStatus = importedMonthStatus?.[role.toLowerCase()] ?? importedMonthStatus?.[role];
+            if (importedRoleStatus !== undefined) {
+              const normalized = String(importedRoleStatus).trim().toLowerCase();
+              status = ['đã xong', 'da xong', 'completed', 'approved'].includes(normalized) ? 'Đã xong' : 'Chưa xong';
+            } else {
+              const monthSchedules = schedulesByMonthlyId.get(pair.monthlyId) || [];
+              const schedule = monthSchedules
+                .filter((item) => item.status === 'COMPLETED' || item.status === 'CONFIRMED')
+                .sort((left, right) => new Date(right.startTime) - new Date(left.startTime))[0];
+              const monthRecaps = recapsByMonthlyId.get(pair.monthlyId) || [];
+              const relatedRecaps = schedule
+                ? monthRecaps.filter((item) => String(item.scheduleId) === String(schedule._id))
+                : monthRecaps;
+              const isSubmitted = relatedRecaps.some((item) => (
+                item.role === role && ['SUBMITTED', 'APPROVED', 'LATE'].includes(item.status)
+              ));
+              status = isSubmitted ? 'Đã xong' : 'Chưa xong';
+            }
+          }
+          row[`${prefix} - Trạng thái recap`] = status;
+        }
+        rows.push(row);
+      }
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(rows), `Q${quarter} ${year}`);
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="hlc-mentoring-Q${quarter}-${year}.xlsx"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Lỗi xuất báo cáo mentoring theo quý:', error);
+    return res.status(500).json({ success: false, message: 'Không thể xuất file báo cáo quý' });
+  }
+});
+
 app.post('/api/cycles/:cycleId/top-three-awards', requireRole('ADMIN'), async (req, res) => {
   try {
     const cycle = await Cycle.findOne({ code: req.params.cycleId });

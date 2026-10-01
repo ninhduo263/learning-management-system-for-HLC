@@ -35,6 +35,7 @@ interface QuarterReport {
   year: number;
   quarterlyIds: Pair[][];
   months: string[];
+  completed: boolean;
 }
 
 interface DisplayRow {
@@ -146,6 +147,7 @@ export default function AdminDashboardPage() {
   const [mentees, setMentees] = useState<UserOption[]>([]);
   const [directoryMentors, setDirectoryMentors] = useState<UserOption[]>([]);
   const [directoryMentees, setDirectoryMentees] = useState<UserOption[]>([]);
+  const [exportingQuarter, setExportingQuarter] = useState<string | null>(null);
 
   const loadPairs = async () => {
     setLoading(true);
@@ -178,6 +180,30 @@ export default function AdminDashboardPage() {
     }
     setIsDataVisible(true);
     await loadPairs();
+  };
+
+  const exportQuarter = async (report: QuarterReport) => {
+    setExportingQuarter(report.key);
+    try {
+      const response = await apiFetch(`/mentoring/quarterly-report/${report.year}/${report.quarter}/export.xlsx`);
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.message || 'Không thể xuất file báo cáo quý');
+      }
+      const file = await response.blob();
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `hlc-mentoring-Q${report.quarter}-${report.year}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể xuất file báo cáo quý');
+    } finally {
+      setExportingQuarter(null);
+    }
   };
 
   const handleShowMembers = async () => {
@@ -246,7 +272,8 @@ export default function AdminDashboardPage() {
           year,
           quarterlyIds: [...quarterGroups.values()],
           months: monthLabels(quarter, year),
-          visible: hasHistoricalStatuses || quarterHasEnded
+          visible: hasHistoricalStatuses || quarterHasEnded,
+          completed: quarterHasEnded
         };
       })
       .filter((report) => report.visible)
@@ -325,7 +352,23 @@ export default function AdminDashboardPage() {
           <Tabs items={reports.map((report) => ({
             key: report.key,
             label: `Danh sách Quý ${report.quarter} - ${report.year}`,
-            children: renderTable(report)
+            children: (
+              <div className="space-y-3">
+                {report.completed && (
+                  <div className="flex justify-end">
+                    <Button
+                      type="primary"
+                      loading={exportingQuarter === report.key}
+                      disabled={exportingQuarter !== null && exportingQuarter !== report.key}
+                      onClick={() => exportQuarter(report)}
+                    >
+                      Xuất file .xlsx
+                    </Button>
+                  </div>
+                )}
+                {renderTable(report)}
+              </div>
+            )
           }))} />
         </Card>
       )}

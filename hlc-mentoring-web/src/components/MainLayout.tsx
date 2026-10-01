@@ -126,10 +126,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
                 ? new Intl.DateTimeFormat('vi-VN', {
                   day: '2-digit',
                   month: '2-digit',
-                  year: 'numeric',
+                  ...(isMobile ? {} : { year: 'numeric' }),
                   hour: '2-digit',
                   minute: '2-digit',
-                  second: '2-digit',
+                  ...(!isMobile ? { second: '2-digit' } : {}),
                   hour12: false,
                   timeZone: 'Asia/Ho_Chi_Minh'
                 }).format(currentDateTime)
