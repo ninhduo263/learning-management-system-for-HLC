@@ -12,6 +12,36 @@ body {
   color: var(--ink);
 }
 
+.login-wait-screen {
+  position: relative;
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at top left, rgba(109, 93, 252, .12), transparent 42%),
+    linear-gradient(145deg, #f9faff, #f0f2fa);
+}
+.login-wait-glow { position: absolute; width: 280px; height: 280px; border-radius: 50%; filter: blur(2px); pointer-events: none; }
+.login-wait-glow-one { top: -150px; right: 8%; background: rgba(109, 93, 252, .1); }
+.login-wait-glow-two { bottom: -180px; left: 4%; background: rgba(14, 159, 145, .1); }
+.login-wait-card { position: relative; width: min(100%, 460px); padding: 38px 36px 28px; border: 1px solid rgba(226, 229, 241, .9); border-radius: 24px; background: rgba(255, 255, 255, .92); box-shadow: 0 24px 70px rgba(42, 49, 79, .1); text-align: center; }
+.login-wait-brand { display: flex; align-items: center; justify-content: center; gap: 9px; color: #282259; font-size: 16px; font-weight: 800; letter-spacing: -.02em; }
+.login-wait-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 11px; color: white; background: linear-gradient(145deg, #8275ec, #5a4be0); font-size: 20px; }
+.login-wait-spinner { display: grid; width: 74px; height: 74px; margin: 34px auto 20px; place-items: center; border: 1px solid #e8e6ff; border-radius: 50%; color: #6d5dfc; background: #f6f5ff; font-size: 34px; animation: login-wait-pulse 1.8s ease-in-out infinite; }
+.login-wait-eyebrow { margin: 0; color: #8277d7; font-size: 10px; font-weight: 800; letter-spacing: .16em; }
+.login-wait-card h1 { margin: 10px 0 8px; color: #20283c; font-size: 22px; line-height: 1.35; letter-spacing: -.025em; }
+.login-wait-message { min-height: 44px; margin: 0 auto; color: #768198; font-size: 14px; line-height: 1.6; }
+.login-wait-progress { height: 5px; overflow: hidden; margin: 24px 0 20px; border-radius: 10px; background: #eeedfa; }
+.login-wait-progress span { display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #7768f5, #aea5ff); animation: login-wait-progress 1.7s ease-in-out infinite; }
+.login-wait-footer { display: flex; align-items: center; justify-content: center; gap: 7px; color: #929bb0; font-size: 12px; }
+.login-wait-footer svg { color: #59ad8c; }
+.login-wait-time { margin: 12px 0 0; color: #a4aabd; font-size: 11px; font-variant-numeric: tabular-nums; }
+@keyframes login-wait-pulse { 50% { transform: scale(1.05); box-shadow: 0 0 0 9px rgba(109, 93, 252, .06); } }
+@keyframes login-wait-progress { 0% { transform: translateX(-110%); } 100% { transform: translateX(280%); } }
+
 .app-shell { --role: #6d5dfc; --role-soft: #efedff; --role-deep: #282259; }
 .app-shell.role-mentor { --role: #0e9f91; --role-soft: #e5f8f5; --role-deep: #073f43; }
 .app-shell.role-mentee { --role: #7657e8; --role-soft: #f0ecff; --role-deep: #29235c; }
@@ -262,5 +292,33 @@ body {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-wait-screen {
+    padding: 16px;
+  }
+
+  .login-wait-card {
+    padding: 30px 22px 24px;
+    border-radius: 20px;
+  }
+
+  .login-wait-spinner {
+    width: 66px;
+    height: 66px;
+    margin-top: 28px;
+  }
+
+  .login-wait-card h1 {
+    font-size: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-wait-spinner,
+  .login-wait-progress span {
+    animation-duration: 4s;
   }
 }
