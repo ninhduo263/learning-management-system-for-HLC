@@ -493,7 +493,7 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
       ? undefined
       : visibleCycles.map((cycle) => String(cycle.code).toUpperCase());
     const cycleId = req.query.cycleId || (latestCycle && latestCycle.code);
-    const [scoreSummary, submissions, pairs, schedules, recapCount, allowanceSummary] = await Promise.all([
+    const [scoreSummary, submissions, pairs, schedules, recaps, allowanceSummary] = await Promise.all([
       ScoreEvent.aggregate([
         { $match: { userId, ...(cycleId ? { cycleId } : {}) } },
         { $group: { _id: '$category', total: { $sum: '$points' } } }
@@ -506,7 +506,7 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
           { mentorId: exactUserIdRegex(userId) }
         ]
       }).sort({ startTime: 1 }).lean(),
-      MentoringRecap.countDocuments({ userId }),
+      MentoringRecap.find({ userId }).sort({ createdAt: -1 }).lean(),
       AllowanceSummary.findOne({ userId, ...(cycleId ? { cycleId } : {}) }).sort({ calculatedAt: -1 })
     ]);
 
@@ -527,10 +527,11 @@ app.get('/api/dashboard/personal', authenticate, async (req, res) => {
         pendingCount: submissions.filter((item) => item.status === 'PENDING' || item.status === 'IN_REVIEW').length,
         pairCount: pairs.length,
         scheduleCount: schedules.length,
-        recapCount,
+        recapCount: recaps.length,
         recentSubmissions: submissions,
         pairs,
-        schedules: schedulesWithParticipants
+        schedules: schedulesWithParticipants,
+        recaps
       }
     });
   } catch (error) {
@@ -2656,7 +2657,9 @@ app.post('/api/mentoring/recaps', async (req, res) => {
   try {
     const { monthlyId, cycleId, scheduleId, role, content, mediaUrls, note } = req.body;
     const userId = req.user.userId;
-    if (!monthlyId || !cycleId || !role || !Array.isArray(mediaUrls) || mediaUrls.filter(Boolean).length === 0) {
+    const normalizedContent = String(content || '').trim();
+    const normalizedMediaUrls = Array.isArray(mediaUrls) ? mediaUrls.map((url) => String(url || '').trim()).filter(Boolean) : [];
+    if (!monthlyId || !cycleId || !role || !normalizedContent || normalizedMediaUrls.length === 0) {
       return res.status(400).json({ success: false, message: 'Recap cần nội dung và ít nhất một ảnh minh chứng' });
     }
     if (!['MENTOR', 'MENTEE'].includes(role) || (role === 'MENTOR' && req.user.role !== 'MENTOR') || (role === 'MENTEE' && req.user.role !== 'MENTEE')) {
@@ -2665,10 +2668,11 @@ app.post('/api/mentoring/recaps', async (req, res) => {
     const pair = await MentoringPair.findOne({
       cycleId,
       monthlyId: String(monthlyId).trim().toUpperCase(),
-      $and: [{ $or: [{ mentorId: userId }, { menteeId: userId }] }]
+      ...(role === 'MENTOR' ? { mentorId: userId } : { menteeId: userId })
     });
     if (!pair) return res.status(403).json({ success: false, message: 'Bạn không thuộc cặp mentoring này' });
     const cycle = await Cycle.findOne({ code: cycleId });
+    if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
     if (isCycleLocked(cycle)) return res.status(409).json({ success: false, message: 'Kỳ đã khóa, không thể gửi recap' });
     const schedule = scheduleId
       ? await MentoringSchedule.findOne({
@@ -2684,12 +2688,48 @@ app.post('/api/mentoring/recaps', async (req, res) => {
     if (!schedule || !scheduleHasEnded || !['COMPLETED', 'CONFIRMED'].includes(schedule.status)) {
       return res.status(409).json({ success: false, message: 'Chỉ được gửi recap sau khi lịch mentoring hoàn tất' });
     }
-    const recap = await MentoringRecap.create({
-      monthlyId: pair.monthlyId, cycleId, userId, role, content, mediaUrls: mediaUrls.filter(Boolean), note,
-      monthCode: schedule?.monthCode, scheduleId: schedule ? String(schedule._id) : undefined,
-      status: getCurrentTime().getTime() - new Date(schedule.endTime).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED'
-    });
-    res.status(201).json({ success: true, data: recap });
+    if ((role === 'MENTOR' && schedule.mentorId !== userId) || (role === 'MENTEE' && schedule.menteeId !== userId)) {
+      return res.status(403).json({ success: false, message: 'Bạn không thuộc lịch mentoring này' });
+    }
+    const recapFilter = {
+      monthlyId: pair.monthlyId,
+      cycleId,
+      userId,
+      role,
+      ...(scheduleId
+        ? { $or: [{ scheduleId: String(schedule._id) }, { scheduleId: { $exists: false } }, { scheduleId: null }, { scheduleId: '' }] }
+        : {})
+    };
+    const approvedRecap = await MentoringRecap.findOne({ ...recapFilter, status: 'APPROVED' });
+    if (approvedRecap) {
+      return res.status(409).json({ success: false, code: 'RECAP_ALREADY_APPROVED', message: 'Recap đã được Admin duyệt và không thể sửa hoặc nộp lại' });
+    }
+    const existingRecap = await MentoringRecap.findOne(recapFilter).sort({ updatedAt: -1 });
+    const recapData = {
+      monthlyId: pair.monthlyId,
+      cycleId,
+      userId,
+      role,
+      content: normalizedContent,
+      mediaUrls: normalizedMediaUrls,
+      note: String(note || ''),
+      monthCode: schedule.monthCode,
+      scheduleId: String(schedule._id),
+      status: getCurrentTime().getTime() - new Date(schedule.endTime).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED',
+      reviewedBy: null,
+      reviewedAt: null
+    };
+    const recap = existingRecap
+      ? await MentoringRecap.findOneAndUpdate(
+        { _id: existingRecap._id, status: { $ne: 'APPROVED' } },
+        { $set: recapData },
+        { returnDocument: 'after', runValidators: true }
+      )
+      : await MentoringRecap.create(recapData);
+    if (!recap) {
+      return res.status(409).json({ success: false, code: 'RECAP_ALREADY_APPROVED', message: 'Recap đã được Admin duyệt và không thể sửa hoặc nộp lại' });
+    }
+    return res.status(existingRecap ? 200 : 201).json({ success: true, data: recap });
   } catch (error) {
     console.error('Lỗi lưu recap mentoring:', error);
     res.status(400).json({ success: false, message: error.message });
@@ -2700,6 +2740,9 @@ async function reviewMentoringRecap(req, res, status) {
   try {
     const recap = await MentoringRecap.findById(req.params.id);
     if (!recap) return res.status(404).json({ success: false, message: 'Không tìm thấy recap mentoring' });
+    if (recap.status === 'APPROVED') {
+      return res.status(409).json({ success: false, message: 'Recap đã được duyệt trước đó' });
+    }
     recap.status = status;
     recap.reviewedBy = req.user.userId;
     recap.reviewedAt = getCurrentTime();

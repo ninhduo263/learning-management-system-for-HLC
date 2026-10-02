@@ -41,7 +41,12 @@ export default function MentorMentoringPage() {
       return {
         ...schedule,
         mentor: schedule.mentor?.fullName ? schedule.mentor : pair?.mentor,
-        mentee: schedule.mentee?.fullName ? schedule.mentee : pair?.mentee
+        mentee: schedule.mentee?.fullName ? schedule.mentee : pair?.mentee,
+        recap: (data?.recaps ?? []).find((item: any) => (
+          item.role === 'MENTOR'
+          && item.monthlyId === schedule.monthlyId
+          && (item.scheduleId === String(schedule._id) || !item.scheduleId)
+        ))
       };
     });
 
@@ -69,7 +74,7 @@ export default function MentorMentoringPage() {
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.message);
-      message.success('Đã lưu recap mentor');
+      message.success(selectedSchedule?.recap ? 'Đã cập nhật recap mentor' : 'Đã gửi recap mentor');
       form.resetFields();
       setSelectedSchedule(null);
       await loadData();
@@ -121,7 +126,21 @@ export default function MentorMentoringPage() {
             { title: 'Kết thúc', dataIndex: 'endTime', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'COMPLETED' ? 'green' : 'blue'}>{value}</Tag> },
             { title: 'Chi tiết', render: (_: unknown, record: any) => <Button onClick={() => setDetailSchedule(record)}>Xem chi tiết</Button> },
-            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={!canWriteMentoringRecap(record)} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
+            { title: 'Recap', render: (_: unknown, record: any) => (
+              <Button
+                disabled={!canWriteMentoringRecap(record, record.recap)}
+                onClick={() => {
+                  form.setFieldsValue({
+                    content: record.recap?.content || '',
+                    mediaUrl: record.recap?.mediaUrls?.[0] || '',
+                    note: record.recap?.note || ''
+                  });
+                  setSelectedSchedule(record);
+                }}
+              >
+                {record.recap?.status === 'APPROVED' ? 'Đã duyệt' : record.recap ? 'Sửa recap' : 'Viết recap'}
+              </Button>
+            ) }
           ]}
         />
       </Card>
@@ -144,8 +163,8 @@ export default function MentorMentoringPage() {
       </Modal>
 
       <Modal
-        title={selectedSchedule ? `Gửi recap mentor - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}` : 'Gửi recap mentor'}
-        open={Boolean(selectedSchedule && canWriteMentoringRecap(selectedSchedule))}
+        title={selectedSchedule ? `${selectedSchedule.recap ? 'Sửa recap mentor' : 'Gửi recap mentor'} - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}` : 'Gửi recap mentor'}
+        open={Boolean(selectedSchedule && canWriteMentoringRecap(selectedSchedule, selectedSchedule.recap))}
         onCancel={() => {
           form.resetFields();
           setSelectedSchedule(null);
@@ -153,7 +172,7 @@ export default function MentorMentoringPage() {
         footer={null}
         destroyOnHidden
       >
-        {selectedSchedule && canWriteMentoringRecap(selectedSchedule) && (
+        {selectedSchedule && canWriteMentoringRecap(selectedSchedule, selectedSchedule.recap) && (
           <>
           <Descriptions bordered size="small" column={1} className="mb-4">
             <Descriptions.Item label="HLC ID Mentor">{selectedSchedule.mentor?.userId || selectedSchedule.mentorId}</Descriptions.Item>
@@ -171,7 +190,7 @@ export default function MentorMentoringPage() {
             <Form.Item name="note" label="Ghi chú">
               <Input placeholder="Ghi chú" />
             </Form.Item>
-            <Button type="primary" htmlType="submit">Gửi recap</Button>
+            <Button type="primary" htmlType="submit">{selectedSchedule.recap ? 'Cập nhật recap' : 'Gửi recap'}</Button>
           </Form>
           </>
         )}

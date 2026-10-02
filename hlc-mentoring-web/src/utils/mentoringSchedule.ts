@@ -5,11 +5,17 @@ interface RecapSchedule {
   endTime: string | Date;
 }
 
+interface RecapReview {
+  status?: string;
+}
+
 export function canWriteMentoringRecap(
   schedule: RecapSchedule,
+  recap?: RecapReview | null,
   now = getCurrentTime()
 ) {
-  return ['COMPLETED', 'CONFIRMED'].includes(schedule.status)
+  return recap?.status !== 'APPROVED'
+    && ['COMPLETED', 'CONFIRMED'].includes(schedule.status)
     && new Date(schedule.endTime) <= now;
 }
 

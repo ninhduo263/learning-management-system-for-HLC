@@ -9,7 +9,8 @@ import { getCurrentTime } from '@/utils/time';
 import ProfileLink from '@/components/ProfileLink';
 
 interface Cycle { code: string; name: string; }
-interface UserOption { userId: string; fullName: string; mentorId?: string; isActive?: string; profileUrl?: string; }
+interface UserOption { userId: string; fullName: string; mentorId?: string; isActive?: string; profileUrl?: string; preferenceRank?: number; }
+interface MentorPreference { cycleId: string; menteeId: string; mentorIds: string[]; }
 interface Pair {
   _id: string;
   pairCode?: string;
@@ -256,6 +257,7 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recaps, setRecaps] = useState<Recap[]>([]);
+  const [mentorPreferences, setMentorPreferences] = useState<MentorPreference[]>([]);
   const ADMIN_PAIRING_CYCLE = cycleCode;
   const selectedCycle = cycleCode;
   const [selectedPair, setSelectedPair] = useState<Pair | null>(null);
@@ -264,6 +266,7 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
   const [overrideSchedule, setOverrideSchedule] = useState<Schedule | null>(null);
   const [reviewingRecap, setReviewingRecap] = useState<Recap | null>(null);
   const [reviewNote, setReviewNote] = useState('');
+  const [expandedReviewContent, setExpandedReviewContent] = useState(false);
   const [cycleLocked, setCycleLocked] = useState(false);
   const [importing, setImporting] = useState(false);
   const unlockCycle = async () => {
@@ -297,10 +300,11 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
         apiFetch(`/mentoring/pairs${pairQuery}`),
         apiFetch(`/mentoring/schedules${cycleQuery}`),
         apiFetch(`/mentoring/recaps${cycleQuery}`),
-        apiFetch(`/mentoring/pairs/status${pairQuery}`)
+        apiFetch(`/mentoring/pairs/status${pairQuery}`),
+        apiFetch(`/mentoring/preferences?cycleId=${encodeURIComponent(cycleId)}`)
       ]);
       const results = await Promise.all(responses.map((response) => response.json()));
-      const [cycleResult, mentorResult, menteeResult, pairResult, scheduleResult, recapResult, statusResult] = results;
+      const [cycleResult, mentorResult, menteeResult, pairResult, scheduleResult, recapResult, statusResult, preferenceResult] = results;
       if (cycleResult.success) {
         setCycles(cycleResult.data);
         setCycleLocked(Boolean(cycleResult.data.find((cycle: Cycle & { isLocked?: boolean }) => cycle.code === cycleId)?.isLocked));
@@ -311,6 +315,8 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
       setMentees(menteeResult.data || []);
       if (scheduleResult.success) setSchedules(scheduleResult.data);
       if (recapResult.success) setRecaps(recapResult.data);
+      if (!preferenceResult.success) throw new Error(preferenceResult.message || 'Không thể tải nguyện vọng Mentor');
+      setMentorPreferences(Array.isArray(preferenceResult.data) ? preferenceResult.data : []);
       if (!pairResult.success) {
         throw new Error(pairResult.message || 'Không thể tải danh sách cặp mentoring');
       }
@@ -403,8 +409,21 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
     .filter((cycle) => cycle.code === cycleCode)
     .map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
   const createCycleCode = Form.useWatch('cycleId', createForm) || selectedCycle;
+  const createMenteeId = Form.useWatch('menteeId', createForm);
   const monthOptions = monthsForCycleOptions(createCycleCode);
-  const availableMentors = mentors.filter(isActiveUser);
+  const availableMentors = useMemo(() => {
+    const preference = mentorPreferences.find((item) =>
+      normalizeCycleId(item.cycleId) === normalizeCycleId(createCycleCode)
+      && participantKey(item.menteeId) === participantKey(createMenteeId || '')
+    );
+    const ranks = new Map((preference?.mentorIds || []).map((mentorId, index) => [participantKey(mentorId), index + 1]));
+    return mentors
+      .filter(isActiveUser)
+      .map((mentor) => ({ ...mentor, preferenceRank: ranks.get(participantKey(mentor.userId)) }))
+      .sort((first, second) =>
+        (first.preferenceRank || Number.MAX_SAFE_INTEGER) - (second.preferenceRank || Number.MAX_SAFE_INTEGER)
+      );
+  }, [mentors, mentorPreferences, createCycleCode, createMenteeId]);
   const pairedMenteeIds = useMemo(
     () => new Set(pairs
       .filter((pair) =>
@@ -566,6 +585,7 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
       message.success(status === 'APPROVED' ? 'Đã duyệt recap' : 'Đã từ chối recap');
       setReviewingRecap(null);
       setReviewNote('');
+      setExpandedReviewContent(false);
       await loadData(selectedCycle);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể cập nhật recap');
@@ -697,7 +717,10 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
             { title: 'Ngày nộp', dataIndex: 'createdAt', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={recapColor(value)}>{recapLabels[value] || value}</Tag> },
             { title: 'Ảnh', dataIndex: 'mediaUrls', render: (value: string[]) => value?.length ? <a href={value[0]} target="_blank" rel="noreferrer">Xem ảnh</a> : 'Thiếu ảnh' },
-            { title: 'Thao tác', render: (_: unknown, recap: Recap) => <Button disabled={!['SUBMITTED', 'LATE'].includes(recap.status)} onClick={() => setReviewingRecap(recap)}>Xem & duyệt</Button> }
+            { title: 'Thao tác', render: (_: unknown, recap: Recap) => <Button disabled={!['SUBMITTED', 'LATE'].includes(recap.status)} onClick={() => {
+              setExpandedReviewContent(false);
+              setReviewingRecap(recap);
+            }}>Xem & duyệt</Button> }
           ]}
         />
       </Card>
@@ -796,10 +819,12 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
       </Modal>
       <Modal
         title="Review recap"
+        width="min(900px, calc(100vw - 24px))"
         open={Boolean(reviewingRecap)}
-        onCancel={() => { setReviewingRecap(null); setReviewNote(''); }}
+        onCancel={() => { setReviewingRecap(null); setReviewNote(''); setExpandedReviewContent(false); }}
         footer={null}
         destroyOnHidden
+        styles={{ body: { maxHeight: 'min(72vh, 760px)', overflowY: 'auto' } }}
       >
         {reviewingRecap && (
           <div className="space-y-4">
@@ -816,7 +841,22 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
                 return pair ? mentorName(pair.mentorId) : '—';
               })()}</Descriptions.Item>
               <Descriptions.Item label="Vai trò">{reviewingRecap.role}</Descriptions.Item>
-              <Descriptions.Item label="Nội dung">{reviewingRecap.content || 'Không có nội dung'}</Descriptions.Item>
+              <Descriptions.Item label="Nội dung">
+                <div style={expandedReviewContent ? { whiteSpace: 'pre-wrap' } : {
+                  display: '-webkit-box',
+                  WebkitBoxOrient: 'vertical',
+                  WebkitLineClamp: 8,
+                  overflow: 'hidden',
+                  whiteSpace: 'pre-wrap'
+                }}>
+                  {reviewingRecap.content || 'Không có nội dung'}
+                </div>
+                {(reviewingRecap.content || '').length > 500 && (
+                  <Button type="link" className="!px-0" onClick={() => setExpandedReviewContent((expanded) => !expanded)}>
+                    {expandedReviewContent ? 'Thu gọn' : 'Hiển thị thêm'}
+                  </Button>
+                )}
+              </Descriptions.Item>
               <Descriptions.Item label="Ảnh minh chứng">
                 {reviewingRecap.mediaUrls?.[0] ? <a href={reviewingRecap.mediaUrls[0]} target="_blank" rel="noreferrer">Mở ảnh Cloudinary</a> : 'Không có'}
               </Descriptions.Item>
@@ -847,7 +887,7 @@ function PairForm({ form, cycles, months, mentors, mentees, loading, monthReadOn
     <Row gutter={[12, 0]}>
       <Col xs={24} md={12}><Form.Item name="cycleId" label="Quý" rules={[{ required: true, message: 'Chọn quý' }]}><Select options={cycles} /></Form.Item></Col>
       <Col xs={24} md={12}><Form.Item name="month" label="Tháng mentoring trong quý" rules={[{ required: true, message: 'Chọn tháng' }]}><Select disabled={monthReadOnly} options={months} /></Form.Item></Col>
-      <Col xs={24} md={12}><Form.Item name="mentorId" label="Mentor" rules={[{ required: true, message: 'Chọn mentor' }]}><Select showSearch optionFilterProp="label" options={mentors.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}`, disabled: item.isActive === 'no' }))} /></Form.Item></Col>
+      <Col xs={24} md={12}><Form.Item name="mentorId" label="Mentor" rules={[{ required: true, message: 'Chọn mentor' }]}><Select showSearch optionFilterProp="label" options={mentors.map((item) => ({ value: item.userId, label: `${item.preferenceRank ? `Ưu tiên ${item.preferenceRank} · ` : ''}${item.userId} - ${item.fullName}`, disabled: item.isActive === 'no' }))} /></Form.Item></Col>
       <Col xs={24} md={12}><Form.Item name="menteeId" label="Mentee" rules={[{ required: true, message: 'Chọn mentee' }]}><Select showSearch loading={loading} optionFilterProp="label" notFoundContent={loading ? 'Đang tải Mentee...' : 'Không có Mentee đang hoạt động, chưa ghép trong quý'} options={mentees.map((item) => ({ value: item.userId, label: `${item.userId} - ${item.fullName}`, disabled: item.isActive === 'no' }))} /></Form.Item></Col>
     </Row>
     <Typography.Text type="secondary">

@@ -85,7 +85,12 @@ export default function MenteeMentoringPage() {
       return {
         ...schedule,
         mentor: schedule.mentor?.fullName ? schedule.mentor : pair?.mentor,
-        mentee: schedule.mentee?.fullName ? schedule.mentee : pair?.mentee
+        mentee: schedule.mentee?.fullName ? schedule.mentee : pair?.mentee,
+        recap: (data?.recaps ?? []).find((item: any) => (
+          item.role === 'MENTEE'
+          && item.monthlyId === schedule.monthlyId
+          && (item.scheduleId === String(schedule._id) || !item.scheduleId)
+        ))
       };
     });
 
@@ -167,7 +172,7 @@ export default function MenteeMentoringPage() {
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.message);
-      message.success('Đã lưu recap mentoring');
+      message.success(selectedSchedule?.recap ? 'Đã cập nhật recap mentoring' : 'Đã gửi recap mentoring');
       form.resetFields();
       setSelectedSchedule(null);
       await loadData();
@@ -328,7 +333,21 @@ export default function MenteeMentoringPage() {
               <Button disabled={record.status !== 'PROPOSED'} onClick={() => { setEditingSchedule(record); editScheduleForm.setFieldsValue({ startTime: toDateTimeLocal(record.startTime), endTime: toDateTimeLocal(record.endTime), meetingLink: record.meetingLink, location: record.location, note: record.note }); }}>Sửa</Button>
               <Button type="primary" disabled={record.status !== 'PROPOSED'} onClick={() => confirmSchedule(record)}>Chốt lịch</Button>
             </div> },
-            { title: 'Recap', render: (_: unknown, record: any) => <Button disabled={!canWriteMentoringRecap(record)} onClick={() => setSelectedSchedule(record)}>Viết recap</Button> }
+            { title: 'Recap', render: (_: unknown, record: any) => (
+              <Button
+                disabled={!canWriteMentoringRecap(record, record.recap)}
+                onClick={() => {
+                  form.setFieldsValue({
+                    content: record.recap?.content || '',
+                    mediaUrl: record.recap?.mediaUrls?.[0] || '',
+                    note: record.recap?.note || ''
+                  });
+                  setSelectedSchedule(record);
+                }}
+              >
+                {record.recap?.status === 'APPROVED' ? 'Đã duyệt' : record.recap ? 'Sửa recap' : 'Viết recap'}
+              </Button>
+            ) }
           ]}
         />
       </Card>
@@ -470,8 +489,8 @@ export default function MenteeMentoringPage() {
       </Modal>
 
       <Modal
-        title={selectedSchedule ? `Gửi recap - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}` : 'Gửi recap'}
-        open={Boolean(selectedSchedule && canWriteMentoringRecap(selectedSchedule))}
+        title={selectedSchedule ? `${selectedSchedule.recap ? 'Sửa recap' : 'Gửi recap'} - ${selectedSchedule.monthCode || selectedSchedule.monthlyId}` : 'Gửi recap'}
+        open={Boolean(selectedSchedule && canWriteMentoringRecap(selectedSchedule, selectedSchedule.recap))}
         onCancel={() => {
           form.resetFields();
           setSelectedSchedule(null);
@@ -479,7 +498,7 @@ export default function MenteeMentoringPage() {
         footer={null}
         destroyOnHidden
       >
-        {selectedSchedule && canWriteMentoringRecap(selectedSchedule) && (
+        {selectedSchedule && canWriteMentoringRecap(selectedSchedule, selectedSchedule.recap) && (
           <>
           <Descriptions bordered size="small" column={1} className="mb-4">
             <Descriptions.Item label="HLC ID Mentee">{selectedSchedule.mentee?.userId || selectedSchedule.menteeId}</Descriptions.Item>
@@ -497,7 +516,7 @@ export default function MenteeMentoringPage() {
             <Form.Item name="note" label="Ghi chú">
               <Input placeholder="Ghi chú" />
             </Form.Item>
-            <Button type="primary" htmlType="submit">Gửi recap</Button>
+            <Button type="primary" htmlType="submit">{selectedSchedule.recap ? 'Cập nhật recap' : 'Gửi recap'}</Button>
           </Form>
           </>
         )}
