@@ -1,4 +1,5 @@
 const MOCK_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/;
+const CLIENT_MOCK_DATE_KEY = 'hlc_mock_date';
 
 function parseMockDate(value: string) {
   const normalized = value.trim();
@@ -18,8 +19,24 @@ function parseMockDate(value: string) {
 }
 
 export function getCurrentTime() {
+  if (typeof window !== 'undefined') {
+    const clientMockDate = window.localStorage.getItem(CLIENT_MOCK_DATE_KEY);
+    if (clientMockDate === '__REAL__') return new Date();
+    if (clientMockDate) return parseMockDate(clientMockDate);
+  }
+
   const configuredDate = process.env.NEXT_PUBLIC_MOCK_DATE?.trim();
   return configuredDate ? parseMockDate(configuredDate) : new Date();
+}
+
+export function setClientMockDate(value: string | null) {
+  if (typeof window === 'undefined') return;
+  if (value === null) {
+    window.localStorage.setItem(CLIENT_MOCK_DATE_KEY, '__REAL__');
+  } else {
+    window.localStorage.setItem(CLIENT_MOCK_DATE_KEY, parseMockDate(value).toISOString());
+  }
+  window.dispatchEvent(new Event('hlc-mock-date-change'));
 }
 
 export function isSameMonth(

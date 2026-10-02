@@ -59,12 +59,12 @@ body {
 .app-header { height: 76px; line-height: normal; background: rgba(255,255,255,.9); border-bottom: 1px solid #edf0f6; backdrop-filter: blur(15px); }
 .header-title span { display: block; color: #9aa3b8; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }.header-title strong { display: block; margin-top: 4px; color: #20283c; font-size: 17px; }
 .role-tag { border: 0; border-radius: 9px; color: var(--role) !important; background: var(--role-soft) !important; font-weight: 800; }.role-tag svg { margin-right: 4px; }
-.mock-date-tag { display: inline-flex; align-items: center; gap: 5px; margin: 0; padding: 5px 9px; border: 1px solid #f4d28c; border-radius: 9px; color: #8b5b08 !important; background: #fff7df !important; font-size: 11px; font-weight: 800; white-space: nowrap; }.mock-date-tag svg { color: #d3931b; }.mock-date-caption { font-weight: 600; }
+.mock-date-button.ant-btn, .mock-date-display { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: auto; min-height: 34px; margin: 0; padding: 6px 9px; border: 1px solid #e8eaf2; border-radius: 9px; color: #667085; background: #fff; font-size: 11px; font-weight: 700; line-height: 1.35; white-space: nowrap; font-variant-numeric: tabular-nums; }.mock-date-button.ant-btn:hover { color: #5545d1 !important; border-color: #bcb5ff !important; background: #f8f7ff !important; }.mock-date-button.ant-btn.is-active, .mock-date-display.is-active { color: #8b5b08; border-color: #f4d28c; background: #fff7df; }.mock-date-button.ant-btn.is-active > .anticon, .mock-date-display.is-active > .anticon { color: #d3931b; }.mock-date-button.ant-btn > .anticon, .mock-date-display > .anticon { flex: 0 0 auto; }.mock-date-caption { font-weight: 600; }
 .app-content { background: #f6f7fb; }
 .role-tabs { display: flex; gap: 5px; overflow-x: auto; padding: 10px 24px 0; background: white; border-bottom: 1px solid #edf0f6; }.role-tabs button { display: flex; align-items: center; gap: 7px; padding: 9px 13px 12px; border: 0; border-bottom: 2px solid transparent; color: #8992a9; background: transparent; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }.role-tabs button:hover { color: var(--role); }.role-tabs button.active { color: var(--role); border-bottom-color: var(--role); }
 .app-content .ant-card { border: 1px solid #edf0f6; box-shadow: 0 6px 20px rgba(41, 49, 79, .045); }.app-content .ant-card-head { border-bottom-color: #f0f1f6; }.app-content .ant-statistic-title { color: #8992a9; font-size: 12px; }.app-content .ant-statistic-content { color: var(--role); }
 .mentoring-intro { display: flex; align-items: center; gap: 18px; margin-top: 20px; padding: 25px 28px; border: 1px solid #e9e8f6; border-radius: 20px; background: linear-gradient(110deg, #fff, #f5f4ff); box-shadow: 0 8px 26px rgba(42, 49, 79, .045); }.intro-icon { display: grid; place-items: center; flex: 0 0 52px; height: 52px; border-radius: 16px; color: var(--role); background: var(--role-soft); font-size: 23px; }.mentoring-intro h2 { margin: 6px 0; color: #20283c; font-size: 19px; }.mentoring-intro p { margin: 0; color: #7d879d; font-size: 13px; line-height: 1.6; }
-@media (max-width: 575px) { .app-header { height: 68px; }.role-tabs { padding-left: 12px; padding-right: 12px; }.header-title strong { font-size: 15px; }.role-tag { padding-inline: 7px; }.mock-date-tag { gap: 4px; padding: 5px 7px; font-size: 10px; }.mock-date-caption { display: none; } }
+@media (max-width: 575px) { .app-header { height: 68px; }.role-tabs { padding-left: 12px; padding-right: 12px; }.header-title strong { font-size: 15px; }.role-tag { padding-inline: 7px; }.mock-date-button.ant-btn, .mock-date-display { gap: 4px; padding: 5px 7px; font-size: 10px; }.mock-date-caption { display: none; } }
 @media (max-width: 480px) { .mentoring-intro { align-items: start; gap: 13px; padding: 19px; }.intro-icon { flex-basis: 44px; height: 44px; border-radius: 13px; font-size: 20px; }.mentoring-intro h2 { font-size: 16px; } }
 
 .dashboard-shell { max-width: 1280px; margin: 0 auto; }
@@ -126,7 +126,8 @@ body {
     white-space: nowrap;
   }
 
-  .app-header .mock-date-tag {
+  .app-header .mock-date-button,
+  .app-header .mock-date-display {
     flex: 1 0 100%;
     justify-content: flex-end;
     font-variant-numeric: tabular-nums;

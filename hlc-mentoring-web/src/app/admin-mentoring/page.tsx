@@ -5,6 +5,7 @@ import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, R
 import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import { apiFetch } from '@/lib/api';
 import { mentoringRecapDeadline } from '@/utils/mentoringSchedule';
+import { getCurrentTime } from '@/utils/time';
 import ProfileLink from '@/components/ProfileLink';
 
 interface Cycle { code: string; name: string; }
@@ -107,7 +108,144 @@ function toDateTimeLocal(value?: string) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function quarterForDate(date: Date) {
+  const quarter = Math.floor(date.getUTCMonth() / 3) + 1;
+  return {
+    year: date.getUTCFullYear(),
+    quarter,
+    code: `${date.getUTCFullYear()}Q${quarter}`
+  };
+}
+
+function nextQuarterCode(cycleCode: string) {
+  const match = /^(\d{4})Q([1-4])$/i.exec(cycleCode);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const quarter = Number(match[2]);
+  return quarter === 4 ? `${year + 1}Q1` : `${year}Q${quarter + 1}`;
+}
+
+function isNextQuarterPairingOpen(date: Date) {
+  const quarter = Math.floor(date.getUTCMonth() / 3) + 1;
+  return date.getUTCMonth() === quarter * 3 - 1 && date.getUTCDate() >= 10;
+}
+
+async function ensureCycleExists(cycleCode: string) {
+  const cycleMatch = /^(\d{4})Q([1-4])$/i.exec(cycleCode);
+  if (!cycleMatch) throw new Error('Mã quý không hợp lệ');
+
+  const response = await apiFetch('/cycles');
+  const result = await response.json();
+  if (!response.ok || !result.success) {
+    throw new Error(result.message || 'Không thể tải danh sách kỳ mentoring');
+  }
+  if (result.data.some((cycle: Cycle) => cycle.code === cycleCode)) return;
+
+  const createResponse = await apiFetch('/cycles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: `Quý ${Number(cycleMatch[2])} - ${cycleMatch[1]}`,
+      year: Number(cycleMatch[1]),
+      quarter: Number(cycleMatch[2])
+    })
+  });
+  const createResult = await createResponse.json();
+  if (!createResponse.ok || !createResult.success) {
+    throw new Error(createResult.message || `Không thể khởi tạo kỳ ${cycleCode}`);
+  }
+}
+
 export default function AdminMentoringPage() {
+  const { message } = App.useApp();
+  const [currentCycleCode, setCurrentCycleCode] = useState('');
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
+  const [currentCycleReady, setCurrentCycleReady] = useState(false);
+  const [nextCycleVisible, setNextCycleVisible] = useState(false);
+  const [openingNextCycle, setOpeningNextCycle] = useState(false);
+  const currentQuarter = currentTime ? quarterForDate(currentTime) : null;
+  const nextCycleCode = currentQuarter ? nextQuarterCode(currentQuarter.code) : '';
+  const nextQuarterOpen = currentTime ? isNextQuarterPairingOpen(currentTime) : false;
+
+  useEffect(() => {
+    const refreshCurrentCycle = () => {
+      const now = getCurrentTime();
+      setCurrentTime(now);
+      setCurrentCycleCode(quarterForDate(now).code);
+    };
+    refreshCurrentCycle();
+    const timer = window.setInterval(refreshCurrentCycle, 60_000);
+    window.addEventListener('hlc-mock-date-change', refreshCurrentCycle);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('hlc-mock-date-change', refreshCurrentCycle);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!currentCycleCode) return;
+    let active = true;
+    setCurrentCycleReady(false);
+    void ensureCycleExists(currentCycleCode)
+      .then(() => {
+        if (active) setCurrentCycleReady(true);
+      })
+      .catch((error) => {
+        if (active) message.error(error instanceof Error ? error.message : 'Không thể khởi tạo quý hiện tại');
+      });
+    return () => { active = false; };
+  }, [currentCycleCode, message]);
+
+  const openNextCycle = async () => {
+    setOpeningNextCycle(true);
+    try {
+      await ensureCycleExists(nextCycleCode);
+      setNextCycleVisible(true);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể mở quản lý quý kế tiếp');
+    } finally {
+      setOpeningNextCycle(false);
+    }
+  };
+
+  if (!currentQuarter || !currentCycleCode || !currentCycleReady) {
+    return (
+      <Card className="flex min-h-40 items-center justify-center">
+        <Typography.Text type="secondary">
+          {currentCycleCode ? 'Đang chuẩn bị kỳ mentoring hiện tại…' : 'Đang xác định quý hiện tại…'}
+        </Typography.Text>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <CycleManagementPanel key={currentCycleCode} cycleCode={currentCycleCode} panelKind="current" />
+      {nextQuarterOpen && (
+        <Card className="border-dashed">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+                    <Typography.Title level={5} className="!mb-1">
+                Chuẩn bị ghép cặp Quý {nextCycleCode.slice(-1)} - {nextCycleCode.slice(0, 4)}
+              </Typography.Title>
+              <Typography.Text type="secondary">
+                Quý kế tiếp đã mở từ ngày 10 của tháng cuối quý. Quý hiện tại vẫn được giữ bên trên.
+              </Typography.Text>
+            </div>
+            <Button type="primary" loading={openingNextCycle} onClick={openNextCycle}>
+              {nextCycleVisible ? 'Đã mở quản lý quý sau' : 'Quản lý ghép cặp quý sau'}
+            </Button>
+          </div>
+        </Card>
+      )}
+      {nextCycleVisible && (
+        <CycleManagementPanel key={nextCycleCode} cycleCode={nextCycleCode} panelKind="next" />
+      )}
+    </div>
+  );
+}
+
+function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; panelKind: 'current' | 'next' }) {
   const { message, notification } = App.useApp();
   const [createForm] = Form.useForm<PairForm>();
   const [editForm] = Form.useForm<PairForm>();
@@ -118,8 +256,8 @@ export default function AdminMentoringPage() {
   const [pairs, setPairs] = useState<Pair[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [recaps, setRecaps] = useState<Recap[]>([]);
-  const ADMIN_PAIRING_CYCLE = '2026Q4';
-  const [selectedCycle, setSelectedCycle] = useState(ADMIN_PAIRING_CYCLE);
+  const ADMIN_PAIRING_CYCLE = cycleCode;
+  const selectedCycle = cycleCode;
   const [selectedPair, setSelectedPair] = useState<Pair | null>(null);
   const [loading, setLoading] = useState(false);
   const [modal, setModal] = useState<'create' | 'edit' | 'detail' | null>(null);
@@ -166,9 +304,6 @@ export default function AdminMentoringPage() {
       if (cycleResult.success) {
         setCycles(cycleResult.data);
         setCycleLocked(Boolean(cycleResult.data.find((cycle: Cycle & { isLocked?: boolean }) => cycle.code === cycleId)?.isLocked));
-        if (!cycleResult.data.some((cycle: Cycle) => cycle.code === ADMIN_PAIRING_CYCLE)) {
-          message.warning(`Không tìm thấy kỳ ${ADMIN_PAIRING_CYCLE} trong danh sách kỳ hoạt động`);
-        }
       }
       if (!mentorResult.success) throw new Error(mentorResult.message || 'Không thể tải danh sách Mentor');
       if (!menteeResult.success) throw new Error(menteeResult.message || 'Không thể tải danh sách Mentee');
@@ -265,7 +400,7 @@ export default function AdminMentoringPage() {
   };
 
   const cycleOptions = cycles
-    .filter((cycle) => cycle.code === ADMIN_PAIRING_CYCLE)
+    .filter((cycle) => cycle.code === cycleCode)
     .map((cycle) => ({ value: cycle.code, label: `${cycle.code} - ${cycle.name}` }));
   const createCycleCode = Form.useWatch('cycleId', createForm) || selectedCycle;
   const monthOptions = monthsForCycleOptions(createCycleCode);
@@ -283,7 +418,7 @@ export default function AdminMentoringPage() {
     isActiveUser(mentee) && !pairedMenteeIds.has(participantKey(mentee.userId))
   );
   const monthlyPairs = useMemo(
-    () => [10, 11, 12].map((month) => ({
+    () => monthsForCycleOptions(cycleCode).map(({ value: month }) => ({
       month,
       pairs: pairs.filter((pair) => {
         if (pair.cycleId !== ADMIN_PAIRING_CYCLE) return false;
@@ -493,9 +628,14 @@ export default function AdminMentoringPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Typography.Title level={3} className="!mb-0 !whitespace-nowrap shrink-0">Quản lý Ghép cặp</Typography.Title>
+        <div className="flex flex-wrap items-center gap-2">
+          <Typography.Title level={3} className="!mb-0 !whitespace-nowrap shrink-0">
+            Quản lý Ghép cặp — Quý {cycleCode.match(/Q([1-4])/)?.[1]} / {cycleCode.slice(0, 4)}
+          </Typography.Title>
+          {panelKind === 'next' && <Tag color="purple">Quý kế tiếp</Tag>}
+        </div>
         <Space wrap className="max-w-full justify-end">
-          <Select value={ADMIN_PAIRING_CYCLE} options={cycleOptions} className="min-w-52" disabled />
+          <Select value={cycleCode} options={cycleOptions} className="min-w-52" disabled />
           <Upload accept=".xlsx,.csv" showUploadList={false} disabled={importing || cycleLocked} beforeUpload={(file) => { void importPairs(file); return Upload.LIST_IGNORE; }}>
             <Button icon={<InboxOutlined />} disabled={importing || cycleLocked}>Import file</Button>
           </Upload>
@@ -507,10 +647,10 @@ export default function AdminMentoringPage() {
 
       <Card styles={{ body: { padding: 0 } }}>
         <Tabs
-          defaultActiveKey="10"
+          defaultActiveKey={String(monthsForCycleOptions(cycleCode)[0]?.value)}
           items={monthlyPairs.map(({ month, pairs: monthPairs }) => ({
             key: String(month),
-            label: `Q4-T${month}`,
+            label: `Q${cycleCode.match(/Q([1-4])/)?.[1]}-T${month}`,
             children: (
               <Table
                 rowKey="_id"
@@ -520,7 +660,7 @@ export default function AdminMentoringPage() {
                 scroll={{ x: 'max-content' }}
                 pagination={{ pageSize: 10 }}
                 onRow={(row) => ({ onClick: () => { setSelectedPair(row); setModal('detail'); }, className: 'cursor-pointer' })}
-                locale={{ emptyText: `Chưa có dữ liệu ghép cặp tháng ${month}/2026` }}
+                locale={{ emptyText: `Chưa có dữ liệu ghép cặp tháng ${month}/${cycleCode.slice(0, 4)}` }}
               />
             )
           }))}

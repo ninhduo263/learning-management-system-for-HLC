@@ -73,7 +73,16 @@ function canMenteeChoose(cycle, now = getCurrentTime()) {
 }
 
 function canAdminPair(cycle, now = getCurrentTime()) {
-  return new Date(now) >= timelineDate(cycle, 10);
+  const current = new Date(now);
+  const start = new Date(cycle && cycle.startDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(current.getTime())) return false;
+
+  const currentQuarterKey = current.getUTCFullYear() * 4 + Math.floor(current.getUTCMonth() / 3);
+  const targetQuarterKey = start.getUTCFullYear() * 4 + Math.floor(start.getUTCMonth() / 3);
+  if (targetQuarterKey === currentQuarterKey) return true;
+
+  return targetQuarterKey === currentQuarterKey + 1
+    && current >= timelineDate(cycle, 10);
 }
 
 function canViewPairing(cycle, now = getCurrentTime()) {

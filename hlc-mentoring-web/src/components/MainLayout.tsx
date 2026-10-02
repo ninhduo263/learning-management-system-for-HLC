@@ -1,16 +1,21 @@
 ﻿'use client';
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Layout, Menu, Button, Drawer, Tag, Grid } from 'antd';
+import { App, Layout, Menu, Button, Drawer, Grid, Modal, DatePicker, Tag } from 'antd';
 import {
   DashboardOutlined,
   TeamOutlined,
   LogoutOutlined,
   MenuOutlined,
   UserOutlined,
-  CalendarOutlined
+  CalendarOutlined,
+  ClockCircleOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
-import { getCurrentTime } from '@/utils/time';
+import type { Dayjs } from 'dayjs';
+import dayjs from 'dayjs';
+import { apiFetch } from '@/lib/api';
+import { getCurrentTime, setClientMockDate } from '@/utils/time';
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -19,18 +24,29 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [currentDateTime, setCurrentDateTime] = useState<Date | null>(null);
+  const [mockDate, setMockDate] = useState<string | null>(null);
+  const [mockDateSource, setMockDateSource] = useState<'runtime' | 'environment' | 'real'>('real');
+  const [mockDateModalOpen, setMockDateModalOpen] = useState(false);
+  const [draftMockDate, setDraftMockDate] = useState<Dayjs | null>(null);
+  const [savingMockDate, setSavingMockDate] = useState(false);
   const [user, setUser] = useState<{ userId: string; fullName: string; role: 'ADMIN' | 'MENTOR' | 'MENTEE' } | null>(null);
+  const { message } = App.useApp();
   const router = useRouter();
   const pathname = usePathname();
   const screens = useBreakpoint();
   const isMobile = screens.xs === true;
-  const isMockDateEnabled = Boolean(process.env.NEXT_PUBLIC_MOCK_DATE?.trim());
+  const isMockDateEnabled = mockDate !== null;
 
   useEffect(() => {
     const updateDateTime = () => setCurrentDateTime(getCurrentTime());
     updateDateTime();
     const timer = window.setInterval(updateDateTime, 1000);
-    return () => window.clearInterval(timer);
+    const handleMockDateChange = () => updateDateTime();
+    window.addEventListener('hlc-mock-date-change', handleMockDateChange);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('hlc-mock-date-change', handleMockDateChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -49,6 +65,35 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       router.replace('/login');
     }
   }, [pathname, router]);
+
+  useEffect(() => {
+    if (!user || pathname === '/login') return;
+    let active = true;
+    const loadMockDate = async () => {
+      try {
+        const response = await apiFetch('/time/mock');
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.message || 'Không thể đồng bộ ngày giả lập từ máy chủ');
+        }
+        if (!active) return;
+        const { date, source } = result.data as {
+          date: string | null;
+          source: 'runtime' | 'environment' | 'real';
+        };
+        setMockDate(date);
+        setMockDateSource(source);
+        setClientMockDate(date);
+        setCurrentDateTime(getCurrentTime());
+      } catch (error) {
+        if (active) {
+          message.error(error instanceof Error ? error.message : 'Không thể đồng bộ ngày giả lập từ máy chủ');
+        }
+      }
+    };
+    void loadMockDate();
+    return () => { active = false; };
+  }, [message, pathname, user]);
 
   if (pathname === '/login') return <>{children}</>;
   if (!user) return null;
@@ -70,6 +115,29 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const roleTheme = user.role === 'MENTOR' ? 'role-mentor' : user.role === 'MENTEE' ? 'role-mentee' : 'role-admin';
   const roleLabel = user.role === 'MENTOR' ? 'Không gian Mentor' : user.role === 'MENTEE' ? 'Không gian Mentee' : 'Khu vực quản trị';
   const roleTabs = menuItems.slice(0, 4);
+
+  const saveMockDate = async (date: string | null) => {
+    setSavingMockDate(true);
+    try {
+      const response = await apiFetch('/time/mock', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date })
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || 'Không thể cập nhật ngày giả lập');
+      }
+      setClientMockDate(result.data.date);
+      message.success(result.data.enabled
+        ? `Đã bật ngày giả lập ${dayjs(result.data.date).format('DD/MM/YYYY')} cho toàn hệ thống`
+        : 'Đã tắt ngày giả lập; toàn hệ thống dùng ngày thật');
+      window.location.reload();
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : 'Không thể cập nhật ngày giả lập');
+      setSavingMockDate(false);
+    }
+  };
 
   const routeMap: Record<string, string> = {
     'admin-dashboard': '/admin-dashboard',
@@ -119,22 +187,44 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <Tag className="mock-date-tag">
-              <CalendarOutlined />
-              <span className="mock-date-caption">{isMockDateEnabled ? 'Ngày mô phỏng:' : 'Ngày giờ hiện tại:'}</span>
-              {currentDateTime
-                ? new Intl.DateTimeFormat('vi-VN', {
-                  day: '2-digit',
-                  month: '2-digit',
-                  ...(isMobile ? {} : { year: 'numeric' }),
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  ...(!isMobile ? { second: '2-digit' } : {}),
-                  hour12: false,
-                  timeZone: 'Asia/Ho_Chi_Minh'
-                }).format(currentDateTime)
-                : '--/--/---- --:--:--'}
-            </Tag>
+            {user.role === 'ADMIN' ? (
+              <Button
+                className={`mock-date-button${isMockDateEnabled ? ' is-active' : ''}`}
+                icon={isMockDateEnabled ? <CalendarOutlined /> : <ClockCircleOutlined />}
+                onClick={() => {
+                  setDraftMockDate(isMockDateEnabled && mockDate ? dayjs(mockDate) : dayjs(currentDateTime || new Date()));
+                  setMockDateModalOpen(true);
+                }}
+                aria-label={isMockDateEnabled ? 'Thay đổi ngày giả lập' : 'Mở cài đặt ngày giả lập'}
+              >
+                <span className="mock-date-caption">
+                  {isMockDateEnabled ? (isMobile ? 'Ngày test' : 'Ngày giả lập') : (isMobile ? 'Đặt ngày test' : 'Mô phỏng ngày')}
+                </span>
+                {currentDateTime
+                  ? new Intl.DateTimeFormat('vi-VN', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    ...(!isMockDateEnabled && !isMobile ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
+                    timeZone: 'Asia/Ho_Chi_Minh'
+                  }).format(currentDateTime)
+                  : '--/--/----'}
+              </Button>
+            ) : (
+              <div className={`mock-date-display${isMockDateEnabled ? ' is-active' : ''}`} title={isMockDateEnabled ? `Ngày giả lập toàn hệ thống (${mockDateSource})` : 'Ngày giờ hiện tại'}>
+                {isMockDateEnabled ? <CalendarOutlined /> : <ClockCircleOutlined />}
+                <span className="mock-date-caption">{isMockDateEnabled ? (isMobile ? 'Ngày test' : 'Ngày giả lập') : (isMobile ? '' : 'Ngày hiện tại')}</span>
+                {currentDateTime
+                  ? new Intl.DateTimeFormat('vi-VN', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    ...(!isMockDateEnabled && !isMobile ? { hour: '2-digit', minute: '2-digit', hour12: false } : {}),
+                    timeZone: 'Asia/Ho_Chi_Minh'
+                  }).format(currentDateTime)
+                  : '--/--/----'}
+              </div>
+            )}
             <span className="hidden sm:inline text-sm text-gray-600 truncate max-w-52">{user.fullName} ({user.userId})</span>
             <Tag className="role-tag"><UserOutlined /> {user.role}</Tag>
             <Button
@@ -165,6 +255,39 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       <Drawer title="HLC Mentoring" placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} className={roleTheme}>
         {navigation}
       </Drawer>
+      <Modal
+        title="Giả lập ngày hệ thống"
+        open={mockDateModalOpen}
+        onCancel={() => setMockDateModalOpen(false)}
+        onOk={() => { if (draftMockDate) void saveMockDate(draftMockDate.format('YYYY-MM-DD')); }}
+        okText="Áp dụng ngày"
+        cancelText="Hủy"
+        confirmLoading={savingMockDate}
+        okButtonProps={{ disabled: !draftMockDate }}
+        destroyOnHidden
+      >
+        <div className="space-y-3">
+          <p>Chọn ngày để kiểm thử các mốc ghép cặp, lịch mentoring và recap. Ngày giả lập sẽ tác động đến toàn bộ người dùng và các quy tắc backend.</p>
+          <DatePicker
+            className="w-full"
+            value={draftMockDate}
+            onChange={setDraftMockDate}
+            format="DD/MM/YYYY"
+            allowClear={false}
+            inputReadOnly
+          />
+          {isMockDateEnabled && (
+            <Button
+              block
+              icon={<ReloadOutlined />}
+              loading={savingMockDate}
+              onClick={() => void saveMockDate(null)}
+            >
+              Tắt giả lập, dùng ngày thật
+            </Button>
+          )}
+        </div>
+      </Modal>
     </Layout>
   );
 }

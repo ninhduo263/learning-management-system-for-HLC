@@ -42,7 +42,7 @@ const {
   recapStatus, timingPoints, topThreeAwards, pairingStartDate,
   canMenteeChoose, canAdminPair, canViewPairing, timelineForCycle
 } = require('./quarterlyRules');
-const { getCurrentTime } = require('./time');
+const { getCurrentTime, getMockDateState, setRuntimeMockDate } = require('./time');
 const { generatePairingIds } = require('./pairingIds');
 const { pairsFromSelectedMonth } = require('./pairDeletion');
 
@@ -387,6 +387,20 @@ async function awardRoleScoreForUser(user, cycleId) {
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, service: 'hlc-mentoring-backend', auth: true });
+});
+
+app.get('/api/time/mock', authenticate, (req, res) => {
+  res.json({ success: true, data: getMockDateState() });
+});
+
+app.put('/api/time/mock', authenticate, requireRole('ADMIN'), (req, res) => {
+  try {
+    const { date } = req.body || {};
+    setRuntimeMockDate(date === null ? null : date);
+    return res.json({ success: true, data: getMockDateState() });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
 });
 
 // Auth là endpoint công khai; các API còn lại phải có token.
@@ -807,7 +821,7 @@ app.get('/api/mentoring/timeline', async (req, res) => {
       data: {
         ...timeline,
         canMenteeChoose: req.user.role === 'MENTEE' && timeline.canMenteeChoose,
-        canAdminPair: req.user.role === 'ADMIN' || timeline.canAdminPair,
+        canAdminPair: req.user.role === 'ADMIN' && timeline.canAdminPair,
         canViewPairing: req.user.role === 'ADMIN' || timeline.canViewPairing,
         readOnly: req.user.role === 'MENTOR' && timeline.canViewPairing
       }
@@ -1956,7 +1970,7 @@ app.get('/api/cycles', async (req, res) => {
   }
 });
 
-app.post('/api/cycles', async (req, res) => {
+app.post('/api/cycles', requireRole('ADMIN'), async (req, res) => {
   try {
     const { code, name, year, quarter: quarterNumber, startDate, endDate, pointRate, baseAllowance } = req.body;
     const requestedDates = year && quarterNumber
@@ -1968,13 +1982,18 @@ app.post('/api/cycles', async (req, res) => {
     const quarter = validateQuarter(requestedDates.startDate, requestedDates.endDate);
     const now = getCurrentTime();
     const currentQuarter = Math.floor(now.getUTCMonth() / 3) + 1;
+    const requestedQuarter = { year: quarter.startDate.getUTCFullYear(), quarter: Math.floor(quarter.startDate.getUTCMonth() / 3) + 1 };
+    const isCurrentQuarter = requestedQuarter.year === now.getUTCFullYear()
+      && requestedQuarter.quarter === currentQuarter;
     const currentQuarterEndMonth = currentQuarter * 3 - 1;
     const canOpenNextQuarter = now.getUTCMonth() === currentQuarterEndMonth && now.getUTCDate() >= 10;
     const nextQuarter = currentQuarter === 4 ? 1 : currentQuarter + 1;
     const nextYear = currentQuarter === 4 ? now.getUTCFullYear() + 1 : now.getUTCFullYear();
-    const requestedQuarter = { year: quarter.startDate.getUTCFullYear(), quarter: Math.floor(quarter.startDate.getUTCMonth() / 3) + 1 };
-    if (!canOpenNextQuarter || requestedQuarter.year !== nextYear || requestedQuarter.quarter !== nextQuarter) {
-      return res.status(400).json({ success: false, message: 'Chỉ được tạo quý kế tiếp từ ngày 10 của tháng cuối quý hiện tại' });
+    const isNextQuarter = requestedQuarter.year === nextYear
+      && requestedQuarter.quarter === nextQuarter
+      && canOpenNextQuarter;
+    if (!isCurrentQuarter && !isNextQuarter) {
+      return res.status(400).json({ success: false, message: 'Chỉ được tạo quý hiện tại hoặc quý kế tiếp từ ngày 10 của tháng cuối quý hiện tại' });
     }
     const cycle = await Cycle.create({ code: code || quarter.code, name, ...quarter, pointRate, baseAllowance });
     res.status(201).json({ success: true, data: cycle });
@@ -2267,6 +2286,9 @@ app.patch('/api/mentoring/pairs/:monthlyId', requireRole('ADMIN'), async (req, r
     const targetMenteeId = menteeId || currentPair.menteeId;
     const cycle = currentCycle;
     if (!cycle) return res.status(404).json({ success: false, message: 'Không tìm thấy kỳ mentoring' });
+    if (!canAdminPair(cycle)) {
+      return res.status(409).json({ success: false, message: 'Chỉ có thể sửa cặp của quý hiện tại hoặc quý kế tiếp đang mở ghép cặp' });
+    }
     const [targetMentor, targetMentee] = await Promise.all([
       targetMentorId !== currentPair.mentorId
         ? User.findOne({ userId: exactUserIdRegex(targetMentorId), role: 'MENTOR', isActive: ACTIVE_USER_QUERY }).select('userId')
@@ -2374,6 +2396,9 @@ app.delete('/api/mentoring/pairs/:monthlyId', requireRole('ADMIN'), async (req, 
     const pair = await findPairByMonthlyId(requestedMonthlyId);
     if (!pair) return res.status(404).json({ success: false, message: 'Không tìm thấy cặp mentoring' });
     const cycle = await Cycle.findOne({ code: pair.cycleId });
+    if (!cycle || !canAdminPair(cycle)) {
+      return res.status(409).json({ success: false, message: 'Không thể xóa cặp thuộc quý đã qua hoặc chưa mở ghép cặp' });
+    }
     if (cycle?.isLocked || ['LOCKED', 'EXPORTED', 'PAID'].includes(cycle?.status)) {
       return res.status(409).json({ success: false, message: 'Quý đã bị khóa, không thể xóa cặp mentoring' });
     }
