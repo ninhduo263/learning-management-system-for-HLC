@@ -939,7 +939,7 @@ app.get('/api/users/mentors', async (req, res) => {
     ? { role: 'MENTOR' }
     : mentorUserFilter;
   const projection = includeInactive
-    ? 'userId fullName phone profileUrl email bankAccount bankName dateOfBirth livingAllowanceType joinedAt allowanceStartDate team position'
+    ? 'userId fullName isActive phone profileUrl email bankAccount bankName dateOfBirth livingAllowanceType joinedAt allowanceStartDate team position'
     : 'userId fullName isActive profileUrl';
   const mentors = await User.find(filter).select(projection);
   res.json({ success: true, data: mentors });
@@ -951,7 +951,7 @@ app.get('/api/users/mentees', async (req, res) => {
     ? { role: 'MENTEE' }
     : { role: 'MENTEE', isActive: ACTIVE_USER_QUERY };
   const projection = includeInactive
-    ? 'userId fullName phone profileUrl email bankAccount bankName dateOfBirth livingAllowanceType joinedAt allowanceStartDate mentorId team position'
+    ? 'userId fullName isActive phone profileUrl email bankAccount bankName dateOfBirth livingAllowanceType joinedAt allowanceStartDate mentorId team position'
     : 'userId fullName mentorId isActive profileUrl';
   const mentees = await User.find(filter).select(projection);
   res.json({ success: true, data: mentees });
