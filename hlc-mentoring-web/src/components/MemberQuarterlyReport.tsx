@@ -21,6 +21,7 @@ interface MonthlyReport {
   } | null;
   recap: {
     status: string;
+    completionStatus?: string | null;
     content?: string;
     note?: string;
     mediaUrls?: string[];
@@ -49,13 +50,20 @@ function formatDate(value?: string) {
 
 function recapStatusLabel(value?: string) {
   const labels: Record<string, string> = {
-    APPROVED: 'Đã duyệt',
-    REJECTED: 'Bị từ chối',
-    SUBMITTED: 'Đã gửi',
+    APPROVED: 'Đã nộp',
+    REJECTED: 'Đã nộp',
+    SUBMITTED: 'Đã nộp',
     LATE: 'Nộp muộn',
-    PENDING: 'Chờ nộp'
+    PENDING: 'Chờ',
+    MISSING: 'Chưa xong'
   };
   return labels[value || ''] || value || 'Chưa xong';
+}
+
+function recapStatusColor(value?: string) {
+  if (value === 'SUBMITTED' || value === 'APPROVED' || value === 'REJECTED' || value === 'Đã nộp') return 'green';
+  if (value === 'LATE' || value === 'Nộp muộn' || value === 'PENDING' || value === 'Chờ') return 'gold';
+  return 'red';
 }
 
 export default function MemberQuarterlyReport() {
@@ -140,7 +148,8 @@ export default function MemberQuarterlyReport() {
               width: 115,
               render: (_: unknown, report: QuarterlyReport) => {
                 const status = report.months.find((item) => item.month === month)?.status;
-                return status ? <Tag color={status === 'Đã xong' ? 'green' : 'red'}>{status}</Tag> : '—';
+                const color = status === 'Đã nộp' ? 'green' : status === 'Chờ' || status === 'Nộp muộn' ? 'gold' : 'red';
+                return status ? <Tag color={color}>{status}</Tag> : '—';
               }
             }
           ]
@@ -204,9 +213,11 @@ export default function MemberQuarterlyReport() {
                 <Card size="small" key={month.monthlyId} title={`Tháng ${month.month} - ${month.monthlyId}`}>
                   <Descriptions bordered size="small" column={1}>
                     <Descriptions.Item label="Trạng thái recap">
-                      <Tag color={month.recap?.status === 'APPROVED' ? 'green' : month.recap?.status === 'REJECTED' ? 'red' : 'blue'}>
-                        {recapStatusLabel(month.recap?.status || month.status)}
-                      </Tag>
+                      {(month.recap?.completionStatus || month.recap?.status || month.status)
+                        ? <Tag color={recapStatusColor(month.recap?.completionStatus || month.recap?.status || month.status)}>
+                          {recapStatusLabel(month.recap?.completionStatus || month.recap?.status || month.status)}
+                        </Tag>
+                        : '—'}
                     </Descriptions.Item>
                     <Descriptions.Item label="Thời gian mentoring">
                       {month.schedule

@@ -8,6 +8,7 @@ const mentoringRecapSchema = new mongoose.Schema({
   userId: { type: String, required: true, index: true },
   role: { type: String, enum: ['MENTOR', 'MENTEE'], required: true },
   content: { type: String, default: '' },
+  submittedAt: { type: Date, default: null },
   mediaUrls: {
     type: [{ type: String, trim: true }],
     required: true,

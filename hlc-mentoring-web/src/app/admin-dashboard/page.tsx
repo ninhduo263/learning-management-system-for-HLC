@@ -68,9 +68,10 @@ function monthLabels(quarter: number, year: number) {
 
 function statusLabel(value?: string) {
   const normalized = String(value || '').trim().toLowerCase();
-  return ['đã xong', 'da xong', 'completed', 'approved', 'xong'].includes(normalized)
-    ? 'Đã xong'
-    : 'Chưa xong';
+  if (['đã xong', 'da xong', 'đã nộp/đã xong', 'completed', 'approved', 'xong'].includes(normalized)) return 'Đã nộp';
+  if (['nộp muộn', 'late'].includes(normalized)) return 'Nộp muộn';
+  if (['chờ', 'pending'].includes(normalized)) return 'Chờ';
+  return 'Chưa xong';
 }
 
 function getImportedMonthStatus(pair: Pair, month: string, role: MemberRole) {
@@ -310,7 +311,7 @@ export default function AdminDashboardPage() {
               dataIndex: `${columnKey}_status`,
               width: 115,
               render: (value: string) => value
-                ? <Tag color={value === 'Đã xong' ? 'green' : 'red'}>{value}</Tag>
+                ? <Tag color={value === 'Đã nộp' ? 'green' : value === 'Nộp muộn' || value === 'Chờ' ? 'gold' : 'red'}>{value}</Tag>
                 : '—'
             }
           ]

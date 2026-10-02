@@ -45,6 +45,12 @@ const {
 const { getCurrentTime, getMockDateState, setRuntimeMockDate } = require('./time');
 const { generatePairingIds } = require('./pairingIds');
 const { pairsFromSelectedMonth } = require('./pairDeletion');
+const {
+  recapSubmissionTime,
+  recapDeadline,
+  roleRecapStatus,
+  pairRecapStatus
+} = require('./mentoringRecapRules');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'hlc-development-secret-change-me';
 const LEGACY_DEFAULT_PASSWORD = process.env.DEFAULT_USER_PASSWORD || 'HLC@123456';
@@ -616,14 +622,28 @@ app.get('/api/mentoring/member-quarterly-report', authenticate, requireRole('MEN
         || pair.importedRecapStatus?.[`${String(month).padStart(2, '0')}-${year}`];
       const importedRoleStatus = importedStatus?.[role.toLowerCase()] ?? importedStatus?.[role];
       const normalizedImportedStatus = String(importedRoleStatus || '').trim().toLowerCase();
-      const completed = (recap && ['SUBMITTED', 'APPROVED', 'LATE'].includes(recap.status))
-        || ['đã xong', 'da xong', 'completed', 'approved'].includes(normalizedImportedStatus);
+      const importedCompletionStatus = ['nộp muộn', 'late'].includes(normalizedImportedStatus)
+        ? 'LATE'
+        : ['chưa xong', 'missing'].includes(normalizedImportedStatus)
+          ? 'MISSING'
+          : ['đã xong', 'da xong', 'đã nộp/đã xong', 'completed', 'approved'].includes(normalizedImportedStatus)
+            ? 'SUBMITTED'
+            : null;
+      const completionStatus = recap
+        ? roleRecapStatus(schedule, recap, role, now)
+        : importedCompletionStatus || (schedule ? roleRecapStatus(schedule, null, role, now) : null);
+      const statusLabel = completionStatus ? ({
+        PENDING: 'Chờ',
+        SUBMITTED: 'Đã nộp',
+        MISSING: 'Chưa xong',
+        LATE: 'Nộp muộn'
+      }[completionStatus]) : '';
 
       report.months.push({
         month,
         monthKey,
         monthlyId: pair.monthlyId,
-        status: completed ? 'Đã xong' : 'Chưa xong',
+        status: statusLabel,
         schedule: schedule ? {
           id: String(schedule._id),
           startTime: schedule.startTime,
@@ -635,12 +655,14 @@ app.get('/api/mentoring/member-quarterly-report', authenticate, requireRole('MEN
         } : null,
         recap: recap ? {
           status: recap.status,
+          completionStatus,
           content: recap.content,
           note: recap.note,
           mediaUrls: recap.mediaUrls,
           createdAt: recap.createdAt
         } : importedRoleStatus !== undefined ? {
-          status: completed ? 'APPROVED' : 'PENDING',
+          status: importedCompletionStatus || completionStatus || 'PENDING',
+          completionStatus,
           content: '',
           note: '',
           mediaUrls: []
@@ -2715,7 +2737,8 @@ app.post('/api/mentoring/recaps', async (req, res) => {
       note: String(note || ''),
       monthCode: schedule.monthCode,
       scheduleId: String(schedule._id),
-      status: getCurrentTime().getTime() - new Date(schedule.endTime).getTime() > 24 * 3600000 ? 'LATE' : 'SUBMITTED',
+      submittedAt: getCurrentTime(),
+      status: getCurrentTime().getTime() > recapDeadline(schedule, role) ? 'LATE' : 'SUBMITTED',
       reviewedBy: null,
       reviewedAt: null
     };
@@ -2765,6 +2788,7 @@ app.patch('/api/mentoring/recaps/:id/status', requireRole('ADMIN'), async (req, 
 
 app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) => {
   try {
+    const now = getCurrentTime();
     const filter = {};
     if (req.query.quarterlyId) {
       const quarterlyFilter = quarterlyIdQuery(req.query.quarterlyId);
@@ -2800,10 +2824,17 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
       const schedules = schedulesByMonthlyId.get(pair.monthlyId) || [];
       const recaps = recapsByMonthlyId.get(pair.monthlyId) || [];
       const schedule = schedules.filter((item) => item.status === 'COMPLETED' || item.status === 'CONFIRMED').sort((a, b) => new Date(b.startTime) - new Date(a.startTime))[0];
-      const related = schedule ? recaps.filter((item) => String(item.scheduleId) === String(schedule._id)) : recaps;
-      const deadline = schedule ? new Date(schedule.endTime).getTime() + 24 * 3600000 : null;
-      const submittedRoles = new Set(related.filter((item) => ['SUBMITTED', 'APPROVED', 'LATE'].includes(item.status)).map((item) => item.role));
-      const late = related.some((item) => item.status === 'LATE') || Boolean(deadline && getCurrentTime().getTime() > deadline);
+      const matchingScheduleRecaps = schedule
+        ? recaps.filter((item) => String(item.scheduleId || '') === String(schedule._id))
+        : [];
+      const legacyRecaps = recaps.filter((item) => !item.scheduleId);
+      const related = schedule
+        ? matchingScheduleRecaps.concat(
+          schedules.filter((item) => item.status !== 'CANCELLED').length === 1
+            ? legacyRecaps.filter((legacy) => !matchingScheduleRecaps.some((matched) => matched.role === legacy.role))
+            : []
+        )
+        : recaps;
       const monthMatch = /^T(\d{1,2})Q[1-4](\d{4})/i.exec(pair.monthlyId || '');
       const monthKey = monthMatch
         ? `${monthMatch[1].padStart(2, '0')}/${monthMatch[2]}`
@@ -2815,21 +2846,30 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
         const roleKey = role.toLowerCase();
         const importedStatus = importedMonthStatus?.[roleKey] ?? importedMonthStatus?.[role];
         const normalizedStatus = String(importedStatus || '').trim().toLowerCase();
-        const importedValue = ['đã xong', 'da xong', 'completed', 'approved'].includes(normalizedStatus)
+        const importedValue = ['đã xong', 'da xong', 'đã nộp/đã xong', 'completed', 'approved'].includes(normalizedStatus)
           ? 'COMPLETED'
-          : importedStatus !== undefined
+          : ['nộp muộn', 'late'].includes(normalizedStatus)
+            ? 'LATE'
+            : ['chưa xong', 'missing'].includes(normalizedStatus)
+              ? 'MISSING'
+              : importedStatus !== undefined
             ? 'PENDING'
             : null;
-        return [roleKey, importedValue || (submittedRoles.has(role) ? 'COMPLETED' : 'PENDING')];
+        const roleRecap = related
+          .filter((item) => item.role === role)
+          .sort((left, right) => (recapSubmissionTime(right) || 0) - (recapSubmissionTime(left) || 0))[0];
+        return [roleKey, importedValue || roleRecapStatus(schedule, roleRecap, role, now)];
       }));
       const importedCompleted = Object.values(pair.importedRecapStatus || {}).some((monthStatus) => {
         const values = [monthStatus?.mentor, monthStatus?.mentee]
           .map((value) => String(value || '').trim().toLowerCase());
         return values.length === 2 && values.every((value) => ['đã xong', 'da xong', 'completed', 'approved'].includes(value));
       });
-      const status = !schedule && importedCompleted ? 'ĐÃ NỘP/ĐÃ XONG' : !schedule ? 'CHƯA CÓ LỊCH' : submittedRoles.size < 2
-        ? (late ? 'CHƯA XONG' : 'CHỜ')
-        : (related.some((item) => item.status === 'LATE') ? 'NỘP MUỘN' : 'ĐÃ NỘP/ĐÃ XONG');
+      const status = !schedule && importedCompleted
+        ? 'ĐÃ NỘP/ĐÃ XONG'
+        : !schedule
+          ? 'CHƯA CÓ LỊCH'
+          : pairRecapStatus(schedule, related, now);
       return {
         ...pair,
         monthlyId: pair.monthlyId,
@@ -2850,6 +2890,7 @@ app.get('/api/mentoring/pairs/status', requireRole('ADMIN'), async (req, res) =>
 
 app.get('/api/mentoring/quarterly-report/:year/:quarter/export.xlsx', requireRole('ADMIN'), async (req, res) => {
   try {
+    const now = getCurrentTime();
     const year = Number(req.params.year);
     const quarter = Number(req.params.quarter);
     if (!Number.isInteger(year) || year < 2000 || year > 2100 || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
@@ -2927,7 +2968,15 @@ app.get('/api/mentoring/quarterly-report/:year/:quarter/export.xlsx', requireRol
             const importedRoleStatus = importedMonthStatus?.[role.toLowerCase()] ?? importedMonthStatus?.[role];
             if (importedRoleStatus !== undefined) {
               const normalized = String(importedRoleStatus).trim().toLowerCase();
-              status = ['đã xong', 'da xong', 'completed', 'approved'].includes(normalized) ? 'Đã xong' : 'Chưa xong';
+              status = ['nộp muộn', 'late'].includes(normalized)
+                ? 'Nộp muộn'
+                : ['chưa xong', 'missing'].includes(normalized)
+                  ? 'Chưa xong'
+                  : ['chờ', 'pending'].includes(normalized)
+                    ? 'Chờ'
+                    : ['đã xong', 'da xong', 'đã nộp/đã xong', 'completed', 'approved'].includes(normalized)
+                      ? 'Đã nộp'
+                      : 'Chưa xong';
             } else {
               const monthSchedules = schedulesByMonthlyId.get(pair.monthlyId) || [];
               const schedule = monthSchedules
@@ -2937,10 +2986,16 @@ app.get('/api/mentoring/quarterly-report/:year/:quarter/export.xlsx', requireRol
               const relatedRecaps = schedule
                 ? monthRecaps.filter((item) => String(item.scheduleId) === String(schedule._id))
                 : monthRecaps;
-              const isSubmitted = relatedRecaps.some((item) => (
-                item.role === role && ['SUBMITTED', 'APPROVED', 'LATE'].includes(item.status)
-              ));
-              status = isSubmitted ? 'Đã xong' : 'Chưa xong';
+              const recap = relatedRecaps
+                .filter((item) => item.role === role)
+                .sort((left, right) => (recapSubmissionTime(right) || 0) - (recapSubmissionTime(left) || 0))[0];
+              const progressStatus = roleRecapStatus(schedule, recap, role, now);
+              status = {
+                PENDING: 'Chờ',
+                SUBMITTED: 'Đã nộp',
+                MISSING: 'Chưa xong',
+                LATE: 'Nộp muộn'
+              }[progressStatus];
             }
           }
           row[`${prefix} - Trạng thái recap`] = status;

@@ -7,7 +7,12 @@ import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
 import MemberQuarterlyReport from '@/components/MemberQuarterlyReport';
 import ProfileLink from '@/components/ProfileLink';
 import { useMentoringData } from '@/utils/useMentoringData';
-import { canWriteMentoringRecap } from '@/utils/mentoringSchedule';
+import {
+  canWriteMentoringRecap,
+  getMentoringRecapProgressStatus,
+  mentoringRecapProgressColor,
+  mentoringRecapProgressLabel
+} from '@/utils/mentoringSchedule';
 
 export default function MentorMentoringPage() {
   const { message } = App.useApp();
@@ -126,21 +131,27 @@ export default function MentorMentoringPage() {
             { title: 'Kết thúc', dataIndex: 'endTime', render: (value: string) => new Date(value).toLocaleString() },
             { title: 'Trạng thái', dataIndex: 'status', render: (value: string) => <Tag color={value === 'COMPLETED' ? 'green' : 'blue'}>{value}</Tag> },
             { title: 'Chi tiết', render: (_: unknown, record: any) => <Button onClick={() => setDetailSchedule(record)}>Xem chi tiết</Button> },
-            { title: 'Recap', render: (_: unknown, record: any) => (
-              <Button
-                disabled={!canWriteMentoringRecap(record, record.recap)}
-                onClick={() => {
-                  form.setFieldsValue({
-                    content: record.recap?.content || '',
-                    mediaUrl: record.recap?.mediaUrls?.[0] || '',
-                    note: record.recap?.note || ''
-                  });
-                  setSelectedSchedule(record);
-                }}
-              >
-                {record.recap?.status === 'APPROVED' ? 'Đã duyệt' : record.recap ? 'Sửa recap' : 'Viết recap'}
-              </Button>
-            ) }
+            { title: 'Recap', render: (_: unknown, record: any) => {
+              const progressStatus = getMentoringRecapProgressStatus(record, record.recap, 'MENTOR');
+              return <div className="flex flex-col items-start gap-2">
+                <Tag color={mentoringRecapProgressColor(progressStatus)}>
+                  {mentoringRecapProgressLabel(progressStatus)}
+                </Tag>
+                <Button
+                  disabled={!canWriteMentoringRecap(record, record.recap)}
+                  onClick={() => {
+                    form.setFieldsValue({
+                      content: record.recap?.content || '',
+                      mediaUrl: record.recap?.mediaUrls?.[0] || '',
+                      note: record.recap?.note || ''
+                    });
+                    setSelectedSchedule(record);
+                  }}
+                >
+                  {record.recap?.status === 'APPROVED' ? 'Đã duyệt' : record.recap ? 'Sửa recap' : 'Viết recap'}
+                </Button>
+              </div>;
+            } }
           ]}
         />
       </Card>

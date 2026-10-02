@@ -4,7 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
 import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, LockOutlined, UnlockOutlined, DeleteOutlined, LoadingOutlined } from '@ant-design/icons';
 import { apiFetch } from '@/lib/api';
-import { mentoringRecapDeadline } from '@/utils/mentoringSchedule';
+import {
+  getMentoringRecapProgressStatus,
+  mentoringRecapProgressColor,
+  mentoringRecapProgressLabel
+} from '@/utils/mentoringSchedule';
 import { getCurrentTime } from '@/utils/time';
 import ProfileLink from '@/components/ProfileLink';
 
@@ -66,6 +70,7 @@ interface Schedule {
   startTime: string;
   endTime: string;
   confirmedAt?: string;
+  createdAt?: string;
   status: string;
   meetingLink?: string;
   location?: string;
@@ -78,6 +83,7 @@ interface Recap {
   userId: string;
   role: string;
   status: string;
+  submittedAt?: string;
   createdAt: string;
   content?: string;
   mediaUrls?: string[];
@@ -88,17 +94,19 @@ interface PairForm { cycleId: string; month: number; mentorId: string; menteeId:
 const recapLabels: Record<string, string> = {
   PENDING: 'Chờ',
   SUBMITTED: 'Đã nộp',
-  APPROVED: 'Đã nộp',
+  APPROVED: 'Đã duyệt',
   REJECTED: 'Bị từ chối',
-  'ĐÃ NỘP/ĐÃ XONG': 'Đã nộp',
+  'ĐÃ NỘP/ĐÃ XONG': 'Đã xong',
   'CHƯA XONG': 'Chưa xong',
   'NỘP MUỘN': 'Nộp muộn',
-  MISSING: 'Chưa xong'
+  MISSING: 'Chưa xong',
+  CHỜ: 'Chờ'
 };
 
 function recapColor(status?: string) {
-  if (status === 'SUBMITTED' || status === 'APPROVED' || status === 'ĐÃ NỘP/ĐÃ XONG') return 'green';
-  if (status === 'REJECTED' || status === 'LATE' || status === 'NỘP MUỘN' || status === 'CHƯA XONG') return 'red';
+  const normalized = String(status || '').toUpperCase();
+  if (['SUBMITTED', 'APPROVED', 'ĐÃ NỘP/ĐÃ XONG'].includes(normalized)) return 'green';
+  if (['REJECTED', 'MISSING', 'CHƯA XONG'].includes(normalized)) return 'red';
   return 'gold';
 }
 
@@ -770,7 +778,6 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
             <div>
               <Typography.Title level={5}>Trạng thái recap</Typography.Title>
               {detailSchedules.map((schedule) => {
-                const deadline = mentoringRecapDeadline(schedule);
                 const scheduleRecaps = detailRecaps.filter((recap) => recap.scheduleId === schedule._id);
                 const legacyRecaps = detailRecaps.filter((recap) => !recap.scheduleId);
                 const relatedRecaps = scheduleRecaps.length > 0
@@ -779,14 +786,19 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
                     ? (legacyRecaps.length > 0 ? legacyRecaps : detailRecaps)
                     : legacyRecaps;
                 return <Card size="small" key={schedule._id} className="mb-2">
-                  <div className="flex flex-wrap justify-between gap-2">
-                    <span>{schedule.monthCode || schedule._id}</span>
-                    <span>Hạn recap (24h sau khi kết thúc): {deadline.toLocaleString()}</span>
-                  </div>
+                  <div>{schedule.monthCode || schedule._id}</div>
                   <Space wrap className="mt-2">
                     {['MENTEE', 'MENTOR'].map((role) => {
                       const recap = relatedRecaps.find((item) => item.role === role);
-                      return <Tag key={role} color={recapColor(recap?.status)}>{role}: {recapLabels[recap?.status || 'PENDING'] || 'Chờ'}</Tag>;
+                      const progressStatus = getMentoringRecapProgressStatus(schedule, recap, role as 'MENTOR' | 'MENTEE');
+                      const deadlineStart = role === 'MENTEE' ? schedule.endTime : (schedule.confirmedAt || schedule.createdAt);
+                      const deadline = deadlineStart
+                        ? new Date(new Date(deadlineStart).getTime() + 24 * 60 * 60 * 1000)
+                        : null;
+                      return <Tag key={role} color={mentoringRecapProgressColor(progressStatus)}>
+                        {role}: {mentoringRecapProgressLabel(progressStatus)}
+                        {deadline ? ` · hạn ${deadline.toLocaleString()}` : ''}
+                      </Tag>;
                     })}
                   </Space>
                 </Card>;
