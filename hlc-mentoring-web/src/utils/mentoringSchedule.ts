@@ -20,24 +20,33 @@ const RECAP_WINDOW_MS = 24 * 60 * 60 * 1000;
 export function getMentoringRecapProgressStatus(
   schedule: RecapSchedule,
   recap: RecapReview | null | undefined,
-  role: 'MENTOR' | 'MENTEE',
+  _role: 'MENTOR' | 'MENTEE',
   now = getCurrentTime()
 ): MentoringRecapProgressStatus {
-  const start = role === 'MENTEE'
-    ? schedule.endTime
-    : (schedule.confirmedAt || schedule.createdAt);
+  const start = schedule.endTime;
   const startTime = start ? new Date(start).getTime() : NaN;
   const deadline = Number.isNaN(startTime) ? null : startTime + RECAP_WINDOW_MS;
   const recapIsSubmitted = recap && !['MISSING', 'PENDING'].includes(recap.status || '');
   if (recapIsSubmitted) {
     const submittedAtValue = recap.submittedAt || recap.createdAt;
     const submittedAt = submittedAtValue ? new Date(submittedAtValue).getTime() : NaN;
-    return recap.status === 'LATE'
+    return (recap.status === 'LATE' && Number.isNaN(submittedAt))
       || (deadline !== null && !Number.isNaN(submittedAt) && submittedAt > deadline)
       ? 'LATE'
       : 'SUBMITTED';
   }
   return deadline !== null && now.getTime() > deadline ? 'MISSING' : 'PENDING';
+}
+
+export function mentoringRecapDeadline(schedule: RecapSchedule) {
+  const start = schedule.endTime;
+  if (!start) return null;
+  const timestamp = new Date(start).getTime();
+  return Number.isNaN(timestamp) ? null : new Date(timestamp + RECAP_WINDOW_MS);
+}
+
+export function mentoringRecapDeadlineSource() {
+  return 'kết thúc buổi + 24 giờ';
 }
 
 export function mentoringRecapProgressLabel(status: MentoringRecapProgressStatus) {
@@ -66,8 +75,4 @@ export function canWriteMentoringRecap(
   return recap?.status !== 'APPROVED'
     && ['COMPLETED', 'CONFIRMED'].includes(schedule.status)
     && new Date(schedule.endTime) <= now;
-}
-
-export function mentoringRecapDeadline(schedule: RecapSchedule) {
-  return new Date(new Date(schedule.endTime).getTime() + 24 * 60 * 60 * 1000);
 }

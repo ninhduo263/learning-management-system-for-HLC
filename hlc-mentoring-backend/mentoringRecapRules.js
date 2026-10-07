@@ -6,10 +6,8 @@ function recapSubmissionTime(recap) {
   return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-function recapDeadline(schedule, role) {
-  const start = role === 'MENTEE'
-    ? schedule?.endTime
-    : (schedule?.confirmedAt || schedule?.createdAt);
+function recapDeadline(schedule, _role) {
+  const start = schedule?.endTime;
   const timestamp = start ? new Date(start).getTime() : NaN;
   return Number.isNaN(timestamp) ? null : timestamp + RECAP_WINDOW_MS;
 }
@@ -23,7 +21,7 @@ function roleRecapStatus(schedule, recap, role, now = new Date()) {
   const deadline = recapDeadline(schedule, role);
   const submittedAt = recapSubmissionTime(recap);
   if (recap && !['MISSING', 'PENDING'].includes(recap.status)) {
-    return (recap.status === 'LATE' && submittedAt === null)
+    return (submittedAt === null && recap.status === 'LATE')
       || (deadline !== null && submittedAt !== null && submittedAt > deadline)
       ? 'LATE'
       : 'SUBMITTED';
@@ -32,7 +30,6 @@ function roleRecapStatus(schedule, recap, role, now = new Date()) {
 }
 
 function pairRecapStatus(schedule, recaps, now = new Date()) {
-  const deadline = recapDeadline(schedule, 'MENTOR');
   const latestByRole = new Map();
   for (const recap of recaps) {
     if (!['MENTOR', 'MENTEE'].includes(recap.role) || ['MISSING', 'PENDING'].includes(recap.status)) continue;
@@ -41,16 +38,13 @@ function pairRecapStatus(schedule, recaps, now = new Date()) {
       latestByRole.set(recap.role, recap);
     }
   }
-  const hasLate = [...latestByRole.values()].some((recap) => {
-    const submittedAt = recapSubmissionTime(recap);
-    return (recap.status === 'LATE' && submittedAt === null)
-      || (deadline !== null && submittedAt !== null && submittedAt > deadline);
-  });
-  if (hasLate) return 'NỘP MUỘN';
-  if (latestByRole.size < 2) {
-    return deadline !== null && now.getTime() > deadline ? 'CHƯA XONG' : 'CHỜ';
-  }
-  return 'ĐÃ NỘP/ĐÃ XONG';
+  const statuses = ['MENTOR', 'MENTEE'].map((role) =>
+    roleRecapStatus(schedule, latestByRole.get(role), role, now)
+  );
+  if (statuses.includes('LATE')) return 'NỘP MUỘN';
+  if (statuses.includes('MISSING')) return 'CHƯA XONG';
+  if (statuses.every((status) => status === 'SUBMITTED')) return 'ĐÃ NỘP/ĐÃ XONG';
+  return 'CHỜ';
 }
 
 module.exports = {

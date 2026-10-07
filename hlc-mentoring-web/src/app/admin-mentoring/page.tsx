@@ -6,6 +6,8 @@ import { EyeOutlined, EditOutlined, PlusOutlined, CheckOutlined, InboxOutlined, 
 import { apiFetch } from '@/lib/api';
 import {
   getMentoringRecapProgressStatus,
+  mentoringRecapDeadline,
+  mentoringRecapDeadlineSource,
   mentoringRecapProgressColor,
   mentoringRecapProgressLabel
 } from '@/utils/mentoringSchedule';
@@ -228,24 +230,36 @@ export default function AdminMentoringPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <CycleManagementPanel key={currentCycleCode} cycleCode={currentCycleCode} panelKind="current" />
       {nextQuarterOpen && (
-        <Card className="border-dashed">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-                    <Typography.Title level={5} className="!mb-1">
-                Chuẩn bị ghép cặp Quý {nextCycleCode.slice(-1)} - {nextCycleCode.slice(0, 4)}
-              </Typography.Title>
-              <Typography.Text type="secondary">
-                Quý kế tiếp đã mở từ ngày 10 của tháng cuối quý. Quý hiện tại vẫn được giữ bên trên.
-              </Typography.Text>
-            </div>
-            <Button type="primary" loading={openingNextCycle} onClick={openNextCycle}>
-              {nextCycleVisible ? 'Đã mở quản lý quý sau' : 'Quản lý ghép cặp quý sau'}
-            </Button>
+        nextCycleVisible ? (
+          <div className="flex items-center gap-3 px-1 pt-1" aria-label="Quý kế tiếp đã mở">
+            <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-violet-700">
+              Quý kế tiếp đã mở
+            </span>
+            <div className="h-px flex-1 bg-violet-200" />
           </div>
-        </Card>
+        ) : (
+          <Card className="overflow-hidden !border-violet-200 bg-gradient-to-r from-violet-50 via-white to-indigo-50 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <Typography.Title level={5} className="!mb-0">
+                    Chuẩn bị ghép cặp Quý {nextCycleCode.slice(-1)} / {nextCycleCode.slice(0, 4)}
+                  </Typography.Title>
+                  <Tag color="purple">Sắp tới</Tag>
+                </div>
+                <Typography.Text type="secondary">
+                  Quý hiện tại vẫn ở phía trên; các cặp quý kế tiếp được quản lý riêng bên dưới.
+                </Typography.Text>
+              </div>
+              <Button type="primary" className="!shrink-0" loading={openingNextCycle} onClick={openNextCycle}>
+                Mở quản lý quý kế tiếp
+              </Button>
+            </div>
+          </Card>
+        )
       )}
       {nextCycleVisible && (
         <CycleManagementPanel key={nextCycleCode} cycleCode={nextCycleCode} panelKind="next" />
@@ -619,12 +633,14 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
             onClick={(event) => {
               event.stopPropagation();
               setSelectedPair(row);
-              editForm.setFieldsValue({
-                cycleId: row.cycleId,
-                mentorId: row.mentorId,
-                menteeId: row.menteeId,
-                month: pairMonth(row, row.cycleId) || monthOptions[0]?.value
-              });
+              setTimeout(() => {
+                editForm.setFieldsValue({
+                  cycleId: row.cycleId,
+                  mentorId: row.mentorId,
+                  menteeId: row.menteeId,
+                  month: pairMonth(row, row.cycleId) || monthOptions[0]?.value
+                });
+              }, 0);
               setModal('edit');
             }}
           >
@@ -654,26 +670,44 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Typography.Title level={3} className="!mb-0 !whitespace-nowrap shrink-0">
-            Quản lý Ghép cặp — Quý {cycleCode.match(/Q([1-4])/)?.[1]} / {cycleCode.slice(0, 4)}
-          </Typography.Title>
-          {panelKind === 'next' && <Tag color="purple">Quý kế tiếp</Tag>}
+    <section className={[
+      'space-y-4 rounded-2xl border p-3 shadow-sm sm:space-y-5 sm:p-5',
+      panelKind === 'current'
+        ? 'border-indigo-200 bg-gradient-to-b from-indigo-50/70 to-white'
+        : 'border-violet-200 bg-gradient-to-b from-violet-50/70 to-white'
+    ].join(' ')}>
+      <header className="space-y-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Tag color={panelKind === 'current' ? 'geekblue' : 'purple'}>
+            {panelKind === 'current' ? 'QUÝ HIỆN TẠI' : 'QUÝ KẾ TIẾP'}
+          </Tag>
+          {cycleLocked && <Tag color="red">Đã khóa</Tag>}
         </div>
-        <Space wrap className="max-w-full justify-end">
-          <Select value={cycleCode} options={cycleOptions} className="min-w-52" disabled />
-          <Upload accept=".xlsx,.csv" showUploadList={false} disabled={importing || cycleLocked} beforeUpload={(file) => { void importPairs(file); return Upload.LIST_IGNORE; }}>
-            <Button icon={<InboxOutlined />} disabled={importing || cycleLocked}>Import file</Button>
-          </Upload>
-          <Button type="primary" icon={<PlusOutlined />} disabled={cycleLocked} onClick={() => { createForm.setFieldsValue({ cycleId: selectedCycle, month: monthOptions[0]?.value }); setModal('create'); }}>Thêm mới</Button>
-          <Button icon={<EditOutlined />} disabled={cycleLocked || !selectedPair} onClick={() => { if (selectedPair) { editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: pairMonth(selectedPair, selectedPair.cycleId) || monthOptions[0]?.value }); setModal('edit'); } }}>Chỉnh sửa</Button>
-          <Button icon={cycleLocked ? <UnlockOutlined /> : <LockOutlined />} onClick={toggleCycleLock} disabled={!selectedCycle}>{cycleLocked ? 'Mở khóa quý' : 'Khóa quý'}</Button>
-        </Space>
-      </div>
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <Typography.Title level={3} className="!mb-0 !text-xl sm:!text-2xl">
+              Quản lý ghép cặp
+            </Typography.Title>
+            <Typography.Text type="secondary">
+              Quý {cycleCode.match(/Q([1-4])/)?.[1]} / {cycleCode.slice(0, 4)}
+              {panelKind === 'next' ? ' · Quản lý độc lập với quý hiện tại' : ' · Chọn tháng để xem và quản lý các cặp'}
+            </Typography.Text>
+          </div>
+          <div className="flex min-w-0 flex-col gap-2 rounded-xl border border-white/80 bg-white/80 p-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-center">
+            <Select value={cycleCode} options={cycleOptions} className="!w-full sm:!w-56" disabled />
+            <div className="flex flex-wrap gap-2">
+              <Upload accept=".xlsx,.csv" showUploadList={false} disabled={importing || cycleLocked} beforeUpload={(file) => { void importPairs(file); return Upload.LIST_IGNORE; }}>
+                <Button icon={<InboxOutlined />} disabled={importing || cycleLocked}>Import file</Button>
+              </Upload>
+              <Button type="primary" icon={<PlusOutlined />} disabled={cycleLocked} onClick={() => { setTimeout(() => createForm.setFieldsValue({ cycleId: selectedCycle, month: monthOptions[0]?.value }), 0); setModal('create'); }}>Thêm mới</Button>
+              <Button icon={<EditOutlined />} disabled={cycleLocked || !selectedPair} onClick={() => { if (selectedPair) { setTimeout(() => editForm.setFieldsValue({ cycleId: selectedPair.cycleId, mentorId: selectedPair.mentorId, menteeId: selectedPair.menteeId, month: pairMonth(selectedPair, selectedPair.cycleId) || monthOptions[0]?.value }), 0); setModal('edit'); } }}>Chỉnh sửa</Button>
+              <Button icon={cycleLocked ? <UnlockOutlined /> : <LockOutlined />} onClick={toggleCycleLock} disabled={!selectedCycle}>{cycleLocked ? 'Mở khóa quý' : 'Khóa quý'}</Button>
+            </div>
+          </div>
+        </div>
+      </header>
 
-      <Card styles={{ body: { padding: 0 } }}>
+      <Card className="overflow-hidden !rounded-xl !border-slate-200" styles={{ body: { padding: 0 } }}>
         <Tabs
           defaultActiveKey={String(monthsForCycleOptions(cycleCode)[0]?.value)}
           items={monthlyPairs.map(({ month, pairs: monthPairs }) => ({
@@ -695,7 +729,11 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
         />
       </Card>
 
-      <Card title="Duyệt recap mentoring" extra={<Tag>{recaps.filter((recap) => recap.status === 'SUBMITTED' || recap.status === 'LATE').length} chờ duyệt</Tag>}>
+      <Card
+        className="overflow-hidden !rounded-xl !border-slate-200"
+        title={<span className="font-semibold">Duyệt recap mentoring</span>}
+        extra={<Tag color="gold">{recaps.filter((recap) => recap.status === 'SUBMITTED' || recap.status === 'LATE').length} chờ duyệt</Tag>}
+      >
         <Table
           rowKey="_id"
           size="small"
@@ -770,7 +808,7 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
                   <Button size="small" onClick={(event) => {
                     event.stopPropagation();
                     setOverrideSchedule(row);
-                    overrideForm.setFieldsValue({ startTime: toDateTimeLocal(row.startTime), endTime: toDateTimeLocal(row.endTime), meetingLink: row.meetingLink, location: row.location, note: row.note });
+                    setTimeout(() => overrideForm.setFieldsValue({ startTime: toDateTimeLocal(row.startTime), endTime: toDateTimeLocal(row.endTime), meetingLink: row.meetingLink, location: row.location, note: row.note }), 0);
                   }}>Ghi đè</Button>
                 </Space> }
               ]} locale={{ emptyText: 'Chưa có lịch mentoring' }} />
@@ -791,13 +829,12 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
                     {['MENTEE', 'MENTOR'].map((role) => {
                       const recap = relatedRecaps.find((item) => item.role === role);
                       const progressStatus = getMentoringRecapProgressStatus(schedule, recap, role as 'MENTOR' | 'MENTEE');
-                      const deadlineStart = role === 'MENTEE' ? schedule.endTime : (schedule.confirmedAt || schedule.createdAt);
-                      const deadline = deadlineStart
-                        ? new Date(new Date(deadlineStart).getTime() + 24 * 60 * 60 * 1000)
-                        : null;
+                      const deadline = mentoringRecapDeadline(schedule);
                       return <Tag key={role} color={mentoringRecapProgressColor(progressStatus)}>
                         {role}: {mentoringRecapProgressLabel(progressStatus)}
-                        {deadline ? ` · hạn ${deadline.toLocaleString()}` : ''}
+                        {deadline
+                          ? ` · hạn (${mentoringRecapDeadlineSource()}): ${deadline.toLocaleString()}`
+                          : ' · chưa có thời điểm kết thúc buổi để tính hạn'}
                       </Tag>;
                     })}
                   </Space>
@@ -881,7 +918,7 @@ function CycleManagementPanel({ cycleCode, panelKind }: { cycleCode: string; pan
           </div>
         )}
       </Modal>
-    </div>
+    </section>
   );
 }
 

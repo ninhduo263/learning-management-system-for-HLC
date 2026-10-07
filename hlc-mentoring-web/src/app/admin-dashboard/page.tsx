@@ -2,32 +2,20 @@
 
 import { useMemo, useState } from 'react';
 import { Alert, App, Button, Card, Spin, Table, Tabs, Tag, Typography } from 'antd';
-import { apiFetch } from '@/lib/api';
 import { getCurrentTime } from '@/utils/time';
 import ProfileLink from '@/components/ProfileLink';
-
-interface UserOption {
-  userId: string;
-  fullName: string;
-  phone?: string;
-  email?: string;
-  mentorId?: string;
-  profileUrl?: string;
-}
+import {
+  getAdminMemberDirectory,
+  getAdminPairDashboardData,
+  getQuarterlyReportFile,
+  type AdminDashboardPair,
+  type AdminDashboardUser
+} from '@/services/adminDashboardApi';
 
 type MemberRole = 'mentor' | 'mentee';
 
-interface Pair {
-  _id: string;
-  monthlyId?: string;
-  quarterlyId?: string;
-  cycleId: string;
-  mentorId: string;
-  menteeId: string;
-  importedRecapStatus?: Record<string, { mentor?: string; mentee?: string }>;
-  recapStatusByRole?: { mentor?: string; mentee?: string };
-  isLocked?: boolean;
-}
+type UserOption = AdminDashboardUser;
+type Pair = AdminDashboardPair;
 
 interface QuarterReport {
   key: string;
@@ -153,20 +141,10 @@ export default function AdminDashboardPage() {
   const loadPairs = async () => {
     setLoading(true);
     try {
-      const [pairResponse, mentorResponse, menteeResponse] = await Promise.all([
-        apiFetch('/mentoring/pairs/status'),
-        apiFetch('/users/mentors?includeInactive=true'),
-        apiFetch('/users/mentees?includeInactive=true')
-      ]);
-      const [pairResult, mentorResult, menteeResult] = await Promise.all([
-        pairResponse.json(), mentorResponse.json(), menteeResponse.json()
-      ]);
-      if (!pairResult.success) throw new Error(pairResult.message || 'Không thể tải danh sách mentoring');
-      if (!mentorResult.success) throw new Error(mentorResult.message || 'Không thể tải danh sách Mentor');
-      if (!menteeResult.success) throw new Error(menteeResult.message || 'Không thể tải danh sách Mentee');
-      setPairs(pairResult.data || []);
-      setMentors(mentorResult.data || []);
-      setMentees(menteeResult.data || []);
+      const result = await getAdminPairDashboardData();
+      setPairs(result.pairs || []);
+      setMentors(result.mentors || []);
+      setMentees(result.mentees || []);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể tải dữ liệu mentoring');
     } finally {
@@ -186,12 +164,7 @@ export default function AdminDashboardPage() {
   const exportQuarter = async (report: QuarterReport) => {
     setExportingQuarter(report.key);
     try {
-      const response = await apiFetch(`/mentoring/quarterly-report/${report.year}/${report.quarter}/export.xlsx`);
-      if (!response.ok) {
-        const result = await response.json();
-        throw new Error(result.message || 'Không thể xuất file báo cáo quý');
-      }
-      const file = await response.blob();
+      const file = await getQuarterlyReportFile(report.year, report.quarter);
       const url = URL.createObjectURL(file);
       const link = document.createElement('a');
       link.href = url;
@@ -215,18 +188,9 @@ export default function AdminDashboardPage() {
     setMembersVisible(true);
     setMembersLoading(true);
     try {
-      const [mentorResponse, menteeResponse] = await Promise.all([
-        apiFetch('/users/mentors?includeInactive=true'),
-        apiFetch('/users/mentees?includeInactive=true')
-      ]);
-      const [mentorResult, menteeResult] = await Promise.all([
-        mentorResponse.json(),
-        menteeResponse.json()
-      ]);
-      if (!mentorResult.success) throw new Error(mentorResult.message || 'Không thể tải danh sách Mentor');
-      if (!menteeResult.success) throw new Error(menteeResult.message || 'Không thể tải danh sách Mentee');
-      setDirectoryMentors(mentorResult.data || []);
-      setDirectoryMentees(menteeResult.data || []);
+      const result = await getAdminMemberDirectory();
+      setDirectoryMentors(result.mentors || []);
+      setDirectoryMentees(result.mentees || []);
     } catch (error) {
       message.error(error instanceof Error ? error.message : 'Không thể tải danh sách thành viên');
     } finally {

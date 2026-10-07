@@ -11,6 +11,8 @@ import { getCurrentTime } from '@/utils/time';
 import {
   canWriteMentoringRecap,
   getMentoringRecapProgressStatus,
+  mentoringRecapDeadline,
+  mentoringRecapDeadlineSource,
   mentoringRecapProgressColor,
   mentoringRecapProgressLabel
 } from '@/utils/mentoringSchedule';
@@ -340,10 +342,16 @@ export default function MenteeMentoringPage() {
             </div> },
             { title: 'Recap', render: (_: unknown, record: any) => {
               const progressStatus = getMentoringRecapProgressStatus(record, record.recap, 'MENTEE');
+              const deadline = mentoringRecapDeadline(record);
               return <div className="flex flex-col items-start gap-2">
                 <Tag color={mentoringRecapProgressColor(progressStatus)}>
                   {mentoringRecapProgressLabel(progressStatus)}
                 </Tag>
+                {deadline && (
+                  <Typography.Text type="secondary" className="text-xs">
+                    Hạn ({mentoringRecapDeadlineSource()}): {deadline.toLocaleString()}
+                  </Typography.Text>
+                )}
                 <Button
                   disabled={!canWriteMentoringRecap(record, record.recap)}
                   onClick={() => {

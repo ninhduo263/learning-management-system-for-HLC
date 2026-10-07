@@ -1,7 +1,7 @@
 ﻿'use client';
 
 import { useEffect, useState } from 'react';
-import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Table, Tag } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Table, Tag, Typography } from 'antd';
 import { apiFetch } from '@/lib/api';
 import CloudinaryImageUpload from '@/components/CloudinaryImageUpload';
 import MemberQuarterlyReport from '@/components/MemberQuarterlyReport';
@@ -10,6 +10,8 @@ import { useMentoringData } from '@/utils/useMentoringData';
 import {
   canWriteMentoringRecap,
   getMentoringRecapProgressStatus,
+  mentoringRecapDeadline,
+  mentoringRecapDeadlineSource,
   mentoringRecapProgressColor,
   mentoringRecapProgressLabel
 } from '@/utils/mentoringSchedule';
@@ -133,10 +135,16 @@ export default function MentorMentoringPage() {
             { title: 'Chi tiết', render: (_: unknown, record: any) => <Button onClick={() => setDetailSchedule(record)}>Xem chi tiết</Button> },
             { title: 'Recap', render: (_: unknown, record: any) => {
               const progressStatus = getMentoringRecapProgressStatus(record, record.recap, 'MENTOR');
+              const deadline = mentoringRecapDeadline(record);
               return <div className="flex flex-col items-start gap-2">
                 <Tag color={mentoringRecapProgressColor(progressStatus)}>
                   {mentoringRecapProgressLabel(progressStatus)}
                 </Tag>
+                <Typography.Text type="secondary" className="text-xs">
+                  {deadline
+                    ? `Hạn (${mentoringRecapDeadlineSource()}): ${deadline.toLocaleString()}`
+                    : 'Chưa có thời điểm kết thúc buổi để tính hạn'}
+                </Typography.Text>
                 <Button
                   disabled={!canWriteMentoringRecap(record, record.recap)}
                   onClick={() => {
