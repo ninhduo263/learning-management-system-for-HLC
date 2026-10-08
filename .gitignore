@@ -57,3 +57,17 @@ uploads/
 # Patch files
 *.patch
 *.diff
+
+# Temporary refactor and extraction scripts
+auto-refactor*.js
+extract*.js
+extract*.txt
+find-*.js
+fix*.js
+generate_*.js
+refactor_*.js
+old_*.js
+*-out.txt
+*-routes.txt
+controllers/raw_*.js
+*.txt
