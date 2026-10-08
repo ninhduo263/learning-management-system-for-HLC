@@ -53,3 +53,7 @@ uploads/
 *.pem
 *.key
 *.crt
+
+# Patch files
+*.patch
+*.diff
