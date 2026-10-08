@@ -1,5 +1,12 @@
 # Dependencies
 node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
 
 # Environment and secrets
 .env
@@ -11,6 +18,10 @@ node_modules/
 .next/
 out/
 build/
+next-env.d.ts
+
+# Vercel
+.vercel/
 
 # Logs and diagnostics
 *.log
