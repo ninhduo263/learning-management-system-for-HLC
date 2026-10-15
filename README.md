@@ -55,28 +55,3 @@ npm install
 npm run dev
 ```
 Frontend mặc định chạy tại `http://localhost:3000`. Cấu hình API có thể được ghi đè thông qua biến môi trường `NEXT_PUBLIC_API_URL` trong file `.env.local`.
-
-## Hướng dẫn Deploy (Production)
-
-Hệ thống đã được thiết lập sẵn sàng để deploy lên **Render** (Backend) và **Vercel** (Frontend).
-
-### Deploy Backend (Render)
-Tạo một Web Service trên Render, liên kết với thư mục `hlc-mentoring-backend` và cấu hình:
-- **Build Command:** `npm install`
-- **Start Command:** `npm start`
-- **Biến môi trường (Environment Variables):**
-  - `MONGO_URI`: Chuỗi kết nối MongoDB Atlas.
-  - `JWT_SECRET`: Chuỗi bảo mật ít nhất 32 ký tự (Bắt buộc trên môi trường production).
-  - *(Không cần thiết lập `PORT` vì Render sẽ tự động gán).*
-
-### Deploy Frontend (Vercel)
-Import thư mục `hlc-mentoring-web` vào Vercel, nền tảng sẽ tự động nhận diện Next.js.
-- **Biến môi trường:**
-  - `NEXT_PUBLIC_API_URL`: Điền URL của backend đã deploy trên Render (Ví dụ: `https://ten-backend.onrender.com`).
-
-## Bảo mật
-
-- Tuyệt đối không commit file `.env`, MongoDB URI, JWT secret, hoặc thông tin Cloudinary lên Github.
-- Mật khẩu người dùng được băm (hash) bằng bcrypt.
-- Hệ thống phân quyền chặt chẽ thông qua JWT, các endpoint quản trị đều yêu cầu role `ADMIN`.
-- File Excel chứa dữ liệu cá nhân (import) không nên đưa vào repository.
