@@ -1,0 +1,83 @@
+stages:
+  - build
+  - test
+  - release
+
+variables:
+  CONTAINER_DEVELOP_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+  CONTAINER_RELEASE_IMAGE: $CI_REGISTRY_IMAGE:latest
+  CONTAINER_TAG_IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
+  GIT_DEPTH: 1
+
+# Build khi push lên nhánh develop
+build_develop:
+  stage: build
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_REF_NAME == "develop" || $CI_COMMIT_REF_NAME =~ "/^product(-.+)?$/")
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - DOCKER_BUILDKIT=1 docker build -t $CONTAINER_DEVELOP_IMAGE .
+    - docker push $CONTAINER_DEVELOP_IMAGE
+  tags:
+    - develop
+  interruptible: true
+
+# Build khi tạo tag tại nhánh main
+build_tag:
+  stage: build
+  only:
+    - tags
+  script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - DOCKER_BUILDKIT=1 docker build -t $CONTAINER_RELEASE_IMAGE .
+    - docker tag $CONTAINER_RELEASE_IMAGE $CONTAINER_TAG_IMAGE
+    - docker push $CONTAINER_RELEASE_IMAGE
+    - docker push $CONTAINER_TAG_IMAGE
+  tags:
+    - release
+  interruptible: true
+
+prepare_release:
+  stage: release
+  image: docker:24.0.2-git
+  only:
+    - tags
+  script:
+    - echo RELEASE_TAG=$CI_COMMIT_TAG >> variables.env
+    - echo '## Changelog' >> CHANGELOG.md
+    - git tag -l -n9 $CI_COMMIT_TAG >> CHANGELOG.md
+    - echo '## Commits' >> CHANGELOG.md 
+    - git log --pretty="- %s (%h)" $(git tag --sort=-creatordate | head -2)...$(git tag --sort=-creatordate | head -1) >> CHANGELOG.md
+    - echo '## Merges' >> CHANGELOG.md 
+    - git log --merges --pretty="- %s (%h)" $(git tag --sort=-creatordate | head -2)...$(git tag --sort=-creatordate | head -1) >> CHANGELOG.md
+    - echo '## AUTHORS' >> CHANGELOG.md
+    - git log --pretty="- %an%n- %cn" $(git tag --sort=-creatordate | head -2)...$(git tag --sort=-creatordate | head -1) | sort | uniq >> CHANGELOG.md
+  artifacts:
+    paths:
+      - CHANGELOG.md
+  tags:
+    - release
+  interruptible: true
+
+# Release khi tạo tag tại nhánh main
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  only:
+    - tags
+  needs:
+    - job: prepare_release
+      artifacts: true
+  artifacts:
+    paths:
+    - CHANGELOG.md
+    expire_in: never
+  script:
+    - echo "Releasing" $CI_COMMIT_TAG "..."
+  release:
+    name: $CI_COMMIT_TAG
+    description: CHANGELOG.md
+    tag_name: $CI_COMMIT_TAG 
+  tags:
+    - release
+  interruptible: true

@@ -1,0 +1,16 @@
+{
+    "error-user-not-found": "User not found",
+    "error-password-wrong": "Password incorrect",
+    "error-old-password-wrong": "Old password incorrect",
+    "error-user-exist": "User existed",
+    "error-mimetype-invalid": "Mimetype invalid",
+    "error-network-restricted": "Network restricted",
+    "error-unauthorized": "Unauthorized",
+    "error-event-not-found": "Event not found",
+    "error-event-exist": "Event already exists",
+    "error-event-log-not-found": "Event log not found",
+    "error-event-log-exist": "Event log already exists",
+    "error-event-log-already-checked-in": "User already checked in",
+    "error-event-log-already-checked-out": "User already checked out",
+    "error-event-log-identity-code-exist": "Identity code already exists"
+}

@@ -1,0 +1,23 @@
+{
+    "error-user-not-found": "Không tìm thấy người dùng",
+    "error-password-wrong": "Mật khẩu không chính xác",
+    "error-old-password-wrong": "Mật khẩu cũ không chính xác",
+    "error-user-exist": "Người dùng đã tồn tại",
+    "error-mimetype-invalid": "Mimetype không hợp lệ",
+    "error-network-restricted": "Kết nối mạng bị giới hạn",
+    "error-unauthorized": "Xác thực không hợp lệ",
+    "error-forbidden": "Không có quyền truy cập",
+    "error-topic-not-found": "Chủ đề không tồn tại",
+    "error-topic-subscribed": "Bạn đã theo dõi chủ đề {topic}",
+    "error-topic-subscription-limit-exceed": "Bạn đã theo dõi {total} chủ đề, vui lòng bỏ theo dõi các chủ đề cũ trước khi có thể tiếp tục theo dõi chủ đề mới",
+    "error-file-invalid-mimetype": "Định dạng tệp tin không hợp lệ ({mime})",
+    "error-file-not-found": "Không tìm thấy tệp tin",
+    "error-quy-tac-not-found": "Quy tắc sinh mã không tồn tại",
+    "error-event-not-found": "Không tìm thấy sự kiện",
+    "error-event-exist": "Sự kiện đã tồn tại",
+    "error-event-log-not-found": "Không tìm thấy nhật ký sự kiện",
+    "error-event-log-exist": "Nhật ký sự kiện đã tồn tại",
+    "error-event-log-already-checked-in": "Người dùng đã check-in",
+    "error-event-log-already-checked-out": "Người dùng đã check-out",
+    "error-event-log-identity-code-exist": "Mã định danh đã tồn tại"
+}
