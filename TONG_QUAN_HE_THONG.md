@@ -43,7 +43,7 @@ Mã thành viên: mentee là `HLC-MTE-xxxxx`, mentor là `HLC-MTO-xxxxx`. Mã gh
 | F | Bài tâm đắc | Nộp bài viết về CSDL chung và chấm điểm | 🔴 Chưa có màn riêng |
 | G | Ban học tập | Thư viện tài liệu và nộp bài theo tuần (text + ảnh, 3–4 bài/tuần) | 🔴 Có trang nộp bài đơn giản (đang ẩn) |
 | H | HLC Fund | Mentee gửi ảnh đóng quỹ, admin duyệt mỗi tối | 🟡 Có trang nộp và trang duyệt (đang ẩn) |
-| I | Báo cáo / Dashboard | Dashboard tháng, top/cần cải thiện, PDF/Excel mùng 10 | 🟡 Có Excel; chưa có PDF |
+| I | Báo cáo / Dashboard | Dashboard tháng, top/cần cải thiện, Excel mùng 10 | 🟡 Có Excel |
 
 > **Giao diện hiện tại chỉ mở phần Mentoring.** Menu Admin có *Dashboard* và *Quản lý Ghép cặp*; menu Mentor và Mentee có *Mentoring & Recap*. Các trang `admin-points`, `admin-modules`, `admin-fund`, `fund`, `mentee-fund`, `mentee-learning` và `*-dashboard` vẫn còn route nhưng đã bị ẩn khỏi menu.
 
@@ -173,9 +173,12 @@ Trong code, thứ tự ưu tiên là: *Nộp muộn* > *Chưa xong* > *Đã xong
 
 ### 5.3 Các loại điểm khác (cần cấu hình thêm)
 
-- Phụ cấp chức vụ: trưởng ban, phó ban, leader, phó leader. Cần lưu chức vụ **kèm thời gian hiệu lực**.
-- Đọc sách đủ, bài tâm đắc, bài ban học tập, đóng quỹ đủ.
+- Phụ cấp chức vụ: trưởng ban, phó ban, leader, phó leader (chỉnh thủ công được). Cần lưu chức vụ **kèm thời gian hiệu lực**(để ẩn, khi nào cần thì mở).
+- đóng quỹ: 150k/ tháng -> +2đ phụ cấp.
 - Cộng/trừ thủ công có lý do, người duyệt và log.
+- note: có 2 roles nộp quỹ: mentee và mentor:
+  + mentee: nộp đủ thì + 2đ, thiếu thì cộng thủ công (nên để thủ công vì kh có service payment để check)
+  + mentor: 1 nhóm mentor sẽ do 1 mentee quản trị nên phải có module nộp riêng, quản trị riêng (lên kế hoạch sau).
 
 ### 5.4 Luồng tính điểm cuối tháng
 
