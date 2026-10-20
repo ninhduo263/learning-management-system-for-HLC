@@ -211,10 +211,13 @@ Xuất Excel / (PDF) mùng 10  →  gửi chi trả phụ cấp
 ---
 
 ## 6. Các module còn lại (theo yêu cầu)
+- notes: 
+  + có 2 loại điểm: điểm phụ cấp (1,2,3,...) và điểm chấm bài của 1 module học tập (thang 100) do admin chấm
+  + admin chia nhỏ các quyền hạn: admin tổng, admin của mỗi 1 module học tập, admin của nhiều module học tập
 
 ### 6.1 Module học tập động (Learning Module Builder)
 Admin tạo một "loại hoạt động" mới chỉ bằng cấu hình, không cần code. Cấu hình gồm:
-- Tên, mã, đối tượng nộp, chu kỳ (ngày/tuần/tháng) và số bài tối thiểu mỗi kỳ.
+- Tên, đối tượng nộp, chu kỳ (ngày/tuần/tháng) và số bài tối thiểu mỗi kỳ (mã tự sinh).
 - Loại dữ liệu nộp: text, ảnh, link YouTube, file.
 - Có cần duyệt không và ai duyệt. Trạng thái duyệt: Chờ / Đạt / Chưa đạt.
 - Có chấm điểm không, thang điểm, và gắn với rule điểm nào.
