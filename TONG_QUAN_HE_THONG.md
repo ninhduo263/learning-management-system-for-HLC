@@ -14,7 +14,7 @@ HLC có khoảng **100 mentee** và **120 mentor**; số người thực sự ho
 - Không có công cụ tính **điểm phụ cấp và điểm thưởng** để chuẩn bị file chi trả **mùng 10 hằng tháng**.
 - Không có báo cáo tháng về số lượng, chất lượng, người điểm cao, người cần cải thiện và cặp tốt nhất.
 
-**Mục tiêu:** Mọi hoạt động được lưu thành bản ghi gốc trong LMS. Điểm được **tính từ các bản ghi gốc đó**, không nhập tay lại. Kết quả được xuất ra dashboard, Excel/CSV và PDF.
+**Mục tiêu:** Mọi hoạt động được lưu thành bản ghi gốc trong LMS. Điểm được **tính từ các bản ghi gốc đó**, không nhập tay lại. Kết quả được xuất ra dashboard, Excel/CSV.
 
 ---
 
@@ -192,7 +192,7 @@ ScoreEvent (mỗi điểm 1 dòng, trỏ về bản ghi gốc)
 AllowanceSummary (mỗi mentee 1 dòng: điểm theo nhóm, tổng điểm, tiền)
         │  Admin xem trước, xử lý khiếu nại, rồi "Chốt kỳ"  →  PATCH /cycles/:id/lock
         ▼
-Xuất Excel / (PDF) mùng 10  →  gửi chi trả phụ cấp
+Xuất Excel mùng 10  →  gửi chi trả phụ cấp
 ```
 
 **Công thức tiền trong code:** `Tổng tiền = Phụ cấp cơ bản + Tổng điểm × Đơn giá điểm`. Nếu tổng điểm âm thì phần tương ứng bị khấu trừ. Đơn giá điểm và phụ cấp cơ bản được cấu hình theo kỳ.
@@ -209,7 +209,7 @@ Xuất Excel / (PDF) mùng 10  →  gửi chi trả phụ cấp
 | Chức vụ | Rule `ROLE_POSITION` +4 cho mọi chức vụ, lấy từ `User.position` | Chưa phân mức theo từng chức vụ; chưa có thời gian hiệu lực |
 | Bài nộp được duyệt | Rule `SUBMISSION_APPROVED` +2 | Cần chốt barem |
 | Rule tạo mới | Admin tạo được rule, nhưng chỉ các rule có code xử lý riêng mới tự chạy | Chưa có rule engine tổng quát |
-| Xuất file | Excel bảng phụ cấp và Excel báo cáo tháng | **Chưa có PDF** |
+| Xuất file | Excel bảng phụ cấp và Excel báo cáo tháng |  |
 
 ---
 
@@ -252,8 +252,7 @@ Gồm thư viện tài liệu và **nộp bài theo tuần** (3–4 bài/tuần,
 - Top mentee điểm cao và danh sách mentee cần cải thiện (thiếu bài, điểm thấp).
 - Xếp hạng cặp mentoring tốt nhất và các cặp chưa hoạt động.
 - Biểu đồ so sánh giữa các tháng.
-- **Mùng 10 hằng tháng:** xuất bảng điểm và tiền phụ cấp của từng mentee ra **Excel/CSV và PDF** (có ngày chốt).
-
+- **Mùng 10 hằng tháng:** xuất bảng điểm và tiền phụ cấp của từng mentee ra **Excel/CSV** (có ngày chốt).
 *Code:* API `/dashboard/overview` đã trả về số liệu tổng, top 5, 5 người điểm thấp, top cặp và thống kê quỹ, nhưng giao diện admin dashboard hiện chỉ hiển thị báo cáo mentoring quý và danh sách thành viên.
 
 ---
@@ -288,7 +287,7 @@ Gồm thư viện tài liệu và **nộp bài theo tuần** (3–4 bài/tuần,
 
 1. **Hoàn thiện điểm mentoring đúng barem:** gắn +2/+1 theo ngày recap của mentee, xếp giải 5/3/2 theo tháng, bỏ hoặc điều chỉnh rule +3 "hoàn tất".
 2. **Bảng tổng hợp điểm cho admin:** mỗi hàng một mentee, mỗi cột một loại điểm, bấm vào ô để xem bản ghi gốc. Có nút Tính lại → Chốt kỳ.
-3. **Xuất file mùng 10:** Excel/CSV (đã có khung) và PDF.
+3. **Xuất file mùng 10:** Excel/CSV (đã có khung).
 4. Phụ cấp chức vụ theo từng mức và thời gian hiệu lực; cộng/trừ thủ công có log.
 5. Mở lại và hoàn thiện HLC Fund (duyệt buổi tối theo ngày).
 6. Module Builder đầy đủ, sau đó dựng Đọc sách, Bài tâm đắc và Ban học tập từ đó.
