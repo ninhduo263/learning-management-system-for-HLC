@@ -14,6 +14,15 @@ import { ConfigService } from "@nestjs/config";
 import { Request, Response } from "express";
 import moment from "moment";
 import { I18nService } from "nestjs-i18n";
+import {
+    DatabaseError,
+    ForeignKeyConstraintError,
+    UniqueConstraintError,
+    ValidationError,
+} from "sequelize";
+
+// Mã lỗi Postgres do dữ liệu đầu vào sai: NOT NULL, CHECK, sai định dạng ngày/giá trị
+const INVALID_INPUT_PG_CODES = ["23502", "23514", "22007", "22008", "22P02"];
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -41,12 +50,38 @@ export class HttpExceptionFilter implements ExceptionFilter {
             status = exception.getStatus();
             message = exception.message;
         }
+        const sqlError = this.getSqlError(exception);
+        if (sqlError) {
+            [code, status] = sqlError;
+            message = this.i18n.t(`error-message.${code}`);
+        }
         if (!status) {
             status = HttpStatus.INTERNAL_SERVER_ERROR;
             message = "Internal Server Error";
         }
 
         return new ResponseErrorDto(code, status, message);
+    }
+
+    private getSqlError(exception: unknown): [ErrorCode, HttpStatus] | null {
+        if (exception instanceof UniqueConstraintError) {
+            return ["error-record-duplicate", HttpStatus.CONFLICT];
+        }
+        if (exception instanceof ForeignKeyConstraintError) {
+            return ["error-record-reference-invalid", HttpStatus.BAD_REQUEST];
+        }
+        if (exception instanceof ValidationError) {
+            return ["error-record-invalid", HttpStatus.BAD_REQUEST];
+        }
+        if (
+            exception instanceof DatabaseError &&
+            INVALID_INPUT_PG_CODES.includes(
+                (exception.parent as { code?: string })?.code,
+            )
+        ) {
+            return ["error-record-invalid", HttpStatus.BAD_REQUEST];
+        }
+        return null;
     }
 
     catch(exception: any, host: ArgumentsHost) {

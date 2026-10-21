@@ -2,6 +2,10 @@ import { FileErrorCode } from "@module/file/common/constant";
 
 export type ErrorCode =
     | "error-user-not-found"
+    | "error-record-not-found"
+    | "error-record-duplicate"
+    | "error-record-invalid"
+    | "error-record-reference-invalid"
     | "error-user-exist"
     | "error-password-wrong"
     | "error-old-password-wrong"

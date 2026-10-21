@@ -4,6 +4,15 @@ import { IncrementModule } from "@module/increment/increment.module";
 import { RedisModule } from "@module/redis/redis.module";
 import { SsoModule } from "@module/sso/sso.module";
 import { Module } from "@nestjs/common";
+import { MemberModule } from "./modules/member/member.module";
+import { OrganizationModule } from "./modules/organization/organization.module";
+import { PeriodModule } from "./modules/period/period.module";
+import { AttachmentModule } from "./modules/attachment/attachment.module";
+import { MentoringModule } from "./modules/mentoring/mentoring.module";
+import { LearningActivityModule } from "./modules/learning/learning.module";
+import { FundModule } from "./modules/fund/fund.module";
+import { PointModule } from "./modules/point/point.module";
+import { PermissionModule } from "./modules/permission/permission.module";
 import { AppController } from "./app.controller";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CommonProviderModule } from "./modules/common-provider/common-provider.module";
@@ -45,6 +54,15 @@ import { WebSocketModule } from "./modules/websocket/websocket.module";
         EventModule,
         EventLogModule,
         WebSocketModule,
+        MemberModule,
+        OrganizationModule,
+        PeriodModule,
+        AttachmentModule,
+        MentoringModule,
+        LearningActivityModule,
+        FundModule,
+        PointModule,
+        PermissionModule,
     ],
     providers: [...DefaultProviders],
     controllers: [AppController],

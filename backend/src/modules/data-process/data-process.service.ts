@@ -1,18 +1,11 @@
-import { ObjectUtil } from "@common/utils/object.util";
 import { Injectable } from "@nestjs/common";
-import { InjectConnection } from "@nestjs/mongoose";
-import _ from "lodash";
-import { Connection } from "mongoose";
 import { QueryTypes } from "sequelize";
 import { Sequelize } from "sequelize-typescript";
 import { ReplaceDomainUrlDto } from "./dto/replace-domain-url.dto";
 
 @Injectable()
 export class DataProcessService {
-    constructor(
-        private readonly sequelize: Sequelize,
-        @InjectConnection() private readonly connection: Connection,
-    ) {}
+    constructor(private readonly sequelize: Sequelize) {}
 
     private getUpdateObjectReplaceDomain(obj: any, dto: ReplaceDomainUrlDto) {
         let updateObject: Record<
@@ -40,65 +33,6 @@ export class DataProcessService {
             }
         });
         return updateObject;
-    }
-
-    async replaceDomainUrlMongo(dto: ReplaceDomainUrlDto) {
-        const collectUpdateFields = (
-            obj: any,
-            fieldPath: string,
-            update: any,
-        ) => {
-            const type = typeof obj;
-            switch (type) {
-                case "string": {
-                    if (obj.includes(dto.oldDomain)) {
-                        Object.assign(update, {
-                            [fieldPath]: obj.replaceAll(
-                                dto.oldDomain,
-                                dto.newDomain,
-                            ),
-                        });
-                    }
-                    break;
-                }
-                case "object": {
-                    _.forOwn(obj, (value, key) => {
-                        const newPath = !fieldPath
-                            ? key
-                            : `${fieldPath}.${key}`;
-                        collectUpdateFields(value, newPath, update);
-                    });
-                    break;
-                }
-            }
-        };
-        const skipDbSet = new Set(dto.skipTables || []);
-        const collections = await this.connection.db.collections();
-        for (const collection of collections) {
-            const tableName = collection.collectionName;
-            const bulk = collection.initializeOrderedBulkOp();
-            if (!skipDbSet.has(tableName)) {
-                let i = 0;
-                const total = await collection.estimatedDocumentCount();
-                for await (const item of collection.find()) {
-                    i += 1;
-                    const _id = item._id;
-                    const update = {};
-                    collectUpdateFields(item, null, update);
-                    if (!ObjectUtil.isEmptyObject(update)) {
-                        console.log(i, "/", total, tableName, _id, "UPDATE");
-                        bulk.find({ _id: item._id }).updateOne({
-                            $set: update,
-                        });
-                    } else {
-                        console.log(i, "/", total, tableName, _id, "SKIP");
-                    }
-                }
-            }
-            if (bulk.length) {
-                await bulk.execute();
-            }
-        }
     }
 
     async replaceDomainUrlSql(dto: ReplaceDomainUrlDto) {

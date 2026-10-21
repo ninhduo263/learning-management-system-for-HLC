@@ -1,7 +1,8 @@
+import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
+import { FileSqlRepository } from "@module/file/repository/file-sql.repository";
 import { Entity } from "@module/repository";
 import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
-import { MongoTransaction } from "@module/repository/mongo/mongo.transaction";
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtModule } from "@nestjs/jwt";
@@ -10,7 +11,6 @@ import { MulterConfigService } from "./common/multer-config.service";
 import { FilePublicController } from "./file-public.controller";
 import { FileController } from "./file.controller";
 import { FileService } from "./file.service";
-import { FileMongoRepository } from "./repository/file-mongo.repository";
 
 @Module({
     imports: [
@@ -22,8 +22,8 @@ import { FileMongoRepository } from "./repository/file-mongo.repository";
     ],
     providers: [
         FileService,
-        RepositoryProvider(Entity.FILE, FileMongoRepository),
-        TransactionProvider(MongoTransaction),
+        RepositoryProvider(Entity.FILE, FileSqlRepository),
+        TransactionProvider(SqlTransaction),
     ],
     controllers: [FileController, FilePublicController],
 })

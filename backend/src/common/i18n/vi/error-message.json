@@ -19,5 +19,10 @@
     "error-event-log-exist": "Nhật ký sự kiện đã tồn tại",
     "error-event-log-already-checked-in": "Người dùng đã check-in",
     "error-event-log-already-checked-out": "Người dùng đã check-out",
-    "error-event-log-identity-code-exist": "Mã định danh đã tồn tại"
+    "error-event-log-identity-code-exist": "Mã định danh đã tồn tại",
+    "error-record-not-found": "Không tìm thấy bản ghi",
+    "error-record-duplicate": "Dữ liệu bị trùng với bản ghi đã có",
+    "error-record-invalid": "Dữ liệu không hợp lệ",
+    "error-record-reference-invalid": "Bản ghi liên kết không tồn tại",
+    "error-duplicate-new-password": "Mật khẩu mới phải khác mật khẩu cũ"
 }

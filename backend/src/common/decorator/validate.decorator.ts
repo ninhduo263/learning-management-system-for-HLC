@@ -16,7 +16,7 @@ export const IsYYYYMMDD = (validationOptions?: ValidationOptions) => {
                 validate(value: string) {
                     return (
                         typeof value === "string" &&
-                        moment(value, "YYYY-MM-DD").isValid()
+                        moment(value, "YYYY-MM-DD", true).isValid()
                     );
                 },
                 defaultMessage(args?: ValidationArguments) {

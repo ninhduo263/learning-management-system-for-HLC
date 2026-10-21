@@ -19,3 +19,35 @@ export const DATA_PARTITION_USER = "DataPartitionUser";
 
 export const QUY_TAC_MA = "QuyTacMa";
 export const HAM_SINH_MA = "HamSinhMa";
+
+// HLC LMS
+export const MEMBER = "Member";
+export const DEPARTMENT = "Department";
+export const POSITION = "Position";
+export const MEMBER_POSITION = "MemberPosition";
+export const PERIOD = "Period";
+export const ATTACHMENT = "Attachment";
+export const MENTORING_QUARTER = "MentoringQuarter";
+export const MENTOR_PREFERENCE = "MentorPreference";
+export const MENTOR_PREFERENCE_ITEM = "MentorPreferenceItem";
+export const MENTORING_PAIR = "MentoringPair";
+export const MENTORING_SESSION = "MentoringSession";
+export const MENTORING_SCHEDULE_LOG = "MentoringScheduleLog";
+export const MENTORING_RECAP = "MentoringRecap";
+export const MENTORING_AWARD = "MentoringAward";
+export const LIBRARY_ITEM = "LibraryItem";
+export const LEARNING_MODULE = "LearningModule";
+export const MODULE_FIELD = "ModuleField";
+export const MODULE_CRITERION = "ModuleCriterion";
+export const MODULE_ASSIGNMENT = "ModuleAssignment";
+export const SUBMISSION = "Submission";
+export const SUBMISSION_UNIQUE_VALUE = "SubmissionUniqueValue";
+export const SUBMISSION_SCORE = "SubmissionScore";
+export const FUND_CONTRIBUTION = "FundContribution";
+export const POINT_TYPE = "PointType";
+export const POINT_RULE = "PointRule";
+export const POINT_ADJUSTMENT = "PointAdjustment";
+export const POINT_ENTRY = "PointEntry";
+export const ALLOWANCE_SUMMARY = "AllowanceSummary";
+export const PERIOD_EXPORT = "PeriodExport";
+export const ADMIN_PERMISSION = "AdminPermission";

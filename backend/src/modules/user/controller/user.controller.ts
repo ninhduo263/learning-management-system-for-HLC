@@ -1,5 +1,6 @@
 import { RequestAuthData } from "@common/constant/class/request-auth-data";
 import { ApiRecordResponse } from "@common/decorator/api.decorator";
+import { ReqUser } from "@common/decorator/auth.decorator";
 import { BaseControllerFactory } from "@config/controller/base-controller-factory";
 import { Body, Controller, Get, Put, Req } from "@nestjs/common";
 
@@ -32,11 +33,12 @@ export class UserController extends BaseControllerFactory<User>(
                     response: { description: "Created User data" },
                 },
             },
+            upsert: { enable: false },
+            getOneOrUpsert: { enable: false },
         },
         dataPartition: {
             enable: true,
         },
-        authorize: false,
     },
 ) {
     constructor(private readonly userService: UserService) {
@@ -59,8 +61,11 @@ export class UserController extends BaseControllerFactory<User>(
 
     @Put("me/password")
     @ApiRecordResponse(User)
-    async changePasswordMe(@Body() dto: ChangePasswordDto) {
-        return this.userService.changePasswordMe(null, dto);
+    async changePasswordMe(
+        @ReqUser() user: User,
+        @Body() dto: ChangePasswordDto,
+    ) {
+        return this.userService.changePasswordMe(user, dto);
     }
 
     // @Get("test")

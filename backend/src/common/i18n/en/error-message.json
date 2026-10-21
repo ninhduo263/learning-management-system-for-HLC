@@ -12,5 +12,10 @@
     "error-event-log-exist": "Event log already exists",
     "error-event-log-already-checked-in": "User already checked in",
     "error-event-log-already-checked-out": "User already checked out",
-    "error-event-log-identity-code-exist": "Identity code already exists"
+    "error-event-log-identity-code-exist": "Identity code already exists",
+    "error-record-not-found": "Record not found",
+    "error-record-duplicate": "Record already exists",
+    "error-record-invalid": "Invalid data",
+    "error-record-reference-invalid": "Referenced record does not exist",
+    "error-duplicate-new-password": "New password must differ from the old one"
 }

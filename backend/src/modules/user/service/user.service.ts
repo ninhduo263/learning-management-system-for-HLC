@@ -1,9 +1,22 @@
-import { createUserPassword } from "@common/constant";
+import {
+    DeleteByIdQuery,
+    GetByIdQuery,
+    GetManyQuery,
+    GetOneQuery,
+    GetPageQuery,
+    UpdateByIdQuery,
+    createUserPassword,
+} from "@common/constant";
 import { RequestAuthData } from "@common/constant/class/request-auth-data";
 import { Configuration } from "@config/configuration";
 import { ApiError } from "@config/exception/api-error";
 import { BaseService } from "@config/service/base.service";
 import { Entity } from "@module/repository";
+import {
+    BaseQueryOption,
+    QueryCondition,
+    UpdateDocument,
+} from "@module/repository/common/base-repository.interface";
 import { BaseTransaction } from "@module/repository/common/base-transaction.interface";
 import { InjectRepository } from "@module/repository/common/repository";
 import { InjectTransaction } from "@module/repository/common/transaction";
@@ -83,18 +96,84 @@ export class UserService
 
     async getMe(authData: RequestAuthData) {
         const user = await authData.getUser();
-        return user;
+        return this.omitPassword(user);
+    }
+
+    /** Không bao giờ trả mã băm mật khẩu ra API */
+    private omitPassword<T extends Partial<User>>(user: T): T {
+        if (!user) return user;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { password, ...rest } = user;
+        return rest as T;
+    }
+
+    async getById(
+        user: User,
+        id: string,
+        query?: GetByIdQuery<User> & BaseQueryOption<unknown>,
+    ) {
+        return this.omitPassword(await super.getById(user, id, query));
+    }
+
+    async getOne(
+        user: User,
+        conditions: QueryCondition<User>,
+        query?: GetOneQuery<User> & BaseQueryOption<unknown>,
+    ) {
+        return this.omitPassword(await super.getOne(user, conditions, query));
+    }
+
+    async getMany(
+        user: User,
+        conditions: QueryCondition<User>,
+        query?: GetManyQuery<User> & BaseQueryOption<unknown>,
+    ) {
+        const list = await super.getMany(user, conditions, query);
+        return list.map((item) => this.omitPassword(item));
+    }
+
+    async getPage(
+        user: User,
+        conditions: QueryCondition<User>,
+        query?: GetPageQuery<User> & BaseQueryOption<unknown>,
+    ) {
+        const page = await super.getPage(user, conditions, query);
+        page.result = page.result.map((item) => this.omitPassword(item));
+        return page;
+    }
+
+    async updateById(
+        user: User,
+        id: string,
+        update: UpdateDocument<User>,
+        query?: UpdateByIdQuery & BaseQueryOption<unknown>,
+    ) {
+        const doc = update as Partial<User>;
+        if (doc.password) {
+            doc.password = await createUserPassword(doc.password);
+        }
+        return this.omitPassword(await super.updateById(user, id, doc, query));
+    }
+
+    async deleteById(
+        user: User,
+        id: string,
+        query?: DeleteByIdQuery<User> & BaseQueryOption<unknown>,
+    ) {
+        return this.omitPassword(await super.deleteById(user, id, query));
     }
 
     async create(user: User, dto: CreateUserDto): Promise<User> {
-        // dto.password = await createUserPassword(dto.password);
+        if (dto.password) {
+            dto.password = await createUserPassword(dto.password);
+        }
         const t = await this.userTransaction.startTransaction();
         try {
             const res = await this.userRepository.create(dto, {
                 transaction: t,
             });
             await this.userTransaction.commitTransaction(t);
-            return res;
+            return this.omitPassword(res);
         } catch (err) {
             await this.userTransaction.abortTransaction(t);
             throw err;
@@ -109,11 +188,13 @@ export class UserService
         if (!correctOldPassword) {
             throw ApiError.BadRequest("error-old-password-wrong");
         }
-        user.password = await createUserPassword(dto.newPass);
+        if (dto.newPass === dto.oldPass) {
+            throw ApiError.BadRequest("error-duplicate-new-password");
+        }
         const res = await this.userRepository.updateById(user._id, {
-            password: dto.oldPass,
+            password: await createUserPassword(dto.newPass),
         });
-        return res;
+        return this.omitPassword(res);
     }
 
     async comparePassword(user: User, password: string) {

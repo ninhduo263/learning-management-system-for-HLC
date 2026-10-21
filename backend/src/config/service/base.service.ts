@@ -33,6 +33,7 @@ import {
     forwardRef,
     Inject,
     OnModuleInit,
+    Optional,
 } from "@nestjs/common";
 import _ from "lodash";
 import { BaseImportService } from "./base-import.service";
@@ -42,9 +43,11 @@ export class BaseService<
     R extends BaseRepository<E> = BaseRepository<E>,
 > implements OnModuleInit
 {
+    @Optional()
     @Inject(MongoTransaction)
     private readonly mongoTransaction: MongoTransaction;
 
+    @Optional()
     @Inject(SqlTransaction)
     private readonly sqlTransaction: SqlTransaction;
 

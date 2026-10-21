@@ -4,7 +4,6 @@ import { HttpExceptionFilter } from "@config/exception/http-exception.filter";
 import { AuditLogInterceptor } from "@module/audit-log/audit-log.interceptor";
 import { MicroserviceModule } from "@module/microservice/microservice.module";
 import { MinioModule } from "@module/minio/minio.module";
-import { MongooseConfigService } from "@module/repository/mongo/mongoose-config.service";
 import { RepositoryModule } from "@module/repository/repository.module";
 import { SequelizeConfigService } from "@module/repository/sequelize/sequelize-config.service";
 import { BullModule } from "@nestjs/bull";
@@ -16,7 +15,6 @@ import {
 } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { APP_FILTER, APP_INTERCEPTOR } from "@nestjs/core";
-import { MongooseModule } from "@nestjs/mongoose";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { ClsModule } from "nestjs-cls";
 import { AcceptLanguageResolver, I18nModule, QueryResolver } from "nestjs-i18n";
@@ -55,9 +53,6 @@ export const DefaultModules: Array<
     ConfigModule.forRoot({
         load: [configuration],
         isGlobal: true,
-    }),
-    MongooseModule.forRootAsync({
-        useClass: MongooseConfigService,
     }),
     SequelizeModule.forRootAsync({
         useClass: SequelizeConfigService,

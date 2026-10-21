@@ -1,22 +1,11 @@
-import MongooseSchemaProvider from "@module/repository/mongo/mongoose-model-provider";
 import { Global, Module } from "@nestjs/common";
+import { SequelizeModule } from "@nestjs/sequelize";
+import { SequelizeModel } from "./sequelize/common/sequelize-model";
 
-import MongooseModel from "./mongo/mongoose-model";
-
+/** Đăng ký toàn bộ model Sequelize một lần để mọi repository SQL inject được. */
 @Global()
 @Module({
-    imports: [
-        MongooseModel,
-        // SequelizeModule.forFeature(SequelizeModel),
-    ],
-    providers: [
-        ...MongooseSchemaProvider,
-        // SequelizeService,
-    ],
-    exports: [
-        MongooseModel,
-        ...MongooseSchemaProvider,
-        // SequelizeModule,
-    ],
+    imports: [SequelizeModule.forFeature(SequelizeModel)],
+    exports: [SequelizeModule],
 })
 export class RepositoryModule {}
