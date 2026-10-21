@@ -1,0 +1,88 @@
+# Chạy toàn bộ hệ thống: docker compose up -d --build
+# Frontend: http://localhost:${FE_PORT:-3000}   Backend: http://localhost:${BE_PORT:-5000}   Swagger: http://localhost:${BE_PORT:-5000}/api
+name: hlc-lms
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SQL_DB:-hlc}
+      POSTGRES_USER: ${SQL_USER:-hlc}
+      POSTGRES_PASSWORD: ${SQL_PASSWORD:-hlc-password}
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # development: Sequelize tự tạo/cập nhật bảng (chưa có migration). Xem README.
+      SERVER_ENV: ${SERVER_ENV:-development}
+      SERVER_PORT: 5000
+      # Địa chỉ trình duyệt dùng để mở file/ảnh đã upload
+      SERVER_ADDRESS: ${PUBLIC_API_URL:-http://localhost:5000}
+      # Địa chỉ giao diện web (hiện ở GET / của backend)
+      FRONTEND_URL: ${PUBLIC_FRONTEND_URL:-http://localhost:3000}
+      SERVER_DEFAULT_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      JWT_SECRET: ${JWT_SECRET:-change-me-hlc-access-secret-at-least-32-chars}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-me-hlc-refresh-secret-at-least-32-chars}
+      JWT_EXP: ${JWT_EXP:-3600}
+      JWT_REFRESH_EXP: ${JWT_REFRESH_EXP:-2592000}
+      SQL_TYPE: postgres
+      SQL_HOST: postgres
+      SQL_PORT: 5432
+      SQL_DB: ${SQL_DB:-hlc}
+      SQL_USER: ${SQL_USER:-hlc}
+      SQL_PASSWORD: ${SQL_PASSWORD:-hlc-password}
+      SQL_SCHEMA: public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MICROSERVICE_GRPC_PORT: 3001
+      MICROSERVICE_TCP_PORT: 3002
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "0"
+      MINIO_BUCKET: hlc
+      MOCK_DATE: ${MOCK_DATE:-}
+    ports:
+      - "${BE_PORT:-5000}:5000"
+
+  frontend:
+    build:
+      context: ./hlc-mentoring-web
+      args:
+        # Trình duyệt gọi thẳng backend nên phải là địa chỉ truy cập được từ máy người dùng
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:5000}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FE_PORT:-3000}:3000"
+
+volumes:
+  postgres-data:
+  redis-data:

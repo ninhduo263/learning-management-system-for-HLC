@@ -1,0 +1,12 @@
+node_modules
+dist
+docker
+docs
+test
+coverage
+.env
+.env.*
+*.log
+.git
+.husky
+.vscode

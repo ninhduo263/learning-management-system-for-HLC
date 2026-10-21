@@ -5,6 +5,7 @@ import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
 import { ADMIN_SCOPE_CHECKER } from "@common/interface/admin-scope-checker.interface";
 import { Global, Module } from "@nestjs/common";
 import { SequelizeModule } from "@nestjs/sequelize";
+import { AccessController } from "./flow/access.controller";
 import { AdminPermissionController } from "./controllers/admin-permission.controller";
 import { AdminPermissionModel } from "./models/admin-permission.model";
 import { AdminPermissionSqlRepository } from "./repositories/admin-permission-sql.repository";
@@ -13,7 +14,7 @@ import { AdminPermissionService } from "./services/admin-permission.service";
 @Global()
 @Module({
     imports: [SequelizeModule.forFeature([AdminPermissionModel])],
-    controllers: [AdminPermissionController],
+    controllers: [AccessController, AdminPermissionController],
     providers: [
         AdminPermissionService,
         RepositoryProvider(

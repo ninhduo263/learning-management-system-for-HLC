@@ -3,6 +3,10 @@ import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
 import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
 import { Module } from "@nestjs/common";
+import { MentoringAdminController } from "./flow/mentoring-admin.controller";
+import { MentoringExcelService } from "./flow/mentoring-excel.service";
+import { MentoringFlowService } from "./flow/mentoring-flow.service";
+import { MentoringMemberController } from "./flow/mentoring-member.controller";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { MentoringQuarterController } from "./controllers/mentoring-quarter.controller";
 import { MentoringQuarterModel } from "./models/mentoring-quarter.model";
@@ -51,6 +55,8 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
         ]),
     ],
     controllers: [
+        MentoringAdminController,
+        MentoringMemberController,
         MentoringQuarterController,
         MentorPreferenceController,
         MentorPreferenceItemController,
@@ -61,6 +67,8 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
         MentoringAwardController,
     ],
     providers: [
+        MentoringFlowService,
+        MentoringExcelService,
         MentoringQuarterService,
         MentorPreferenceService,
         MentorPreferenceItemService,
@@ -96,6 +104,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
         TransactionProvider(SqlTransaction),
     ],
     exports: [
+        MentoringFlowService,
         MentoringQuarterService,
         MentorPreferenceService,
         MentorPreferenceItemService,

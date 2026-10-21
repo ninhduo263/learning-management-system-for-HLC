@@ -384,11 +384,12 @@ export abstract class SqlRepository<E extends BaseEntity>
         query.new = query.new ?? true;
         update = SqlUtil.getUpdate(update);
         const finalCondition = SqlUtil.getCondition(conditions, query.filters);
-        const res = await this.model.update(update, {
+        // Model.update trả về [số dòng bị ảnh hưởng]
+        const [affected] = await this.model.update(update, {
             where: finalCondition,
             transaction: query.transaction,
         });
-        return { n: res.length, affected: res.length };
+        return { n: affected, affected };
     }
 
     async deleteById(

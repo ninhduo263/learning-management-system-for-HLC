@@ -1,50 +1,45 @@
-const MOCK_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/;
-const CLIENT_MOCK_DATE_KEY = 'hlc_mock_date';
+const CLIENT_OFFSET_KEY = 'hlc_server_time_offset_ms';
 
-function parseMockDate(value: string) {
-  const normalized = value.trim();
-  if (!MOCK_DATE_PATTERN.test(normalized)) {
-    throw new Error('NEXT_PUBLIC_MOCK_DATE phải có dạng YYYY-MM-DD hoặc ISO datetime');
-  }
-
-  const date = new Date(
-    /^\d{4}-\d{2}-\d{2}$/.test(normalized)
-      ? `${normalized}T00:00:00.000Z`
-      : normalized
-  );
-  if (Number.isNaN(date.getTime())) {
-    throw new Error('NEXT_PUBLIC_MOCK_DATE không phải ngày hợp lệ');
-  }
-  return date;
-}
-
+/**
+ * Thời điểm hiện tại theo server (đã tính ngày giả lập nếu admin bật).
+ * Lưu độ lệch so với đồng hồ máy để giờ vẫn chạy theo thời gian thực.
+ */
 export function getCurrentTime() {
   if (typeof window !== 'undefined') {
-    const clientMockDate = window.localStorage.getItem(CLIENT_MOCK_DATE_KEY);
-    if (clientMockDate === '__REAL__') return new Date();
-    if (clientMockDate) return parseMockDate(clientMockDate);
+    const offset = Number(window.localStorage.getItem(CLIENT_OFFSET_KEY) || 0);
+    if (Number.isFinite(offset)) return new Date(Date.now() + offset);
   }
-
-  const configuredDate = process.env.NEXT_PUBLIC_MOCK_DATE?.trim();
-  return configuredDate ? parseMockDate(configuredDate) : new Date();
+  return new Date();
 }
 
-export function setClientMockDate(value: string | null) {
+/** Đồng bộ với thời điểm `now` mà server trả về (GET /time/mock) */
+export function syncServerTime(serverNow: string | Date) {
   if (typeof window === 'undefined') return;
-  if (value === null) {
-    window.localStorage.setItem(CLIENT_MOCK_DATE_KEY, '__REAL__');
-  } else {
-    window.localStorage.setItem(CLIENT_MOCK_DATE_KEY, parseMockDate(value).toISOString());
-  }
+  const offset = new Date(serverNow).getTime() - Date.now();
+  // Lệch dưới 1 phút coi như cùng giờ (độ trễ mạng, lệch đồng hồ nhỏ)
+  window.localStorage.setItem(CLIENT_OFFSET_KEY, String(Math.abs(offset) < 60_000 ? 0 : offset));
   window.dispatchEvent(new Event('hlc-mock-date-change'));
 }
 
-export function isSameMonth(
-  value: string | Date,
-  reference = getCurrentTime()
-) {
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime())
-    && date.getFullYear() === reference.getFullYear()
-    && date.getMonth() === reference.getMonth();
+/** Quý hiện tại theo giờ Việt Nam */
+export function quarterOf(date = getCurrentTime()) {
+  const vn = new Date(date.getTime() + 7 * 3600_000);
+  const year = vn.getUTCFullYear();
+  const quarter = Math.floor(vn.getUTCMonth() / 3) + 1;
+  return { year, quarter, code: `${year}Q${quarter}` };
+}
+
+export function nextQuarterCode(code: string) {
+  const match = /^(\d{4})Q([1-4])$/i.exec(code);
+  if (!match) return '';
+  const year = Number(match[1]);
+  const quarter = Number(match[2]);
+  return quarter === 4 ? `${year + 1}Q1` : `${year}Q${quarter + 1}`;
+}
+
+/** Từ ngày 10 tháng cuối quý: admin bắt đầu ghép cặp quý kế tiếp */
+export function isNextQuarterPairingOpen(date = getCurrentTime()) {
+  const vn = new Date(date.getTime() + 7 * 3600_000);
+  const quarter = Math.floor(vn.getUTCMonth() / 3) + 1;
+  return vn.getUTCMonth() === quarter * 3 - 1 && vn.getUTCDate() >= 10;
 }

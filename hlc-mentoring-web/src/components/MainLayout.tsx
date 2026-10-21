@@ -10,12 +10,18 @@ import {
   UserOutlined,
   CalendarOutlined,
   ClockCircleOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  TrophyOutlined,
+  WalletOutlined,
+  BookOutlined,
+  ApartmentOutlined,
+  IdcardOutlined
 } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
-import { apiFetch } from '@/lib/api';
-import { getCurrentTime, setClientMockDate } from '@/utils/time';
+import { apiFetch, apiJson, clearSession, getSessionUser } from '@/lib/api';
+import { getCurrentTime, syncServerTime } from '@/utils/time';
+import { accessApi, type AdminScope } from '@/services/hlcApi';
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -30,6 +36,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [draftMockDate, setDraftMockDate] = useState<Dayjs | null>(null);
   const [savingMockDate, setSavingMockDate] = useState(false);
   const [user, setUser] = useState<{ userId: string; fullName: string; role: 'ADMIN' | 'MENTOR' | 'MENTEE' } | null>(null);
+  const [scopes, setScopes] = useState<AdminScope[]>([]);
   const { message } = App.useApp();
   const router = useRouter();
   const pathname = usePathname();
@@ -51,19 +58,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     if (pathname === '/login') return;
-    const token = localStorage.getItem('hlc_token');
-    const savedUser = localStorage.getItem('hlc_user');
-    if (!token || !savedUser) {
+    const savedUser = getSessionUser();
+    if (!localStorage.getItem('hlc_token') || !savedUser) {
+      clearSession();
       router.replace('/login');
       return;
     }
-    try {
-      setUser(JSON.parse(savedUser));
-    } catch {
-      localStorage.removeItem('hlc_token');
-      localStorage.removeItem('hlc_user');
-      router.replace('/login');
-    }
+    let active = true;
+    Promise.resolve().then(() => { if (active) setUser(savedUser); });
+    return () => { active = false; };
   }, [pathname, router]);
 
   useEffect(() => {
@@ -71,19 +74,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     let active = true;
     const loadMockDate = async () => {
       try {
-        const response = await apiFetch('/time/mock');
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-          throw new Error(result.message || 'Không thể đồng bộ ngày giả lập từ máy chủ');
-        }
-        if (!active) return;
-        const { date, source } = result.data as {
+        const { date, source, now } = await apiJson<{
           date: string | null;
           source: 'runtime' | 'environment' | 'real';
-        };
+          now: string;
+        }>('/time/mock');
+        if (!active) return;
         setMockDate(date);
         setMockDateSource(source);
-        setClientMockDate(date);
+        syncServerTime(now);
         setCurrentDateTime(getCurrentTime());
       } catch (error) {
         if (active) {
@@ -95,20 +94,48 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     return () => { active = false; };
   }, [message, pathname, user]);
 
+  // Quyền quản trị theo phạm vi (mentee/mentor được giao duyệt quỹ, quản lý module...)
+  useEffect(() => {
+    if (!user || user.role === 'ADMIN') return;
+    let active = true;
+    accessApi.mine().then((access) => { if (active) setScopes(access.scopes); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [user]);
+
   if (pathname === '/login') return <>{children}</>;
   if (!user) return null;
 
   const adminMenuItems = [
-    { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
-    { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý Ghép cặp' },
+    { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Dashboard tháng' },
+    { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Ghép cặp mentoring' },
+    { key: 'admin-points', icon: <TrophyOutlined />, label: 'Điểm phụ cấp' },
+    { key: 'admin-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
+    { key: 'admin-modules', icon: <BookOutlined />, label: 'Học tập' },
+    { key: 'admin-organization', icon: <ApartmentOutlined />, label: 'Tổ chức & phân quyền' },
+    { key: 'admin-members', icon: <IdcardOutlined />, label: 'Thành viên & báo cáo' },
   ];
 
+  // Trang quản trị mở cho mentor/mentee được giao quyền
+  const scopedMenuItems = [
+    scopes.includes('MENTORING') && { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý ghép cặp' },
+    scopes.includes('POINT') && { key: 'admin-points', icon: <TrophyOutlined />, label: 'Quản lý điểm' },
+    scopes.includes('FUND') && { key: 'admin-fund', icon: <WalletOutlined />, label: 'Duyệt HLC Fund' },
+    scopes.includes('LEARNING_MODULE') && { key: 'admin-modules', icon: <BookOutlined />, label: 'Quản lý module' },
+  ].filter((item): item is { key: string; icon: React.JSX.Element; label: string } => Boolean(item));
+
   const menteeMenuItems = [
+    { key: 'mentee-dashboard', icon: <DashboardOutlined />, label: 'Tổng quan' },
     { key: 'mentee-mentoring', icon: <TeamOutlined />, label: 'Mentoring & Recap' },
+    { key: 'mentee-learning', icon: <BookOutlined />, label: 'Học tập' },
+    { key: 'mentee-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
+    ...scopedMenuItems,
   ];
 
   const mentorMenuItems = [
+    { key: 'mentor-dashboard', icon: <DashboardOutlined />, label: 'Tổng quan' },
     { key: 'mentor-mentoring', icon: <TeamOutlined />, label: 'Mentoring & Recap' },
+    { key: 'mentor-learning', icon: <BookOutlined />, label: 'Học tập' },
+    ...scopedMenuItems,
   ];
 
   const menuItems = user.role === 'ADMIN' ? adminMenuItems : user.role === 'MENTOR' ? mentorMenuItems : menteeMenuItems;
@@ -119,18 +146,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const saveMockDate = async (date: string | null) => {
     setSavingMockDate(true);
     try {
-      const response = await apiFetch('/time/mock', {
+      const result = await apiJson<{ date: string | null; enabled: boolean; now: string }>('/time/mock', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date })
+        json: { date }
       });
-      const result = await response.json();
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || 'Không thể cập nhật ngày giả lập');
-      }
-      setClientMockDate(result.data.date);
-      message.success(result.data.enabled
-        ? `Đã bật ngày giả lập ${dayjs(result.data.date).format('DD/MM/YYYY')} cho toàn hệ thống`
+      syncServerTime(result.now);
+      message.success(result.enabled
+        ? `Đã bật ngày giả lập ${dayjs(result.date).format('DD/MM/YYYY')} cho toàn hệ thống`
         : 'Đã tắt ngày giả lập; toàn hệ thống dùng ngày thật');
       window.location.reload();
     } catch (error) {
@@ -145,6 +167,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     'admin-modules': '/admin-modules',
     'admin-fund': '/admin-fund',
     'admin-points': '/admin-points',
+    'admin-organization': '/admin-organization',
+    'admin-members': '/admin-members',
+    'mentor-learning': '/mentor-learning',
     'mentee-dashboard': '/mentee-dashboard',
     'mentee-learning': '/mentee-learning',
     'mentee-mentoring': '/mentee-mentoring',
@@ -173,7 +198,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       {!isMobile && <Sider className="role-sider" collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)} width={260}>
         <div className="brand-lockup">
           <span className="brand-mark">H</span>
-          {!collapsed && <span>HLC <b>Mentoring</b></span>}
+          {!collapsed && <span>HLC <b>LMS</b></span>}
         </div>
         {!collapsed && <div className="role-caption">{roleLabel}</div>}
         {navigation}
@@ -232,8 +257,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
               size={isMobile ? 'large' : 'middle'}
               icon={<LogoutOutlined />}
               onClick={() => {
-                localStorage.removeItem('hlc_token');
-                localStorage.removeItem('hlc_user');
+                const refreshToken = localStorage.getItem('hlc_refresh_token');
+                if (refreshToken) {
+                  void apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken }) }).catch(() => undefined);
+                }
+                clearSession();
                 router.replace('/login');
               }}
             >
@@ -252,7 +280,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           {children}
         </Content>
       </Layout>
-      <Drawer title="HLC Mentoring" placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} className={roleTheme}>
+      <Drawer title="HLC LMS" placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} className={roleTheme}>
         {navigation}
       </Drawer>
       <Modal

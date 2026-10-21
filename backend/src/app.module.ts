@@ -13,7 +13,10 @@ import { LearningActivityModule } from "./modules/learning/learning.module";
 import { FundModule } from "./modules/fund/fund.module";
 import { PointModule } from "./modules/point/point.module";
 import { PermissionModule } from "./modules/permission/permission.module";
+import { TimeModule } from "./modules/time/time.module";
+import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { AppController } from "./app.controller";
+import { RootController } from "./root.controller";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CommonProviderModule } from "./modules/common-provider/common-provider.module";
 import { DataPartitionModule } from "./modules/data-partition/data-partition.module";
@@ -63,8 +66,10 @@ import { WebSocketModule } from "./modules/websocket/websocket.module";
         FundModule,
         PointModule,
         PermissionModule,
+        TimeModule,
+        DashboardModule,
     ],
     providers: [...DefaultProviders],
-    controllers: [AppController],
+    controllers: [AppController, RootController],
 })
 export class AppModule {}

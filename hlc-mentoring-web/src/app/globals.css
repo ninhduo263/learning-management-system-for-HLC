@@ -45,6 +45,9 @@ body {
 .app-shell { --role: #6d5dfc; --role-soft: #efedff; --role-deep: #282259; }
 .app-shell.role-mentor { --role: #0e9f91; --role-soft: #e5f8f5; --role-deep: #073f43; }
 .app-shell.role-mentee { --role: #7657e8; --role-soft: #f0ecff; --role-deep: #29235c; }
+/* Layout luôn cao ít nhất bằng màn hình để sidebar kéo dài tới đáy.
+   Không dùng được class min-h-screen của Tailwind: Tailwind v4 nằm trong @layer nên thua CSS (không layer) của Ant Design (min-height: 0). */
+.app-shell.ant-layout { min-height: 100vh; min-height: 100dvh; }
 .role-sider { background: linear-gradient(180deg, var(--role-deep), #151a32) !important; }
 .role-sider .ant-layout-sider-children { display: flex; flex-direction: column; }
 .brand-lockup { display: flex; align-items: center; gap: 10px; height: 66px; margin: 12px 14px 4px; color: white; font-size: 17px; letter-spacing: -.03em; }

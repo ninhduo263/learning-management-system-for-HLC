@@ -28,6 +28,11 @@ import { PeriodExportController } from "./controllers/period-export.controller";
 import { PeriodExportModel } from "./models/period-export.model";
 import { PeriodExportSqlRepository } from "./repositories/period-export-sql.repository";
 import { PeriodExportService } from "./services/period-export.service";
+import { CatalogSeedService } from "./flow/catalog-seed.service";
+import { PointAdminController } from "./flow/point-admin.controller";
+import { PointCalculationService } from "./flow/point-calculation.service";
+import { PointFlowService } from "./flow/point-flow.service";
+import { PointMemberController } from "./flow/point-member.controller";
 
 @Module({
     imports: [
@@ -41,6 +46,8 @@ import { PeriodExportService } from "./services/period-export.service";
         ]),
     ],
     controllers: [
+        PointAdminController,
+        PointMemberController,
         PointTypeController,
         PointRuleController,
         PointAdjustmentController,
@@ -49,6 +56,9 @@ import { PeriodExportService } from "./services/period-export.service";
         PeriodExportController,
     ],
     providers: [
+        CatalogSeedService,
+        PointCalculationService,
+        PointFlowService,
         PointTypeService,
         PointRuleService,
         PointAdjustmentService,
@@ -71,6 +81,7 @@ import { PeriodExportService } from "./services/period-export.service";
         TransactionProvider(SqlTransaction),
     ],
     exports: [
+        PointFlowService,
         PointTypeService,
         PointRuleService,
         PointAdjustmentService,

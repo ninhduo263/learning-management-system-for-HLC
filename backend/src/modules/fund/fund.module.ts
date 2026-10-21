@@ -8,11 +8,14 @@ import { FundContributionController } from "./controllers/fund-contribution.cont
 import { FundContributionModel } from "./models/fund-contribution.model";
 import { FundContributionSqlRepository } from "./repositories/fund-contribution-sql.repository";
 import { FundContributionService } from "./services/fund-contribution.service";
+import { FundFlowController } from "./flow/fund-flow.controller";
+import { FundFlowService } from "./flow/fund-flow.service";
 
 @Module({
     imports: [SequelizeModule.forFeature([FundContributionModel])],
-    controllers: [FundContributionController],
+    controllers: [FundFlowController, FundContributionController],
     providers: [
+        FundFlowService,
         FundContributionService,
         RepositoryProvider(
             Entity.FUND_CONTRIBUTION,
@@ -21,6 +24,6 @@ import { FundContributionService } from "./services/fund-contribution.service";
         SqlTransaction,
         TransactionProvider(SqlTransaction),
     ],
-    exports: [FundContributionService],
+    exports: [FundContributionService, FundFlowService],
 })
 export class FundModule {}

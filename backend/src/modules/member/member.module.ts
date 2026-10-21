@@ -7,6 +7,7 @@ import { SequelizeModule } from "@nestjs/sequelize";
 import { MemberController } from "./controllers/member.controller";
 import { MemberModel } from "./models/member.model";
 import { MemberSqlRepository } from "./repositories/member-sql.repository";
+import { MemberToolsService } from "./services/member-tools.service";
 import { MemberService } from "./services/member.service";
 
 @Module({
@@ -14,6 +15,7 @@ import { MemberService } from "./services/member.service";
     controllers: [MemberController],
     providers: [
         MemberService,
+        MemberToolsService,
         RepositoryProvider(Entity.MEMBER, MemberSqlRepository),
         SqlTransaction,
         TransactionProvider(SqlTransaction),

@@ -4,6 +4,8 @@ import { TransactionProvider } from "@module/repository/common/transaction";
 import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
 import { Module } from "@nestjs/common";
 import { SequelizeModule } from "@nestjs/sequelize";
+import { LearningFlowController } from "./flow/learning-flow.controller";
+import { LearningFlowService } from "./flow/learning-flow.service";
 import { LibraryItemController } from "./controllers/library-item.controller";
 import { LibraryItemModel } from "./models/library-item.model";
 import { LibraryItemSqlRepository } from "./repositories/library-item-sql.repository";
@@ -51,6 +53,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
         ]),
     ],
     controllers: [
+        LearningFlowController,
         LibraryItemController,
         LearningModuleController,
         ModuleFieldController,
@@ -61,6 +64,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
         SubmissionScoreController,
     ],
     providers: [
+        LearningFlowService,
         LibraryItemService,
         LearningModuleService,
         ModuleFieldService,
@@ -93,6 +97,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
         TransactionProvider(SqlTransaction),
     ],
     exports: [
+        LearningFlowService,
         LibraryItemService,
         LearningModuleService,
         ModuleFieldService,
