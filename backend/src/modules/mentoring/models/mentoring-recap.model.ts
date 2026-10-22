@@ -1,3 +1,4 @@
+import { NumberColumn } from "@common/decorator/sql-column.decorator";
 import { StrObjectId } from "@common/constant";
 import { Entity } from "@module/repository";
 import { Column, DataType, Model, Table } from "sequelize-typescript";
@@ -50,4 +51,21 @@ export class MentoringRecapModel extends Model implements MentoringRecap {
 
     @Column({ type: DataType.TEXT, allowNull: true })
     reviewNote?: string;
+
+    /** Điểm chất lượng recap (thang 100), Leader nhóm / admin chấm theo tiêu chí module RECAP */
+    @NumberColumn({ type: DataType.DECIMAL(5, 2), allowNull: true })
+    score?: number;
+
+    /** [{ criterionId, name, maxScore, score }] */
+    @Column({ type: DataType.JSONB, allowNull: true })
+    scoreDetails?: Record<string, unknown>[];
+
+    @Column({ type: DataType.TEXT, allowNull: true })
+    scoreFeedback?: string;
+
+    @Column({ type: DataType.STRING(24), allowNull: true })
+    scoredBy?: string;
+
+    @Column({ type: DataType.DATE, allowNull: true })
+    scoredAt?: Date;
 }

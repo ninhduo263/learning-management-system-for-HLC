@@ -4,7 +4,9 @@ import {
     ModuleFieldType,
 } from "@module/learning/common/constant";
 import { LearningModuleModel } from "@module/learning/models/learning-module.model";
+import { ModuleCriterionModel } from "@module/learning/models/module-criterion.model";
 import { ModuleFieldModel } from "@module/learning/models/module-field.model";
+import { RECAP_MODULE_CODE } from "@module/learning/common/constant";
 import { TargetMemberType } from "@module/member/common/constant";
 import { DepartmentType } from "@module/organization/common/constant";
 import { DepartmentModel } from "@module/organization/models/department.model";
@@ -232,6 +234,38 @@ const MODULES = [
         sortOrder: 3,
     },
 ];
+/** Module chấm recap mentoring 1on1 (thang 100). Bài recap gốc nằm ở mentoring, module chỉ giữ tiêu chí */
+const RECAP_MODULE = {
+    code: RECAP_MODULE_CODE,
+    name: "Recap mentoring 1on1",
+    description:
+        "Leader nhóm chấm recap thang 100 theo các tiêu chí dưới đây. Điểm là thành phần xếp giải Nhất, Nhì, Ba hằng tháng.",
+    departmentId: null,
+    cycleType: CycleType.MONTHLY,
+    minSubmissionsPerCycle: 0,
+    maxSubmissionsPerCycle: null,
+    libraryType: null,
+    sortOrder: 0,
+    targetMemberType: TargetMemberType.ALL,
+    settings: { source: "MENTORING_RECAP" },
+};
+const RECAP_CRITERIA = [
+    {
+        key: "content",
+        name: "Nội dung đầy đủ, đúng trọng tâm buổi mentoring",
+        maxScore: 40,
+    },
+    {
+        key: "depth",
+        name: "Độ sâu: bài học rút ra và kế hoạch hành động",
+        maxScore: 40,
+    },
+    {
+        key: "form",
+        name: "Hình thức trình bày và ảnh minh chứng",
+        maxScore: 20,
+    },
+];
 const FIELDS = [
     {
         module: "READING",
@@ -323,7 +357,42 @@ export class CatalogSeedService implements OnApplicationBootstrap {
         private readonly moduleModel: typeof LearningModuleModel,
         @InjectModel(ModuleFieldModel)
         private readonly fieldModel: typeof ModuleFieldModel,
+        @InjectModel(ModuleCriterionModel)
+        private readonly criterionModel: typeof ModuleCriterionModel,
     ) {}
+
+    /** Module RECAP: tạo nếu thiếu; tiêu chí chỉ tạo khi module chưa có tiêu chí nào */
+    private async seedRecapModule() {
+        const moduleId = seedId(`MOD:${RECAP_MODULE_CODE}`);
+        const [module, isNew] = await this.moduleModel.findOrCreate({
+            where: { code: RECAP_MODULE_CODE },
+            defaults: {
+                _id: moduleId,
+                requireReview: true,
+                enableScoring: true,
+                maxScore: 100,
+                ...RECAP_MODULE,
+            } as never,
+        });
+        let created = isNew ? 1 : 0;
+        if (
+            !(await this.criterionModel.count({
+                where: { moduleId: module._id },
+            }))
+        ) {
+            await this.criterionModel.bulkCreate(
+                RECAP_CRITERIA.map((item, index) => ({
+                    _id: seedId(`CRT:${RECAP_MODULE_CODE}:${item.key}`),
+                    moduleId: module._id,
+                    name: item.name,
+                    maxScore: item.maxScore,
+                    sortOrder: index + 1,
+                })),
+            );
+            created += RECAP_CRITERIA.length;
+        }
+        return created;
+    }
 
     private async insertMissing<M extends Model>(
         model: ModelStatic<M>,
@@ -397,7 +466,8 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                         ...row,
                     })),
                     (row) => ({ moduleId: row.moduleId, key: row.key }),
-                ));
+                )) +
+                (await this.seedRecapModule());
             if (created)
                 this.logger.log(`Đã tạo ${created} bản ghi danh mục mặc định`);
         } catch (error) {

@@ -61,6 +61,9 @@ const money = (value: number) =>
 
 @Injectable()
 export class PointCalculationService {
+    /** Số recap của các cặp "Đã xong" chưa được chấm ở lần xếp giải gần nhất */
+    private lastUnscoredRecaps = 0;
+
     constructor(
         private readonly timeService: TimeService,
         @InjectModel(PointRuleModel)
@@ -310,17 +313,34 @@ export class PointCalculationService {
                               new Date(mentee.firstSubmittedAt).getTime(),
                           )
                         : null;
-                return { session, status, completedAt };
+                // Điểm chất lượng recap (thang 100) do Leader/admin chấm; chưa chấm tính 0
+                const scores = [mentor, mentee].map((recap) =>
+                    recap?.score === null || recap?.score === undefined
+                        ? null
+                        : Number(recap.score),
+                );
+                const recapScore =
+                    Math.round(((scores[0] ?? 0) + (scores[1] ?? 0)) * 50) /
+                    100;
+                const unscored = scores.filter(
+                    (value) => value === null,
+                ).length;
+                return { session, status, completedAt, recapScore, unscored };
             })
-            .filter((item) => item.status === "DONE")
-            .sort(
-                (a, b) =>
-                    new Date(a.session.scheduledStartAt).getTime() -
-                        new Date(b.session.scheduledStartAt).getTime() ||
-                    a.completedAt - b.completedAt ||
-                    a.session.code.localeCompare(b.session.code),
-            )
-            .slice(0, 3);
+            .filter((item) => item.status === "DONE");
+        this.lastUnscoredRecaps = ranked.reduce(
+            (sum, item) => sum + item.unscored,
+            0,
+        );
+        ranked.sort(
+            (a, b) =>
+                b.recapScore - a.recapScore ||
+                new Date(a.session.scheduledStartAt).getTime() -
+                    new Date(b.session.scheduledStartAt).getTime() ||
+                a.completedAt - b.completedAt ||
+                a.session.code.localeCompare(b.session.code),
+        );
+        ranked.splice(3);
         await this.awardModel.destroy({
             where: { periodId: period._id },
             transaction: t,
@@ -334,6 +354,7 @@ export class PointCalculationService {
                     sessionId: item.session._id,
                     rank: index + 1,
                     rankingBasis: {
+                        recapScore: item.recapScore,
                         scheduledStartAt: item.session.scheduledStartAt,
                         completedAt: item.completedAt
                             ? new Date(item.completedAt)
@@ -347,6 +368,7 @@ export class PointCalculationService {
             awards.push({
                 award: award.get({ plain: true }),
                 session: item.session,
+                recapScore: item.recapScore,
             });
         }
         return awards;
@@ -666,10 +688,12 @@ export class PointCalculationService {
         }
         return {
             ...stats,
-            awards: awards.map(({ award, session }) => ({
+            awards: awards.map(({ award, session, recapScore }) => ({
                 rank: award.rank,
                 sessionCode: session.code,
+                recapScore,
             })),
+            unscoredRecaps: this.lastUnscoredRecaps,
         };
     }
 }

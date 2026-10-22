@@ -71,5 +71,9 @@
     "error-submission-reviewed": "Bài đã được duyệt, không thể sửa hoặc xóa",
     "error-submission-score-invalid": "Điểm tiêu chí {name} phải từ 0 đến {max}",
     "error-submission-not-submitted": "Bài chưa được nộp",
-    "error-member-position-invalid": "Ngày kết thúc phải sau ngày bắt đầu"
+    "error-member-position-invalid": "Ngày kết thúc phải sau ngày bắt đầu",
+    "error-group-not-found": "Không tìm thấy nhóm",
+    "error-group-leader-mentee-only": "Leader và Phó nhóm phải là mentee",
+    "error-recap-score-conflict": "Bạn không được chấm recap của cặp mình tham gia",
+    "error-mentoring-override-reason-required": "Ghi đè lịch bắt buộc nhập lý do"
 }

@@ -5,6 +5,7 @@ import {
   Alert, App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tabs, Tag, Typography
 } from 'antd';
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import RecapGradingPanel from '@/components/RecapGradingPanel';
 import SubmissionData from '@/components/SubmissionData';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
@@ -96,7 +97,7 @@ export default function AdminModulesPage() {
         pagination={false}
         columns={[
           { title: 'Mã', dataIndex: 'code', width: 150 },
-          { title: 'Tên module', render: (_: unknown, row: LearningModule) => <div><strong>{row.name}</strong>{row.description && <div className="text-xs text-gray-500 line-clamp-1">{row.description}</div>}</div> },
+          { title: 'Tên module', render: (_: unknown, row: LearningModule) => <div><strong>{row.name}</strong>{row.isRecapModule && <Tag color="purple" className="ml-2">Liên kết recap mentoring</Tag>}{row.description && <div className="text-xs text-gray-500 line-clamp-1">{row.description}</div>}</div> },
           { title: 'Chu kỳ', render: (_: unknown, row: LearningModule) => `${CYCLE_LABEL[row.cycleType]}${row.minSubmissionsPerCycle ? ` · tối thiểu ${row.minSubmissionsPerCycle}` : ''}${row.maxSubmissionsPerCycle ? ` · tối đa ${row.maxSubmissionsPerCycle}` : ''}` },
           { title: 'Đối tượng', render: (_: unknown, row: LearningModule) => TARGET_LABEL[row.targetMemberType] },
           { title: 'Trường', render: (_: unknown, row: LearningModule) => <div className="flex max-w-xs flex-wrap gap-1">{row.fields.map((field) => <Tag key={field._id}>{field.label}</Tag>)}</div> },
@@ -116,8 +117,20 @@ export default function AdminModulesPage() {
       {modules.length > 0 && (
         <Card>
           <Tabs activeKey={tab} onChange={setTab} items={[
-            { key: 'review', label: 'Duyệt & chấm bài', children: current ? <ReviewPanel key={current._id} module={current} moduleSelect={moduleSelect} onChanged={load} /> : null },
-            { key: 'progress', label: 'Tiến độ', children: current ? <ProgressPanel key={current._id} module={current} moduleSelect={moduleSelect} /> : null },
+            {
+              key: 'review',
+              label: 'Duyệt & chấm bài',
+              children: current?.isRecapModule
+                ? <RecapGradingPanel key={current._id} extra={moduleSelect} />
+                : current ? <ReviewPanel key={current._id} module={current} moduleSelect={moduleSelect} onChanged={load} /> : null
+            },
+            {
+              key: 'progress',
+              label: 'Tiến độ',
+              children: current?.isRecapModule
+                ? <div className="space-y-2">{moduleSelect}<Alert type="info" showIcon title="Recap mentoring theo dõi ở trang Ghép cặp mentoring (trạng thái nộp) và Nhóm của Leader." /></div>
+                : current ? <ProgressPanel key={current._id} module={current} moduleSelect={moduleSelect} /> : null
+            },
             { key: 'modules', label: 'Cấu hình module', children: moduleTab },
             { key: 'library', label: 'Thư viện sách & tài liệu', children: <LibraryPanel /> }
           ]} />

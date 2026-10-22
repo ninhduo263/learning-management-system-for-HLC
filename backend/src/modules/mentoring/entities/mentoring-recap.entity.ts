@@ -70,4 +70,14 @@ export class MentoringRecap implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Ghi chú duyệt" })
     reviewNote?: string;
+
+    score?: number;
+
+    scoreDetails?: Record<string, unknown>[];
+
+    scoreFeedback?: string;
+
+    scoredBy?: string;
+
+    scoredAt?: Date;
 }

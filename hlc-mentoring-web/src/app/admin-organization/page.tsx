@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
+import GroupManager from '@/components/GroupManager';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
@@ -58,6 +59,7 @@ export default function AdminOrganizationPage() {
       <Typography.Title level={3} className="!mb-0">Tổ chức & phân quyền</Typography.Title>
       <Card loading={loading}>
         <Tabs items={[
+          { key: 'groups', label: 'Nhóm (Leader / Phó nhóm)', children: <GroupManager /> },
           { key: 'assign', label: 'Chức vụ thành viên', children: <AssignmentPanel assignments={assignments} members={members} departments={departments} positions={positions} onChanged={load} /> },
           { key: 'permission', label: 'Phân quyền quản trị', children: <PermissionPanel permissions={permissions} members={members} modules={modules} onChanged={load} /> },
           { key: 'catalog', label: 'Ban & chức vụ', children: <CatalogPanel departments={departments} positions={positions} onChanged={load} /> }

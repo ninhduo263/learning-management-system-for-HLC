@@ -60,6 +60,24 @@ export class FundFlowController {
         return this.flowService.remove(user, id);
     }
 
+    /** Báo cáo theo nhóm, theo tuần (Admin/quyền FUND: mọi nhóm; Leader/Phó: nhóm mình) */
+    @Get("groups/report")
+    @AllowSystemRoles(SystemRole.ADMIN, SystemRole.MENTOR, SystemRole.MENTEE)
+    groupReport(
+        @ReqUser() user: User,
+        @Query("period") period?: string,
+        @Query("groupId") groupId?: string,
+    ) {
+        return this.flowService.groupReport(user, { period, groupId });
+    }
+
+    /** Leader duyệt minh chứng của nhóm: Đã xong / Chưa xong */
+    @Put("groups/review")
+    @AllowSystemRoles(SystemRole.ADMIN, SystemRole.MENTOR, SystemRole.MENTEE)
+    groupReview(@ReqUser() user: User, @Body() dto: BulkReviewContributionDto) {
+        return this.flowService.review(dto.ids, dto.status, user, dto.note);
+    }
+
     /** ?period=YYYY-MM&date=YYYY-MM-DD&status=PENDING */
     @Get("contributions")
     @AllowSystemRoles(SystemRole.ADMIN)

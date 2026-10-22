@@ -51,3 +51,5 @@ export const POINT_ENTRY = "PointEntry";
 export const ALLOWANCE_SUMMARY = "AllowanceSummary";
 export const PERIOD_EXPORT = "PeriodExport";
 export const ADMIN_PERMISSION = "AdminPermission";
+export const GROUP_MEMBERSHIP = "GroupMembership";
+export const MEMBER_PROFILE_LOG = "MemberProfileLog";

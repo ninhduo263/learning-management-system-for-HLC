@@ -44,6 +44,12 @@ export class MemberModel extends Model implements Member {
     @Column({ type: DataType.TEXT, allowNull: true })
     profileUrl?: string;
 
+    @Column({ type: DataType.TEXT, allowNull: true })
+    address?: string;
+
+    @Column({ type: DataType.STRING(255), allowNull: true })
+    hometown?: string;
+
     @Column({ type: DataType.STRING(50), allowNull: true })
     bankAccount?: string;
 

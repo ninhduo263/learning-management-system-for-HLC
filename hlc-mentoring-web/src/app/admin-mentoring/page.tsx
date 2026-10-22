@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
-import { CheckOutlined, DeleteOutlined, EditOutlined, EyeOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined } from '@ant-design/icons';
+import { CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
 import ProfileLink from '@/components/ProfileLink';
 import RecapCard from '@/components/RecapCard';
 import { errorMessage } from '@/lib/api';
@@ -19,6 +19,8 @@ import {
   type MemberView,
   type QuarterBoard,
   type RecapView,
+  type ScheduleImportResult,
+  type ScheduleLogView,
   type SessionView
 } from '@/services/mentoringApi';
 import { getCurrentTime, isNextQuarterPairingOpen, nextQuarterCode, quarterOf } from '@/utils/time';
@@ -119,6 +121,9 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const [reviewNote, setReviewNote] = useState('');
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<{ row: number; message: string }[]>([]);
+  const [scheduleImport, setScheduleImport] = useState<{ file: File; result: ScheduleImportResult } | null>(null);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [logs, setLogs] = useState<{ title: string; rows: ScheduleLogView[] } | null>(null);
   const quarter = board?.quarter;
   const locked = Boolean(quarter?.isLocked);
   const canPair = Boolean(quarter?.canPair);
@@ -192,6 +197,44 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
     } catch (error) {
       message.error(errorMessage(error, fallback));
       return false;
+    }
+  };
+
+  const checkScheduleFile = async (file: File) => {
+    setScheduleBusy(true);
+    try {
+      setScheduleImport({ file, result: await mentoringApi.importSchedules(quarterCode, file, true) });
+    } catch (error) {
+      message.error(errorMessage(error, 'Không đọc được file lịch'));
+    } finally {
+      setScheduleBusy(false);
+    }
+  };
+
+  const applyScheduleFile = async () => {
+    if (!scheduleImport) return;
+    setScheduleBusy(true);
+    try {
+      const result = await mentoringApi.importSchedules(quarterCode, scheduleImport.file, false);
+      if (result.applied) {
+        message.success(`Đã cập nhật ${result.changes.length} lịch mentoring từ file`);
+        setScheduleImport(null);
+        await loadData();
+      } else {
+        setScheduleImport({ file: scheduleImport.file, result });
+      }
+    } catch (error) {
+      message.error(errorMessage(error, 'Không nhập được file lịch'));
+    } finally {
+      setScheduleBusy(false);
+    }
+  };
+
+  const openLogs = async (title: string, sessionId?: string) => {
+    try {
+      setLogs({ title, rows: await mentoringApi.scheduleLogs(sessionId ? { sessionId } : { quarter: quarterCode }) });
+    } catch (error) {
+      message.error(errorMessage(error, 'Không tải được nhật ký'));
     }
   };
 
@@ -333,6 +376,11 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
                 <Button icon={<InboxOutlined />} disabled={importing || locked}>Import file</Button>
               </Upload>
               <Button type="primary" icon={<PlusOutlined />} disabled={!canPair} onClick={() => { setTimeout(() => createForm.setFieldsValue({ month: months[0] }), 0); setModal('create'); }}>Thêm mới</Button>
+              <Button icon={<DownloadOutlined />} onClick={() => mentoringApi.exportSchedules(quarterCode).catch((error) => message.error(errorMessage(error)))}>Xuất lịch .xlsx</Button>
+              <Upload accept=".xlsx" showUploadList={false} disabled={scheduleBusy || locked} beforeUpload={(file) => { void checkScheduleFile(file); return Upload.LIST_IGNORE; }}>
+                <Button icon={<UploadOutlined />} loading={scheduleBusy} disabled={locked}>Nhập lịch .xlsx</Button>
+              </Upload>
+              <Button icon={<HistoryOutlined />} onClick={() => void openLogs(`Nhật ký thay đổi lịch quý ${quarterCode}`)}>Nhật ký lịch</Button>
               <Button icon={locked ? <UnlockOutlined /> : <LockOutlined />} onClick={() => run(() => mentoringApi.setLock(quarterCode, !locked), locked ? 'Đã mở khóa quý' : 'Đã khóa quý', 'Không thể đổi trạng thái khóa quý')}>
                 {locked ? 'Mở khóa quý' : 'Khóa quý'}
               </Button>
@@ -418,7 +466,10 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <Typography.Title level={5} className="!mb-0">Lịch mentoring</Typography.Title>
-                <Button size="small" icon={<CheckOutlined />} disabled={locked} onClick={() => openOverride(selected)}>Ghi đè lịch</Button>
+                <Space size="small">
+                  <Button size="small" icon={<HistoryOutlined />} onClick={() => void openLogs(`Nhật ký lịch ${selected.code}`, selected._id)}>Nhật ký</Button>
+                  <Button size="small" icon={<CheckOutlined />} disabled={locked} onClick={() => openOverride(selected)}>Ghi đè lịch</Button>
+                </Space>
               </div>
               {selected.schedule ? (
                 <Descriptions bordered column={1} size="small">
@@ -455,14 +506,77 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
           );
           if (ok) setOverriding(null);
         }}>
-          <Typography.Paragraph type="secondary">Admin được đặt lịch cả ở quá khứ (ví dụ cập nhật buổi đã diễn ra). Lịch phải nằm trong tháng {overriding?.month}/{overriding?.year}.</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">
+            Admin được đặt lịch cả ở quá khứ (ví dụ cập nhật buổi đã diễn ra). Lịch phải nằm trong tháng {overriding?.month}/{overriding?.year}.
+            Hạn recap, trạng thái đúng hạn/trễ và điểm thưởng của tháng sẽ tự tính lại theo lịch mới. Mỗi lần ghi đè được lưu vào nhật ký (không sửa/xóa được).
+          </Typography.Paragraph>
           <Form.Item name="startAt" label="Bắt đầu" rules={[{ required: true }]}><Input type="datetime-local" /></Form.Item>
           <Form.Item name="endAt" label="Kết thúc" rules={[{ required: true }]}><Input type="datetime-local" /></Form.Item>
           <Form.Item name="meetingLink" label="Link meeting"><Input /></Form.Item>
           <Form.Item name="location" label="Địa điểm"><Input /></Form.Item>
           <Form.Item name="note" label="Ghi chú"><Input /></Form.Item>
+          <Form.Item name="reason" label="Lý do ghi đè (bắt buộc)" rules={[{ required: true, whitespace: true, message: 'Nhập lý do ghi đè lịch' }]}>
+            <Input.TextArea rows={2} placeholder="VD: Cặp báo đổi lịch qua Zalo, có ảnh xác nhận" />
+          </Form.Item>
           <Button type="primary" htmlType="submit" block>Lưu lịch</Button>
         </Form>
+      </Modal>
+      <Modal
+        title={`Nhập lịch mentoring từ file: ${scheduleImport?.file.name ?? ''}`}
+        open={Boolean(scheduleImport)}
+        onCancel={() => setScheduleImport(null)}
+        width="min(900px, calc(100vw - 24px))"
+        okText={`Áp dụng ${scheduleImport?.result.changes.length ?? 0} thay đổi`}
+        okButtonProps={{ disabled: !scheduleImport?.result.valid || !scheduleImport.result.changes.length }}
+        confirmLoading={scheduleBusy}
+        onOk={applyScheduleFile}
+        destroyOnHidden
+      >
+        {scheduleImport && (
+          <div className="space-y-3">
+            {scheduleImport.result.errors.length > 0 ? (
+              <Alert type="error" showIcon title={`File có ${scheduleImport.result.errors.length} dòng lỗi: hệ thống từ chối toàn bộ file, chưa thay đổi dữ liệu nào`} description={<ul className="ml-4 list-disc">{scheduleImport.result.errors.slice(0, 30).map((item) => <li key={`${item.row}-${item.message}`}>Dòng {item.row}: {item.message}</li>)}</ul>} />
+            ) : scheduleImport.result.changes.length ? (
+              <Alert type="success" showIcon title={`File hợp lệ, có ${scheduleImport.result.changes.length} lịch thay đổi. Kiểm tra rồi bấm Áp dụng.`} />
+            ) : <Alert type="info" showIcon title="File hợp lệ nhưng không có lịch nào thay đổi." />}
+            {scheduleImport.result.changes.length > 0 && (
+              <Table
+                rowKey="sessionCode"
+                size="small"
+                pagination={false}
+                dataSource={scheduleImport.result.changes}
+                scroll={{ x: 'max-content' }}
+                columns={[
+                  { title: 'Dòng', dataIndex: 'row' },
+                  { title: 'Buổi', dataIndex: 'sessionCode', render: (value: string) => <code className="text-xs">{value}</code> },
+                  { title: 'Cặp', render: (_: unknown, row: ScheduleImportResult['changes'][number]) => `${row.mentor} – ${row.mentee}` },
+                  { title: 'Lịch cũ', render: (_: unknown, row: ScheduleImportResult['changes'][number]) => formatDateTime(row.oldStartAt) },
+                  { title: 'Lịch mới', render: (_: unknown, row: ScheduleImportResult['changes'][number]) => `${formatDateTime(row.startAt)} – ${formatDateTime(row.endAt).slice(-5)}` },
+                  { title: 'Lý do', dataIndex: 'reason' }
+                ]}
+              />
+            )}
+          </div>
+        )}
+      </Modal>
+      <Modal title={logs?.title} open={Boolean(logs)} onCancel={() => setLogs(null)} footer={null} width="min(1000px, calc(100vw - 24px))">
+        <Typography.Paragraph type="secondary">Nhật ký chỉ đọc: không ai sửa hoặc xóa được, dùng để đối soát điểm thưởng.</Typography.Paragraph>
+        <Table<ScheduleLogView>
+          rowKey="_id"
+          size="small"
+          dataSource={logs?.rows ?? []}
+          pagination={{ pageSize: 15 }}
+          scroll={{ x: 'max-content' }}
+          columns={[
+            { title: 'Thời điểm', render: (_: unknown, row: ScheduleLogView) => formatDateTime(row.createdAt) },
+            { title: 'Buổi', render: (_: unknown, row: ScheduleLogView) => <code className="text-xs">{row.sessionCode}</code> },
+            { title: 'Thao tác', dataIndex: 'action', render: (value: string) => <Tag color={value === 'ADMIN_OVERRIDE' ? 'red' : value === 'CREATE' ? 'green' : 'blue'}>{({ CREATE: 'Gửi lịch', UPDATE: 'Sửa lịch', ADMIN_OVERRIDE: 'Admin ghi đè', CANCEL: 'Hủy' } as Record<string, string>)[value] ?? value}</Tag> },
+            { title: 'Người sửa', render: (_: unknown, row: ScheduleLogView) => row.actor ? (row.actor.fullname || row.actor.username) : '—' },
+            { title: 'Lịch cũ', render: (_: unknown, row: ScheduleLogView) => formatDateTime(row.oldStartAt) },
+            { title: 'Lịch mới', render: (_: unknown, row: ScheduleLogView) => formatDateTime(row.newStartAt) },
+            { title: 'Lý do', dataIndex: 'reason', render: (value: string | null) => value || '—' }
+          ]}
+        />
       </Modal>
       <Modal title="Duyệt recap" width="min(900px, calc(100vw - 24px))" open={Boolean(reviewing)} onCancel={() => setReviewing(null)} footer={null} destroyOnHidden styles={{ body: { maxHeight: 'min(72vh, 760px)', overflowY: 'auto' } }}>
         {reviewing && (

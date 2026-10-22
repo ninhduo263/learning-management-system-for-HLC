@@ -704,6 +704,90 @@ Ban, chức vụ, gán chức vụ, sửa hồ sơ và bật/tắt thành viên:
 | `GET` | `/dashboard/admin?period=2026-10` | Admin tổng | `{ period, members, mentoring: { sessions, statusCount, doneRate, bestPairs, inactivePairs }, learning: [...], fund: { totals, byDate }, points: { totals, topMembers, needImprovement }, trend: [6 kỳ gần nhất] }` |
 | `GET` | `/dashboard/me?period=2026-10` | Mentor / Mentee | `{ period, member, mentoring: [{ code, status, myStatus, partner, awardRank }], points: { totalPoints, amount, entries, history }, fund, learning: [{ module, currentCycle, pending, lastScore }] }` |
 
+### 11.8 Nhóm, Leader và Phó nhóm
+
+Mỗi nhóm (bản ghi `department` có `type = GROUP`) gồm cả mentor và mentee, có 1 Leader và 1 Phó nhóm (đều là mentee).
+- Leader/Phó lưu bằng `member-position` với chức vụ `LEADER` / `PHO_LEADER` của nhóm. Phụ cấp chức vụ vì vậy dùng chung rule `POSITION_LEADER` / `POSITION_PHO_LEADER`.
+- Thành viên thuộc nhóm lưu ở bảng `GroupMembership`. `endDate = null` là đang ở nhóm. Chuyển nhóm hay đổi Leader đều chỉ đóng bản ghi cũ, nên lịch sử được giữ.
+
+Admin tổng:
+
+| Method | Path | Body | `data` trả về |
+|---|---|---|---|
+| `GET` | `/groups` | — | Nhóm kèm `leader`, `deputy`, `members`, `counts` |
+| `GET` | `/groups/unassigned` | — | Thành viên đang hoạt động chưa có nhóm |
+| `POST` | `/groups` | `{ name, deputyCanReview? }` | Nhóm mới, mã tự sinh `NHOM_01`… |
+| `PUT` | `/groups/{id}` | `{ name, deputyCanReview?, isActive? }` | `deputyCanReview = false`: Phó nhóm chỉ xem, không chấm/duyệt |
+| `PUT` | `/groups/{id}/role` | `{ role: "LEADER" \| "DEPUTY", memberId? }` | Đặt, đổi hoặc gỡ (bỏ `memberId`) vai trò. Người mới phải là mentee (`400 error-group-leader-mentee-only`) và tự được đưa vào nhóm |
+| `POST` | `/groups/{id}/members` | `{ memberIds: [...] }` | `{ moved, group }`. Người đang ở nhóm khác được chuyển sang |
+| `DELETE` | `/groups/{id}/members/{memberId}` | — | Đưa khỏi nhóm (kèm gỡ chức Leader/Phó nếu có) |
+| `GET` | `/groups/{id}/history` | — | `{ memberships, roles }`: lịch sử vào/rời nhóm và lịch sử Leader/Phó |
+
+Leader / Phó nhóm (Admin dùng được với mọi nhóm; mentee thường nhận `403`):
+
+| Method | Path | `data` trả về |
+|---|---|---|
+| `GET` | `/leader/overview?period=2026-10` | Mỗi nhóm có `myRole`, `canReview` và `members[]`. Mỗi thành viên gồm: `mentoring` (trạng thái cặp, trạng thái recap, `recapScore`), `learning` (số bài chu kỳ hiện tại / tối thiểu), `fund` (trạng thái từng tuần). **Không** có số tài khoản, địa chỉ |
+| `GET` | `/leader/recaps?period=&groupId=&filter=UNSCORED\|SCORED\|ALL` | `{ rubric, rows }`: recap của các cặp có mentor hoặc mentee thuộc nhóm. `canScore = false` với cặp chính người chấm tham gia |
+| `GET` | `/leader/recap-rubric` | Tiêu chí chấm của module `MENTORING_RECAP` |
+| `PUT` | `/leader/recaps/{id}/score` | Body `{ status: "APPROVED", scores: [{ criterionId, score }], feedback? }` hoặc `{ status: "REJECTED", feedback }` |
+
+`GET /access/me` có thêm `leaderGroups: [{ _id, name, role: "LEADER" \| "DEPUTY", canReview }]`. FE hiện menu "Nhóm của tôi" khi mảng này khác rỗng.
+
+### 11.9 Chấm recap thang 100 và barem xếp giải
+
+- **Liên kết với module học tập:** module `MENTORING_RECAP` ("Recap mentoring 1on1") được tạo sẵn với 3 tiêu chí: 40, 40 và 20 điểm. Admin sửa tiêu chí ở `PUT /learning/modules/{id}` như module thường. Module này không nhận bài nộp (`409`) và không hiện trong `/learning/me`.
+- **Lưu điểm:** điểm lưu ngay trên bài recap gốc (`mentoring-recap`): `score`, `scoreDetails`, `scoreFeedback`, `scoredBy`, `scoredAt`. Tổng = (tổng điểm tiêu chí / tổng tối đa) × 100.
+- **Người chấm:**
+  - Admin;
+  - người có quyền `LEARNING_MODULE` với module này;
+  - Leader/Phó (khi `deputyCanReview`) của nhóm chứa mentor hoặc mentee của cặp.
+- **Xung đột lợi ích:** không ai chấm được cặp mình tham gia (`403 error-recap-score-conflict`).
+- **Recap bị trả** (`REJECTED`) thì xóa điểm. Người viết nộp lại thì điểm cũng được xóa.
+- **Xếp giải Nhất/Nhì/Ba** (khi Tính lại):
+  - chỉ xét cặp "Đã xong";
+  - sắp theo **điểm recap trung bình của 2 người** (recap chưa chấm tính 0);
+  - bằng điểm thì buổi diễn ra sớm hơn xếp trên, rồi cặp hoàn tất recap sớm hơn, rồi theo mã.
+  - Kết quả `recalculate` có `awards[].recapScore` và `unscoredRecaps` (số recap của các cặp "Đã xong" chưa chấm).
+
+### 11.10 Ghi đè lịch, nhật ký, xuất/nhập Excel lịch
+
+- `PUT /mentoring/sessions/{id}/schedule/override` **bắt buộc** `reason` (`400 error-mentoring-override-reason-required`). Sau khi ghi đè:
+  - hạn recap = giờ mới + 24h;
+  - mốc chốt lần đầu = giờ mới;
+  - trạng thái đúng hạn/trễ của các recap đã nộp được tính lại (recap vẫn giữ nguyên);
+  - điểm của kỳ (nếu chưa chốt) được tính lại ngay.
+- `GET /mentoring/schedule-logs?quarter=2026Q4&sessionId=&onlyOverride=true` (Admin hoặc quyền `MENTORING`): nhật ký `{ action, oldStartAt, oldEndAt, newStartAt, newEndAt, reason, actor, sessionCode, createdAt }`. Không có API sửa hay xóa nhật ký.
+- `GET /mentoring/quarters/{code}/schedules/export.xlsx`: file mẫu chuẩn.
+  - Sheet `LICH_MENTORING`; dòng 1 là `HLC_LICH_MENTORING_V1` + mã quý; dòng 2 là tiêu đề cột.
+  - Mỗi buổi 1 dòng. Giờ dạng `dd/MM/yyyy HH:mm` (giờ VN).
+- `POST /mentoring/quarters/{code}/schedules/import?dryRun=true|false` (multipart `file`) → `{ valid, applied, errors: [{ row, message }], changes: [...] }`.
+  - **Server kiểm tra:** đúng mẫu và đúng quý; mã buổi có trong quý; mã mentor/mentee khớp cặp; định dạng ngày giờ; kết thúc sau bắt đầu; nằm trong tháng của buổi; dòng có thay đổi phải ghi lý do; không xóa lịch qua file.
+  - **Một dòng lỗi là từ chối cả file**, không thay đổi dữ liệu.
+  - `dryRun=true` chỉ kiểm tra.
+  - Áp dụng thì mọi thay đổi ghi trong 1 transaction, mỗi dòng ghi nhật ký ghi đè kèm lý do.
+
+### 11.11 HLC Fund theo tuần, Leader duyệt
+
+- `GET /fund/me` có thêm:
+  - `weeks: [{ weekKey: "2026-W41", from, to, status, amount }]`, trong đó `status` là `NONE` (chưa nộp), `PENDING` (Chờ), `DONE` (Đã xong) hoặc `NOT_DONE` (Chưa xong);
+  - `groupId` của người dùng.
+- `GET /fund/groups/report?period=&groupId=`: Admin/quyền `FUND` xem mọi nhóm, Leader/Phó xem nhóm mình. Trả về `{ weeks, groups: [{ leader, deputy, canReview, pending, members: [{ member, total, weeks: { "2026-W41": { status, amount, ids } } }] }], contributions }`.
+- `PUT /fund/groups/review`: body `{ ids, status: "DONE" | "NOT_DONE", note? }`. Leader chỉ duyệt thành viên trong nhóm mình và không tự duyệt của mình.
+- `PUT /fund/contributions/review` (Admin/quyền `FUND`) vẫn duyệt được mọi minh chứng.
+
+### 11.12 Hồ sơ cá nhân
+
+| Method | Path | Ai gọi | Ghi chú |
+|---|---|---|---|
+| `GET` | `/member/me/profile` | Mentor / Mentee | Hồ sơ đầy đủ của mình (kể cả số tài khoản) |
+| `PUT` | `/member/me/profile` | Mentor / Mentee | `{ dateOfBirth, gender, phone, email, address, hometown, profileUrl, bankAccount, bankName }`. `bankAccount` chỉ gồm chữ số |
+| `GET` | `/member/me/profile-logs` | Mentor / Mentee | Lịch sử thay đổi của mình |
+| `PUT` | `/member/{id}/profile` | Admin | Như trên, thêm `fullName, memberType, status, joinedAt, note` |
+| `GET` | `/member/{id}/profile-logs` | Admin | `[{ field, oldValue, newValue, changedBy, changedByRole: "SELF" \| "ADMIN", createdAt }]` |
+
+Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi sửa qua CRUD `PUT /member/{id}`. Leader không nhận được số tài khoản hay địa chỉ của thành viên.
+
 ---
 
 ## 12. Danh mục resource
@@ -1272,6 +1356,7 @@ Bảng dưới là **body khi tạo mới** (`POST`). Response trả về cùng 
 - `population` chưa dùng được (mục 6.3).
 - Route tải file `GET /file/:id/:name` hiện công khai: ai có link là xem được file.
 - Chưa có nhắc hạn tự động (thông báo/email) cho recap, nộp bài, đóng quỹ.
+- Barem xếp giải hiện dùng điểm recap là tiêu chí chính; muốn thêm thành phần khác (ví dụ đúng hạn, độ dài buổi) cần bổ sung trong `point-calculation.service.ts`.
 
 ---
 

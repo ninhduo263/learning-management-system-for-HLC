@@ -68,12 +68,28 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
     return () => { active = false; };
   }, [role]);
 
-  const quarterTabs = useMemo(() => {
-    const codes = [...new Set((data?.sessions ?? []).map((item) => item.quarterCode))].sort().reverse();
-    return codes.map((code) => ({ code, sessions: (data?.sessions ?? []).filter((item) => item.quarterCode === code) }));
-  }, [data]);
   const currentCode = quarterOf(getCurrentTime()).code;
-  const defaultTab = quarterTabs.find((tab) => tab.code === currentCode)?.code ?? quarterTabs.find((tab) => tab.code < currentCode)?.code ?? quarterTabs[0]?.code;
+  /**
+   * Sắp tới: buổi chưa kết thúc (hoặc chưa có lịch) từ tháng hiện tại trở đi, thuộc quý hiện tại/sau.
+   * Cần xử lý: buổi đã qua nhưng vẫn còn việc (viết recap trong hạn, gửi lịch).
+   * Còn lại vào lịch sử, theo quý.
+   */
+  const { upcoming, history } = useMemo(() => {
+    const now = getCurrentTime();
+    const vn = new Date(now.getTime() + 7 * 3600_000);
+    const monthIndex = vn.getUTCFullYear() * 12 + vn.getUTCMonth() + 1;
+    const all = (data?.sessions ?? []).filter((item) => item.status !== 'CANCELLED');
+    const isUpcoming = (item: MySessionView) => item.quarterCode >= currentCode && (item.schedule
+      ? new Date(item.schedule.endAt) >= now
+      : item.year * 12 + item.month >= monthIndex);
+    const pending = (item: MySessionView) => item.canWriteRecap && !(item.myRole === 'MENTEE' ? item.recaps.mentee : item.recaps.mentor);
+    const next = all
+      .filter((item) => isUpcoming(item) || pending(item))
+      .sort((a, b) => (a.schedule ? new Date(a.schedule.startAt).getTime() : (a.year * 12 + a.month) * 1e12) - (b.schedule ? new Date(b.schedule.startAt).getTime() : (b.year * 12 + b.month) * 1e12));
+    const past = all.filter((item) => !next.includes(item));
+    const codes = [...new Set(past.map((item) => item.quarterCode))].sort().reverse();
+    return { upcoming: next, history: codes.map((code) => ({ code, sessions: past.filter((item) => item.quarterCode === code) })) };
+  }, [data, currentCode]);
 
   const counterpart = (session: MySessionView) => (session.myRole === 'MENTEE' ? session.mentor : session.mentee);
   const myStatus = (session: MySessionView) => (session.myRole === 'MENTEE' ? session.recapStatus.mentee : session.recapStatus.mentor);
@@ -246,8 +262,8 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
         </Card>
       )}
 
-      <Card title="Các buổi mentoring của tôi" loading={loading && !data}>
-        {data && quarterTabs.length === 0 ? (
+      <Card title="Lịch sắp tới & việc cần làm" loading={loading && !data}>
+        {data && upcoming.length === 0 && history.length === 0 ? (
           <Alert type="info" showIcon title="Chưa có dữ liệu mentoring" description="Admin chưa ghép cặp, hoặc cặp của quý tới chưa được công bố (ngày 25 tháng cuối quý)." />
         ) : (
           <>
@@ -255,18 +271,22 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
               Hai bên tự hẹn lịch qua điện thoại/tin nhắn rồi một người gửi lịch đã chốt lên đây. Lịch chỉ sửa được trước thời điểm đã chốt lần đầu.
               Recap viết sau khi buổi kết thúc, cần ít nhất 1 ảnh; nộp trong 24 giờ kể từ giờ mentoring là đúng hạn.
             </Typography.Paragraph>
-            <Tabs
-              key={defaultTab}
-              defaultActiveKey={defaultTab}
-              items={quarterTabs.map((tab) => ({
-                key: tab.code,
-                label: `Quý ${tab.code.slice(-1)}/${tab.code.slice(0, 4)}${tab.code === currentCode ? ' (hiện tại)' : tab.code > currentCode ? ' (sắp tới)' : ''}`,
-                children: <Table rowKey="_id" loading={loading} dataSource={tab.sessions} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
-              }))}
-            />
+            <Table rowKey="_id" loading={loading} dataSource={upcoming} columns={columns} pagination={false} scroll={{ x: 'max-content' }} locale={{ emptyText: `Không có buổi mentoring sắp tới trong quý ${currentCode.slice(-1)}/${currentCode.slice(0, 4)}` }} />
           </>
         )}
       </Card>
+
+      {history.length > 0 && (
+        <Card title="Lịch sử / đã qua">
+          <Tabs
+            items={history.map((tab) => ({
+              key: tab.code,
+              label: `Quý ${tab.code.slice(-1)}/${tab.code.slice(0, 4)}${tab.code === currentCode ? ' (hiện tại)' : ''}`,
+              children: <Table rowKey="_id" dataSource={tab.sessions} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
+            }))}
+          />
+        </Card>
+      )}
 
       <MemberQuarterlyReport />
 

@@ -7,6 +7,8 @@ import { MemberModel } from "@module/member/models/member.model";
 import { DepartmentModel } from "@module/organization/models/department.model";
 import { PositionModel } from "@module/organization/models/position.model";
 import { MemberPositionModel } from "@module/organization/models/member-position.model";
+import { GroupMembershipModel } from "@module/organization/models/group-membership.model";
+import { MemberProfileLogModel } from "@module/member/models/member-profile-log.model";
 import { PeriodModel } from "@module/period/models/period.model";
 import { AttachmentModel } from "@module/attachment/models/attachment.model";
 import { MentoringQuarterModel } from "@module/mentoring/models/mentoring-quarter.model";
@@ -95,4 +97,6 @@ export const SequelizeModel: ModelCtor<Model>[] = [
     AllowanceSummaryModel,
     PeriodExportModel,
     AdminPermissionModel,
+    GroupMembershipModel,
+    MemberProfileLogModel,
 ];

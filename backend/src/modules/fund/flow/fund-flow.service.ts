@@ -17,6 +17,44 @@ import { Sequelize } from "sequelize-typescript";
 import { FundContributionStatus } from "../common/constant";
 import { FundContribution } from "../entities/fund-contribution.entity";
 import { FundContributionModel } from "../models/fund-contribution.model";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
+import { AdminScope } from "@module/permission/common/constant";
+import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
+import { SystemRole } from "@module/user/common/constant";
+import { vnIsoWeekKey } from "@common/utils/vn-date.util";
+import { Period } from "@module/period/entities/period.entity";
+
+export type WeekStatus = "NONE" | FundContributionStatus;
+
+/** Các tuần ISO giao với tháng (cắt theo đầu/cuối tháng) */
+export function weeksOfPeriod(period: Pick<Period, "year" | "month">) {
+    const lastDay = new Date(
+        Date.UTC(period.year, period.month, 0),
+    ).getUTCDate();
+    const weeks: { weekKey: string; from: string; to: string }[] = [];
+    for (let day = 1; day <= lastDay; day += 1) {
+        const date = `${period.year}-${String(period.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const weekKey = weekOfDate(date);
+        const current = weeks[weeks.length - 1];
+        if (current?.weekKey === weekKey) current.to = date;
+        else weeks.push({ weekKey, from: date, to: date });
+    }
+    return weeks;
+}
+
+/** Tuần ISO của ngày YYYY-MM-DD */
+export const weekOfDate = (date: string) =>
+    vnIsoWeekKey(new Date(`${date}T12:00:00+07:00`));
+
+/** Trạng thái tuần: Đã xong nếu có minh chứng được duyệt; Chờ nếu đang chờ; Chưa xong nếu chỉ có minh chứng bị từ chối */
+export function weekStatus(rows: { status?: string }[]): WeekStatus {
+    if (rows.some((row) => row.status === FundContributionStatus.DONE))
+        return FundContributionStatus.DONE;
+    if (rows.some((row) => row.status === FundContributionStatus.PENDING))
+        return FundContributionStatus.PENDING;
+    if (rows.length) return FundContributionStatus.NOT_DONE;
+    return "NONE";
+}
 import { ContributionDto } from "./dto/contribution.dto";
 
 export interface ContributionQuery {
@@ -33,6 +71,9 @@ export class FundFlowService {
         private readonly timeService: TimeService,
         private readonly periodFlow: PeriodFlowService,
         private readonly attachments: AttachmentFlowService,
+        private readonly groupAccess: GroupAccessService,
+        @InjectModel(AdminPermissionModel)
+        private readonly permissionModel: typeof AdminPermissionModel,
         @InjectModel(FundContributionModel)
         private readonly contributionModel: typeof FundContributionModel,
         @InjectModel(MemberModel)
@@ -224,8 +265,193 @@ export class FundFlowService {
             pendingAmount: pending,
             reached: approved >= target.minApprovedAmount,
             isEligible: member.memberType === MemberType.MENTEE,
+            /** Mentor nộp minh chứng theo tuần; Leader nhóm duyệt */
+            weeks: weeksOfPeriod(period).map((week) => {
+                const items = rows.filter(
+                    (row) => weekOfDate(row.contributionDate) === week.weekKey,
+                );
+                return {
+                    ...week,
+                    status: weekStatus(items),
+                    amount: items.reduce(
+                        (sum, row) => sum + Number(row.amount),
+                        0,
+                    ),
+                };
+            }),
+            groupId: await this.groupAccess.groupOfMember(member._id),
             contributions: await this.views(rows),
         };
+    }
+
+    // ------------------------------------------------------------------
+    // Theo nhóm: Leader / Phó nhóm duyệt minh chứng của nhóm mình
+    // ------------------------------------------------------------------
+
+    /** Admin hoặc người có quyền FUND: xem/duyệt toàn bộ */
+    private async isFundAdmin(user: User) {
+        if (user.systemRole === SystemRole.ADMIN) return true;
+        return Boolean(
+            await this.permissionModel.findOne({
+                where: { userId: user._id, scope: AdminScope.FUND },
+                raw: true,
+            }),
+        );
+    }
+
+    /** Báo cáo tuần theo nhóm: mỗi thành viên x mỗi tuần trong tháng */
+    async groupReport(
+        user: User,
+        query: { period?: string; groupId?: string },
+    ) {
+        const now = vnParts(this.timeService.now());
+        const period = query.period
+            ? await this.periodFlow.getByCode(query.period)
+            : await this.periodFlow.ensurePeriod(now.year, now.month);
+        const isAdmin = await this.isFundAdmin(user);
+        let groups = await this.groupAccess.groups();
+        let canReviewGroupIds = new Set(groups.map((group) => group._id));
+        if (!isAdmin) {
+            const member = await this.groupAccess.memberOfUser(user);
+            const leading = member
+                ? await this.groupAccess.leadershipOf(member._id)
+                : [];
+            if (!leading.length) throw ApiError.Forbidden("error-forbidden");
+            groups = groups.filter((group) =>
+                leading.some((item) => item._id === group._id),
+            );
+            canReviewGroupIds = new Set(
+                leading
+                    .filter((item) => item.canReview)
+                    .map((item) => item._id),
+            );
+        }
+        if (query.groupId)
+            groups = groups.filter((group) => group._id === query.groupId);
+        const weeks = weeksOfPeriod(period);
+        const memberships = await this.groupAccess.currentMemberships(
+            groups.map((group) => group._id),
+        );
+        const leaders = await this.groupAccess.leadersOf(
+            groups.map((group) => group._id),
+        );
+        const memberIds = memberships.map((row) => row.memberId);
+        const members = new Map(
+            (
+                await this.memberModel.findAll({
+                    where: { _id: memberIds },
+                    raw: true,
+                })
+            ).map((member) => [member._id, member]),
+        );
+        const rows = memberIds.length
+            ? await this.contributionModel.findAll({
+                  where: { periodId: period._id, memberId: memberIds },
+                  order: [
+                      ["contributionDate", "ASC"],
+                      ["submittedAt", "ASC"],
+                  ],
+                  raw: true,
+              })
+            : [];
+        const brief = (id?: string | null) => {
+            const member = id ? members.get(id) : null;
+            return member
+                ? {
+                      _id: member._id,
+                      memberCode: member.memberCode,
+                      fullName: member.fullName,
+                      memberType: member.memberType,
+                  }
+                : null;
+        };
+        return {
+            period: { ...period, isLocked: this.periodFlow.isLocked(period) },
+            weeks,
+            isAdmin,
+            groups: groups.map((group) => {
+                const ids = memberships
+                    .filter((row) => row.groupId === group._id)
+                    .map((row) => row.memberId);
+                const roles = leaders.get(group._id);
+                const memberRows = ids
+                    .map((id) => {
+                        const own = rows.filter((row) => row.memberId === id);
+                        return {
+                            member: brief(id),
+                            total: own
+                                .filter(
+                                    (row) =>
+                                        row.status ===
+                                        FundContributionStatus.DONE,
+                                )
+                                .reduce(
+                                    (sum, row) => sum + Number(row.amount),
+                                    0,
+                                ),
+                            weeks: Object.fromEntries(
+                                weeks.map((week) => {
+                                    const items = own.filter(
+                                        (row) =>
+                                            weekOfDate(row.contributionDate) ===
+                                            week.weekKey,
+                                    );
+                                    return [
+                                        week.weekKey,
+                                        {
+                                            status: weekStatus(items),
+                                            amount: items.reduce(
+                                                (sum, row) =>
+                                                    sum + Number(row.amount),
+                                                0,
+                                            ),
+                                            ids: items.map((row) => row._id),
+                                        },
+                                    ];
+                                }),
+                            ),
+                        };
+                    })
+                    .filter((row) => row.member)
+                    // Mentor (người nộp quỹ theo tuần) lên trước
+                    .sort((a, b) =>
+                        a.member.memberType === b.member.memberType
+                            ? a.member.memberCode.localeCompare(
+                                  b.member.memberCode,
+                              )
+                            : a.member.memberType === MemberType.MENTOR
+                              ? -1
+                              : 1,
+                    );
+                return {
+                    _id: group._id,
+                    code: group.code,
+                    name: group.name,
+                    leader: brief(roles?.leaderId),
+                    deputy: brief(roles?.deputyId),
+                    canReview: canReviewGroupIds.has(group._id),
+                    pending: rows.filter(
+                        (row) =>
+                            ids.includes(row.memberId) &&
+                            row.status === FundContributionStatus.PENDING,
+                    ).length,
+                    members: memberRows,
+                };
+            }),
+            contributions: await this.views(rows),
+        };
+    }
+
+    /** Kiểm tra người duyệt được duyệt các minh chứng này (Leader: chỉ nhóm mình, không duyệt của chính mình) */
+    async assertCanReview(user: User, memberIds: string[]) {
+        if (await this.isFundAdmin(user)) return;
+        const scope = await this.groupAccess.reviewerScope(user, {
+            requireReview: true,
+        });
+        for (const memberId of memberIds) {
+            if (!scope.memberIds.has(memberId) || memberId === scope.memberId)
+                throw ApiError.Forbidden("error-forbidden");
+        }
     }
 
     // ------------------------------------------------------------------
@@ -265,6 +491,10 @@ export class FundFlowService {
         });
         if (rows.length !== new Set(ids).size)
             throw ApiError.NotFound("error-record-not-found");
+        await this.assertCanReview(
+            user,
+            rows.map((row) => row.memberId),
+        );
         for (const periodId of new Set(rows.map((row) => row.periodId))) {
             this.periodFlow.assertWritable(
                 await this.periodFlow.getById(periodId),

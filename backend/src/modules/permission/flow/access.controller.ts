@@ -15,6 +15,7 @@ import { ApiTags } from "@nestjs/swagger";
 import { Op } from "sequelize";
 import { AdminScope } from "../common/constant";
 import { AdminPermissionModel } from "../models/admin-permission.model";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import { GrantPermissionDto } from "./grant-permission.dto";
 
 /** Quyền quản trị theo phạm vi (mentee/mentor được giao duyệt quỹ, quản lý module, ...) */
@@ -30,6 +31,7 @@ export class AccessController {
         private readonly memberModel: typeof MemberModel,
         @InjectModel(LearningModuleModel)
         private readonly moduleModel: typeof LearningModuleModel,
+        private readonly groupAccess: GroupAccessService,
     ) {}
 
     /** Quyền của người đang đăng nhập: FE dùng để hiện menu */
@@ -51,7 +53,14 @@ export class AccessController {
             moduleIds: rows
                 .filter((row) => row.scope === AdminScope.LEARNING_MODULE)
                 .map((row) => row.moduleId),
+            /** Nhóm đang làm Leader / Phó nhóm: menu "Nhóm của tôi" */
+            leaderGroups: await this.leaderGroupsOf(user),
         };
+    }
+
+    private async leaderGroupsOf(user: User) {
+        const member = await this.groupAccess.memberOfUser(user);
+        return member ? this.groupAccess.leadershipOf(member._id) : [];
     }
 
     @Get("permissions")

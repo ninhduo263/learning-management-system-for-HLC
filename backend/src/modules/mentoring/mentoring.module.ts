@@ -6,6 +6,7 @@ import { Module } from "@nestjs/common";
 import { MentoringAdminController } from "./flow/mentoring-admin.controller";
 import { MentoringExcelService } from "./flow/mentoring-excel.service";
 import { MentoringFlowService } from "./flow/mentoring-flow.service";
+import { RecapScoreService } from "./flow/recap-score.service";
 import { MentoringMemberController } from "./flow/mentoring-member.controller";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { MentoringQuarterController } from "./controllers/mentoring-quarter.controller";
@@ -68,6 +69,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
     ],
     providers: [
         MentoringFlowService,
+        RecapScoreService,
         MentoringExcelService,
         MentoringQuarterService,
         MentorPreferenceService,
@@ -105,6 +107,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
     ],
     exports: [
         MentoringFlowService,
+        RecapScoreService,
         MentoringQuarterService,
         MentorPreferenceService,
         MentorPreferenceItemService,

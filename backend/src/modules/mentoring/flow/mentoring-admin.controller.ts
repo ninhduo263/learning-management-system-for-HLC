@@ -30,7 +30,7 @@ import { EnsureQuarterDto } from "./dto/ensure-quarter.dto";
 import { MemberListQueryDto } from "./dto/member-list-query.dto";
 import { QuarterLockDto } from "./dto/quarter-lock.dto";
 import { ReviewRecapDto } from "./dto/review-recap.dto";
-import { ScheduleDto } from "./dto/schedule.dto";
+import { OverrideScheduleDto } from "./dto/override-schedule.dto";
 import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
 import { MentoringExcelService } from "./mentoring-excel.service";
 import { MentoringFlowService } from "./mentoring-flow.service";
@@ -119,7 +119,7 @@ export class MentoringAdminController {
     overrideSchedule(
         @ReqUser() user: User,
         @Param("id") id: string,
-        @Body() dto: ScheduleDto,
+        @Body() dto: OverrideScheduleDto,
     ) {
         return this.flowService.overrideSchedule(id, dto, user);
     }
@@ -151,6 +151,64 @@ export class MentoringAdminController {
             `attachment; filename="${fileName}"`,
         );
         res.send(buffer);
+    }
+
+    /** Xuất lịch mentoring của quý theo mẫu chuẩn (.xlsx) để sửa rồi nhập lại */
+    @Get("quarters/:code/schedules/export.xlsx")
+    async exportSchedules(@Param("code") code: string, @Res() res: Response) {
+        const { fileName, buffer } =
+            await this.excelService.exportSchedules(code);
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        );
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${fileName}"`,
+        );
+        res.send(buffer);
+    }
+
+    /** Nhập lại file lịch. ?dryRun=true chỉ kiểm tra. File lỗi: từ chối toàn bộ, không đổi dữ liệu */
+    @Post("quarters/:code/schedules/import")
+    @ApiConsumes("multipart/form-data")
+    @ApiBody({
+        schema: {
+            type: "object",
+            properties: { file: { type: "string", format: "binary" } },
+        },
+    })
+    @UseInterceptors(
+        FileInterceptor("file", { limits: { fileSize: 5 * 1024 * 1024 } }),
+    )
+    importSchedules(
+        @ReqUser() user: User,
+        @Param("code") code: string,
+        @UploadedFile() file: Express.Multer.File,
+        @Query("dryRun") dryRun?: string,
+    ) {
+        if (!file?.buffer?.length)
+            throw ApiError.BadRequest("error-import-file-invalid");
+        return this.excelService.importSchedules(
+            code,
+            file.buffer,
+            user,
+            dryRun === "true",
+        );
+    }
+
+    /** Nhật ký thay đổi / ghi đè lịch: ?quarter=2026Q4&sessionId=&onlyOverride=true */
+    @Get("schedule-logs")
+    listScheduleLogs(
+        @Query("quarter") quarter?: string,
+        @Query("sessionId") sessionId?: string,
+        @Query("onlyOverride") onlyOverride?: string,
+    ) {
+        return this.flowService.listScheduleLogs({
+            quarter,
+            sessionId,
+            onlyOverride: onlyOverride === "true",
+        });
     }
 
     @Get("members")

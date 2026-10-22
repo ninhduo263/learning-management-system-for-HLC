@@ -59,6 +59,17 @@ export class Member implements BaseEntity {
     profileUrl?: string;
 
     @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Địa chỉ hiện tại" })
+    address?: string;
+
+    @IsString()
+    @MaxLength(255)
+    @IsOptional()
+    @EntityDefinition.field({ label: "Quê quán" })
+    hometown?: string;
+
+    @IsString()
     @MaxLength(50)
     @IsOptional()
     @EntityDefinition.field({ label: "Số tài khoản" })

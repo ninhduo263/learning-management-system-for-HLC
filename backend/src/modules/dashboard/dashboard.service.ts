@@ -4,6 +4,7 @@ import { FundContributionStatus } from "@module/fund/common/constant";
 import { FundFlowService } from "@module/fund/flow/fund-flow.service";
 import { FundContributionModel } from "@module/fund/models/fund-contribution.model";
 import {
+    RECAP_MODULE_CODE,
     SubmissionReviewStatus,
     SubmissionStatus,
 } from "@module/learning/common/constant";
@@ -210,7 +211,7 @@ export class DashboardService {
 
         // Học tập
         const modules = await this.moduleModel.findAll({
-            where: { isActive: true },
+            where: { isActive: true, code: { [Op.ne]: RECAP_MODULE_CODE } },
             order: [["sortOrder", "ASC"]],
             raw: true,
         });

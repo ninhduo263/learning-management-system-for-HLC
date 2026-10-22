@@ -40,4 +40,9 @@ export class Department implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Đang hoạt động" })
     isActive?: boolean;
+
+    @IsBoolean()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Phó nhóm được chấm/duyệt" })
+    deputyCanReview?: boolean;
 }

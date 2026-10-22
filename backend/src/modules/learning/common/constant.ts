@@ -37,3 +37,6 @@ export enum SubmissionReviewStatus {
     APPROVED = "APPROVED",
     REJECTED = "REJECTED",
 }
+
+/** Module "Recap mentoring 1on1": chỉ giữ tiêu chí chấm; bài recap gốc nằm ở MentoringRecap (không nộp qua module) */
+export const RECAP_MODULE_CODE = "MENTORING_RECAP";

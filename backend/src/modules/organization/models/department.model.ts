@@ -28,4 +28,8 @@ export class DepartmentModel extends Model implements Department {
 
     @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: true })
     isActive?: boolean;
+
+    /** Nhóm (type GROUP): Phó nhóm được chấm recap / duyệt quỹ độc lập như Leader */
+    @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: true })
+    deputyCanReview?: boolean;
 }

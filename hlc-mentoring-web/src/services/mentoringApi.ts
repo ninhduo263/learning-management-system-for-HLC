@@ -137,6 +137,29 @@ export interface ScheduleInput {
   location?: string;
   meetingLink?: string;
   note?: string;
+  /** Bắt buộc khi admin ghi đè */
+  reason?: string;
+}
+
+export interface ScheduleLogView {
+  _id: string;
+  sessionId: string;
+  sessionCode: string | null;
+  action: 'CREATE' | 'UPDATE' | 'ADMIN_OVERRIDE' | 'CANCEL';
+  oldStartAt: string | null;
+  oldEndAt: string | null;
+  newStartAt: string | null;
+  newEndAt: string | null;
+  reason: string | null;
+  createdAt: string;
+  actor: { _id: string; username: string; fullname: string | null } | null;
+}
+
+export interface ScheduleImportResult {
+  valid: boolean;
+  applied: boolean;
+  errors: { row: number; message: string }[];
+  changes: { row: number; sessionCode: string; mentor: string; mentee: string; oldStartAt: string | null; startAt: string; endAt: string; reason: string }[];
 }
 
 export const mentoringApi = {
@@ -171,6 +194,14 @@ export const mentoringApi = {
       `/mentoring/reports/quarters/${report.quarter.code}/export.xlsx`,
       `hlc-mentoring-Q${report.quarter.quarter}-${report.quarter.year}.xlsx`
     ),
+  scheduleLogs: (params: { quarter?: string; sessionId?: string; onlyOverride?: boolean }) =>
+    apiJson<ScheduleLogView[]>(`/mentoring/schedule-logs?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== '').map(([key, value]) => [key, String(value)])).toString()}`),
+  exportSchedules: (code: string) => downloadFile(`/mentoring/quarters/${encodeURIComponent(code)}/schedules/export.xlsx`, `hlc-lich-mentoring-${code}.xlsx`),
+  importSchedules: (code: string, file: File, dryRun: boolean) => {
+    const form = new FormData();
+    form.append('file', file);
+    return apiJson<ScheduleImportResult>(`/mentoring/quarters/${encodeURIComponent(code)}/schedules/import?dryRun=${dryRun}`, { method: 'POST', body: form });
+  },
   // mentor / mentee
   mine: () => apiJson<MyMentoring>('/mentoring/me'),
   myReport: () => apiJson<MyQuarterReport[]>('/mentoring/me/report'),

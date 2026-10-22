@@ -88,4 +88,8 @@ export type ErrorCode =
     | "error-submission-score-invalid"
     | "error-submission-not-submitted"
     | "error-member-position-invalid"
+    | "error-group-not-found"
+    | "error-group-leader-mentee-only"
+    | "error-recap-score-conflict"
+    | "error-mentoring-override-reason-required"
     | FileErrorCode;

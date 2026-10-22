@@ -12,9 +12,12 @@ import {
 } from "@module/point/common/constant";
 import { PointEntryModel } from "@module/point/models/point-entry.model";
 import { FileModel } from "@module/repository/sequelize/model/file.model";
+import { UserModel } from "@module/repository/sequelize/model/user.model";
 import { TimeService } from "@module/time/time.service";
 import { User } from "@module/user/entities/user.entity";
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
+import { PointFlowService } from "@module/point/flow/point-flow.service";
 import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/sequelize";
 import { Op, Transaction } from "sequelize";
@@ -42,6 +45,7 @@ import { CreatePairDto } from "./dto/create-pair.dto";
 import { PreferenceDto } from "./dto/preference.dto";
 import { RecapDto } from "./dto/recap.dto";
 import { ReviewRecapDto } from "./dto/review-recap.dto";
+import { OverrideScheduleDto } from "./dto/override-schedule.dto";
 import { ScheduleDto } from "./dto/schedule.dto";
 import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
 import {
@@ -145,7 +149,10 @@ export interface MySessionView extends SessionView {
 
 @Injectable()
 export class MentoringFlowService {
+    private readonly logger = new Logger(MentoringFlowService.name);
+
     constructor(
+        private readonly moduleRef: ModuleRef,
         private readonly sequelize: Sequelize,
         private readonly timeService: TimeService,
         private readonly configService: ConfigService<Configuration>,
@@ -1094,15 +1101,26 @@ export class MentoringFlowService {
         );
     }
 
-    /** Admin ghi đè lịch (bỏ qua quy tắc khóa sửa và thời điểm ở quá khứ) */
-    async overrideSchedule(sessionId: string, dto: ScheduleDto, user: User) {
+    /**
+     * Admin ghi đè lịch (bỏ qua quy tắc khóa sửa và thời điểm ở quá khứ).
+     * Bắt buộc lý do; hạn recap, trạng thái đúng hạn/trễ và điểm của kỳ được tính lại theo lịch mới.
+     */
+    async overrideSchedule(
+        sessionId: string,
+        dto: OverrideScheduleDto,
+        user: User,
+    ) {
+        if (!dto.reason?.trim())
+            throw ApiError.BadRequest(
+                "error-mentoring-override-reason-required",
+            );
         const context = await this.getSessionContext(sessionId);
         this.assertQuarterWritable(context.quarter);
         const { startAt, endAt } = this.validateScheduleTimes(
             dto,
             context.period,
         );
-        return this.saveSchedule(
+        const view = await this.saveSchedule(
             context,
             dto,
             startAt,
@@ -1111,6 +1129,84 @@ export class MentoringFlowService {
             null,
             true,
         );
+        await this.recalculatePoints([context.session.periodId]);
+        return view;
+    }
+
+    /** Ghi đè nhiều lịch trong 1 transaction (import Excel): lỗi bất kỳ thì không thay đổi gì */
+    async applyScheduleOverrides(
+        items: {
+            sessionId: string;
+            startAt: Date;
+            endAt: Date;
+            location?: string | null;
+            meetingLink?: string | null;
+            note?: string | null;
+            reason: string;
+        }[],
+        user: User,
+    ) {
+        const periodIds: string[] = [];
+        await this.sequelize.transaction(async (t) => {
+            for (const item of items) {
+                const context = await this.getSessionContext(item.sessionId, t);
+                this.assertQuarterWritable(context.quarter);
+                this.validateScheduleTimes(
+                    {
+                        startAt: item.startAt.toISOString(),
+                        endAt: item.endAt.toISOString(),
+                    },
+                    context.period,
+                );
+                await this.saveSchedule(
+                    context,
+                    {
+                        startAt: item.startAt.toISOString(),
+                        endAt: item.endAt.toISOString(),
+                        location: item.location ?? undefined,
+                        meetingLink: item.meetingLink ?? undefined,
+                        note: item.note ?? undefined,
+                        reason: item.reason,
+                    },
+                    item.startAt,
+                    item.endAt,
+                    user,
+                    null,
+                    true,
+                    t,
+                );
+                periodIds.push(context.session.periodId);
+            }
+        });
+        await this.recalculatePoints(periodIds);
+        return { applied: items.length };
+    }
+
+    /** Tính lại điểm các kỳ chưa chốt sau khi lịch thay đổi (lỗi không chặn thao tác chính) */
+    async recalculatePoints(periodIds: string[]) {
+        let pointFlow: PointFlowService;
+        try {
+            pointFlow = this.moduleRef.get(PointFlowService, { strict: false });
+        } catch {
+            return;
+        }
+        for (const periodId of [...new Set(periodIds)]) {
+            try {
+                const period = await this.periodModel.findByPk(periodId, {
+                    raw: true,
+                });
+                if (
+                    !period ||
+                    ["LOCKED", "EXPORTED", "PAID"].includes(period.status)
+                )
+                    continue;
+                await pointFlow.recalculate(period.code, { _id: null });
+            } catch (error) {
+                this.logger.warn(
+                    `Không tính lại được điểm kỳ ${periodId}: ${error}`,
+                );
+            }
+        }
     }
 
     private validateScheduleTimes(
@@ -1129,27 +1225,32 @@ export class MentoringFlowService {
         return { startAt, endAt };
     }
 
-    private async saveSchedule(
-        context: Awaited<ReturnType<MentoringFlowService["getSessionContext"]>>,
-        dto: ScheduleDto,
+    async saveSchedule(
+        context: Pick<
+            Awaited<ReturnType<MentoringFlowService["getSessionContext"]>>,
+            "session"
+        >,
+        dto: ScheduleDto & { reason?: string },
         startAt: Date,
         endAt: Date,
         user: User,
         memberId: string | null,
         isOverride: boolean,
+        transaction?: Transaction,
     ) {
         const { session } = context;
         const now = this.now();
-        await this.sequelize.transaction(async (t) => {
+        const recapDeadlineAt = new Date(startAt.getTime() + RECAP_WINDOW_MS);
+        const run = async (t: Transaction) => {
             await this.sessionModel.update(
                 {
                     scheduledStartAt: startAt,
                     scheduledEndAt: endAt,
-                    firstScheduledStartAt:
-                        session.firstScheduledStartAt ?? startAt,
-                    recapDeadlineAt: new Date(
-                        startAt.getTime() + RECAP_WINDOW_MS,
-                    ),
+                    // Ghi đè: mọi mốc phụ thuộc đi theo lịch mới
+                    firstScheduledStartAt: isOverride
+                        ? startAt
+                        : (session.firstScheduledStartAt ?? startAt),
+                    recapDeadlineAt,
                     location: dto.location ?? null,
                     meetingLink: dto.meetingLink ?? null,
                     scheduleNote: dto.note ?? null,
@@ -1172,10 +1273,29 @@ export class MentoringFlowService {
                     newStartAt: startAt,
                     newEndAt: endAt,
                     actorUserId: user._id,
+                    reason: dto.reason?.trim() || null,
                 },
                 { transaction: t },
             );
-        });
+            // Recap đã nộp: giữ nguyên, tính lại đúng hạn/trễ theo hạn mới
+            const recaps = await this.recapModel.findAll({
+                where: { sessionId: session._id },
+                transaction: t,
+            });
+            for (const recap of recaps) {
+                const isLate =
+                    new Date(recap.firstSubmittedAt).getTime() >
+                    recapDeadlineAt.getTime();
+                if (recap.isLate !== isLate) {
+                    await recap.update({ isLate }, { transaction: t });
+                }
+            }
+        };
+        if (transaction) {
+            await run(transaction);
+            return null;
+        }
+        await this.sequelize.transaction(run);
         const [view] = await this.buildSessionViews([
             await this.sessionModel.findOne({
                 where: { _id: session._id },
@@ -1183,6 +1303,80 @@ export class MentoringFlowService {
             }),
         ]);
         return view;
+    }
+
+    /** Nhật ký thay đổi lịch (ai sửa, lúc nào, lịch cũ/mới, lý do). Chỉ đọc */
+    async listScheduleLogs(query: {
+        quarter?: string;
+        sessionId?: string;
+        onlyOverride?: boolean;
+    }) {
+        let sessionIds: string[] | undefined;
+        if (query.sessionId) sessionIds = [query.sessionId];
+        else if (query.quarter) {
+            const quarter = await this.getQuarterOrFail(query.quarter);
+            const pairs = await this.pairModel.findAll({
+                where: { quarterId: quarter._id },
+                attributes: ["_id"],
+                raw: true,
+            });
+            sessionIds = (
+                await this.sessionModel.findAll({
+                    where: { pairId: pairs.map((pair) => pair._id) },
+                    attributes: ["_id"],
+                    raw: true,
+                })
+            ).map((session) => session._id);
+        }
+        const logs = await this.scheduleLogModel.findAll({
+            where: {
+                ...(sessionIds && { sessionId: sessionIds }),
+                ...(query.onlyOverride && {
+                    action: ScheduleLogAction.ADMIN_OVERRIDE,
+                }),
+            },
+            order: [["createdAt", "DESC"]],
+            limit: 500,
+            raw: true,
+        });
+        const sessions = new Map(
+            (
+                await this.sessionModel.findAll({
+                    where: {
+                        _id: [...new Set(logs.map((log) => log.sessionId))],
+                    },
+                    raw: true,
+                })
+            ).map((session) => [session._id, session]),
+        );
+        const userIds = [
+            ...new Set(logs.map((log) => log.actorUserId).filter(Boolean)),
+        ];
+        const users = new Map(
+            (userIds.length
+                ? await UserModel.findAll({
+                      where: { _id: userIds },
+                      attributes: ["_id", "username", "fullname"],
+                      raw: true,
+                  })
+                : []
+            ).map(
+                (row) =>
+                    [
+                        row._id,
+                        {
+                            _id: row._id,
+                            username: row.username,
+                            fullname: row.fullname ?? null,
+                        },
+                    ] as const,
+            ),
+        );
+        return logs.map((log) => ({
+            ...log,
+            sessionCode: sessions.get(log.sessionId)?.code ?? null,
+            actor: users.get(log.actorUserId) ?? null,
+        }));
     }
 
     // ------------------------------------------------------------------
@@ -1232,7 +1426,14 @@ export class MentoringFlowService {
                         content: dto.content.trim(),
                         lastSubmittedAt: now,
                         ...(resetTiming
-                            ? { firstSubmittedAt: now, isLate }
+                            ? {
+                                  firstSubmittedAt: now,
+                                  isLate,
+                                  score: null,
+                                  scoreDetails: null,
+                                  scoredBy: null,
+                                  scoredAt: null,
+                              }
                             : {}),
                         reviewStatus: RecapReviewStatus.PENDING,
                         reviewedBy: null,
@@ -1300,6 +1501,10 @@ export class MentoringFlowService {
                 reviewNote: dto.note?.trim() || null,
                 reviewedBy: user._id,
                 reviewedAt: this.now(),
+                ...(dto.status === "REJECTED" && {
+                    score: null,
+                    scoreDetails: null,
+                }),
             },
             { where: { _id: recap._id } },
         );

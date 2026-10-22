@@ -64,5 +64,9 @@
     "error-submission-reviewed": "This submission has already been reviewed",
     "error-submission-score-invalid": "Score for {name} must be between 0 and {max}",
     "error-submission-not-submitted": "This submission has not been submitted",
-    "error-member-position-invalid": "End date must be after start date"
+    "error-member-position-invalid": "End date must be after start date",
+    "error-group-not-found": "Group not found",
+    "error-group-leader-mentee-only": "Leader and deputy must be mentees",
+    "error-recap-score-conflict": "You cannot score a recap of your own pair",
+    "error-mentoring-override-reason-required": "A reason is required to override a schedule"
 }

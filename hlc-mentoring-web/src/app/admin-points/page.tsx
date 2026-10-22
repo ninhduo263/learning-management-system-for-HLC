@@ -89,8 +89,9 @@ export default function AdminPointsPage() {
         <div>
           <p>Tạo mới {result.created}, bật lại {result.reactivated}, cập nhật {result.updated}, hủy {result.voided}, giữ nguyên {result.unchanged} dòng điểm.</p>
           {result.awards.length > 0
-            ? <p>Giải mentoring: {result.awards.map((item) => `${['', 'Nhất', 'Nhì', 'Ba'][item.rank]} – ${item.sessionCode}`).join('; ')}</p>
+            ? <p>Giải mentoring (xếp theo điểm recap trung bình, rồi lịch sớm hơn): {result.awards.map((item) => `${['', 'Nhất', 'Nhì', 'Ba'][item.rank]} – ${item.sessionCode} (${item.recapScore} điểm)`).join('; ')}</p>
             : <p>Chưa có cặp nào “Đã xong” để xếp giải.</p>}
+          {result.unscoredRecaps > 0 && <p className="text-orange-600">Còn {result.unscoredRecaps} recap của các cặp “Đã xong” chưa được chấm (đang tính 0 điểm). Leader nhóm chấm xong rồi bấm Tính lại.</p>}
         </div>
       )
     });

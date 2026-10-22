@@ -15,7 +15,9 @@ import {
   WalletOutlined,
   BookOutlined,
   ApartmentOutlined,
-  IdcardOutlined
+  IdcardOutlined,
+  CrownOutlined,
+  SolutionOutlined
 } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -37,6 +39,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [savingMockDate, setSavingMockDate] = useState(false);
   const [user, setUser] = useState<{ userId: string; fullName: string; role: 'ADMIN' | 'MENTOR' | 'MENTEE' } | null>(null);
   const [scopes, setScopes] = useState<AdminScope[]>([]);
+  const [isGroupLeader, setIsGroupLeader] = useState(false);
   const { message } = App.useApp();
   const router = useRouter();
   const pathname = usePathname();
@@ -98,7 +101,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     if (!user || user.role === 'ADMIN') return;
     let active = true;
-    accessApi.mine().then((access) => { if (active) setScopes(access.scopes); }).catch(() => undefined);
+    accessApi.mine().then((access) => { if (active) { setScopes(access.scopes); setIsGroupLeader(access.leaderGroups.length > 0); } }).catch(() => undefined);
     return () => { active = false; };
   }, [user]);
 
@@ -112,11 +115,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     { key: 'admin-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
     { key: 'admin-modules', icon: <BookOutlined />, label: 'Học tập' },
     { key: 'admin-organization', icon: <ApartmentOutlined />, label: 'Tổ chức & phân quyền' },
+    { key: 'leader', icon: <CrownOutlined />, label: 'Tiến độ theo nhóm' },
     { key: 'admin-members', icon: <IdcardOutlined />, label: 'Thành viên & báo cáo' },
   ];
 
   // Trang quản trị mở cho mentor/mentee được giao quyền
   const scopedMenuItems = [
+    isGroupLeader && { key: 'leader', icon: <CrownOutlined />, label: 'Nhóm của tôi' },
     scopes.includes('MENTORING') && { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý ghép cặp' },
     scopes.includes('POINT') && { key: 'admin-points', icon: <TrophyOutlined />, label: 'Quản lý điểm' },
     scopes.includes('FUND') && { key: 'admin-fund', icon: <WalletOutlined />, label: 'Duyệt HLC Fund' },
@@ -129,13 +134,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     { key: 'mentee-learning', icon: <BookOutlined />, label: 'Học tập' },
     { key: 'mentee-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
     ...scopedMenuItems,
+    { key: 'profile', icon: <SolutionOutlined />, label: 'Hồ sơ cá nhân' },
   ];
 
   const mentorMenuItems = [
     { key: 'mentor-dashboard', icon: <DashboardOutlined />, label: 'Tổng quan' },
     { key: 'mentor-mentoring', icon: <TeamOutlined />, label: 'Mentoring & Recap' },
     { key: 'mentor-learning', icon: <BookOutlined />, label: 'Học tập' },
+    { key: 'mentor-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
     ...scopedMenuItems,
+    { key: 'profile', icon: <SolutionOutlined />, label: 'Hồ sơ cá nhân' },
   ];
 
   const menuItems = user.role === 'ADMIN' ? adminMenuItems : user.role === 'MENTOR' ? mentorMenuItems : menteeMenuItems;
@@ -170,6 +178,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     'admin-organization': '/admin-organization',
     'admin-members': '/admin-members',
     'mentor-learning': '/mentor-learning',
+    'mentor-fund': '/mentor-fund',
+    leader: '/leader',
+    profile: '/profile',
     'mentee-dashboard': '/mentee-dashboard',
     'mentee-learning': '/mentee-learning',
     'mentee-mentoring': '/mentee-mentoring',

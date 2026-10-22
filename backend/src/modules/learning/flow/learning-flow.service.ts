@@ -27,6 +27,7 @@ import { Sequelize } from "sequelize-typescript";
 import {
     CycleType,
     LEARNING_MODULE_CODE_PREFIX,
+    RECAP_MODULE_CODE,
     ModuleFieldType,
     SubmissionReviewStatus,
     SubmissionStatus,
@@ -218,6 +219,7 @@ export class LearningFlowService {
         );
         return details.map((module) => ({
             ...module,
+            isRecapModule: module.code === RECAP_MODULE_CODE,
             pendingReviews: pendingMap.get(module._id) ?? 0,
         }));
     }
@@ -607,7 +609,8 @@ export class LearningFlowService {
     ) {
         const member = await this.memberOf(user);
         const module = await this.getModule(moduleId);
-        if (!module.isActive)
+        // Recap mentoring nộp ở trang mentoring, không nộp qua module
+        if (!module.isActive || module.code === RECAP_MODULE_CODE)
             throw ApiError.Conflict("error-learning-module-inactive");
         if (!this.targets(module, member))
             throw ApiError.Forbidden("error-learning-module-not-target");
@@ -870,7 +873,11 @@ export class LearningFlowService {
                 ],
                 raw: true,
             })
-        ).filter((module) => this.targets(module, member));
+        ).filter(
+            (module) =>
+                module.code !== RECAP_MODULE_CODE &&
+                this.targets(module, member),
+        );
         const details = await this.moduleDetails(modules);
         const submissions = await this.submissionModel.findAll({
             where: {

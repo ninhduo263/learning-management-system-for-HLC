@@ -140,7 +140,9 @@ export interface RecalcResult {
   voided: number;
   unchanged: number;
   members: number;
-  awards: { rank: number; sessionCode: string }[];
+  awards: { rank: number; sessionCode: string; recapScore: number }[];
+  /** Recap của cặp "Đã xong" chưa được chấm (tính 0 điểm khi xếp giải) */
+  unscoredRecaps: number;
 }
 
 export interface PeriodExportView { _id: string; exportType: string; exportedAt: string; note: string | null; checksum: string | null }
@@ -228,6 +230,8 @@ export interface Member {
   profileUrl: string | null;
   bankAccount: string | null;
   bankName: string | null;
+  address: string | null;
+  hometown: string | null;
   joinedAt: string | null;
   status: 'ACTIVE' | 'INACTIVE';
   note: string | null;
@@ -261,7 +265,7 @@ export const SOURCE_TYPE_LABEL: Record<string, string> = {
 // ---------- HLC Fund ----------
 
 export type FundStatus = 'PENDING' | 'DONE' | 'NOT_DONE';
-export const FUND_STATUS_LABEL: Record<FundStatus, string> = { PENDING: 'Chờ duyệt', DONE: 'Đã duyệt', NOT_DONE: 'Không hợp lệ' };
+export const FUND_STATUS_LABEL: Record<FundStatus, string> = { PENDING: 'Chờ', DONE: 'Đã xong', NOT_DONE: 'Chưa xong' };
 export const FUND_STATUS_COLOR: Record<FundStatus, string> = { PENDING: 'gold', DONE: 'green', NOT_DONE: 'red' };
 
 export interface ContributionView {
@@ -286,6 +290,29 @@ export interface MyFund {
   pendingAmount: number;
   reached: boolean;
   isEligible: boolean;
+  weeks: { weekKey: string; from: string; to: string; status: WeekStatus; amount: number }[];
+  groupId: string | null;
+  contributions: ContributionView[];
+}
+
+export type WeekStatus = 'NONE' | FundStatus;
+export const WEEK_STATUS_LABEL: Record<WeekStatus, string> = { NONE: 'Chưa nộp', PENDING: 'Chờ', DONE: 'Đã xong', NOT_DONE: 'Chưa xong' };
+export const WEEK_STATUS_COLOR: Record<WeekStatus, string> = { NONE: 'default', PENDING: 'gold', DONE: 'green', NOT_DONE: 'red' };
+
+export interface FundGroupReport {
+  period: PeriodView;
+  weeks: { weekKey: string; from: string; to: string }[];
+  isAdmin: boolean;
+  groups: {
+    _id: string;
+    code: string;
+    name: string;
+    leader: MemberBrief | null;
+    deputy: MemberBrief | null;
+    canReview: boolean;
+    pending: number;
+    members: { member: MemberBrief; total: number; weeks: Record<string, { status: WeekStatus; amount: number; ids: string[] }> }[];
+  }[];
   contributions: ContributionView[];
 }
 
@@ -309,7 +336,10 @@ export const fundApi = {
     apiJson<{ updated: number }>(`/fund/contributions/${id}/review`, { method: 'PUT', json: { status, note } }),
   bulkReview: (ids: string[], status: 'DONE' | 'NOT_DONE', note?: string) =>
     apiJson<{ updated: number }>('/fund/contributions/review', { method: 'PUT', json: { ids, status, note } }),
-  stats: (code: string) => apiJson<FundStats>(`/fund/stats/${encodeURIComponent(code)}`)
+  stats: (code: string) => apiJson<FundStats>(`/fund/stats/${encodeURIComponent(code)}`),
+  groupReport: (params: { period?: string; groupId?: string }) => apiJson<FundGroupReport>(`/fund/groups/report${q(params)}`),
+  groupReview: (ids: string[], status: 'DONE' | 'NOT_DONE', note?: string) =>
+    apiJson<{ updated: number }>('/fund/groups/review', { method: 'PUT', json: { ids, status, note } })
 };
 
 // ---------- Học tập ----------
@@ -372,6 +402,8 @@ export interface LearningModule {
   fields: ModuleField[];
   criteria: ModuleCriterion[];
   pendingReviews?: number;
+  /** Module chấm recap mentoring (bài gốc nằm ở mentoring) */
+  isRecapModule?: boolean;
 }
 
 export interface SubmissionView {
@@ -468,7 +500,8 @@ export const SCOPE_LABEL: Record<AdminScope, string> = {
   LEARNING_MODULE: 'Quản lý module học tập'
 };
 
-export interface MyAccess { systemRole: string; isSuperAdmin: boolean; scopes: AdminScope[]; moduleIds: string[] }
+export interface LeaderGroupAccess { _id: string; code: string; name: string; role: 'LEADER' | 'DEPUTY'; canReview: boolean }
+export interface MyAccess { systemRole: string; isSuperAdmin: boolean; scopes: AdminScope[]; moduleIds: string[]; leaderGroups: LeaderGroupAccess[] }
 export interface PermissionView {
   _id: string;
   userId: string;
@@ -527,4 +560,103 @@ export interface MyDashboard {
 export const dashboardApi = {
   admin: (code?: string) => apiJson<AdminDashboard>(`/dashboard/admin${q({ period: code })}`),
   mine: (code?: string) => apiJson<MyDashboard>(`/dashboard/me${q({ period: code })}`)
+};
+
+// ---------- Nhóm & Leader ----------
+
+export interface GroupMember extends MemberBrief { status?: string; phone?: string | null; email?: string | null; joinedGroupAt?: string }
+export interface GroupView {
+  _id: string;
+  code: string;
+  name: string;
+  isActive: boolean;
+  deputyCanReview: boolean;
+  leader: GroupMember | null;
+  deputy: GroupMember | null;
+  members: GroupMember[];
+  counts: { mentors: number; mentees: number };
+}
+export interface GroupHistory {
+  memberships: { _id: string; memberId: string; startDate: string; endDate: string | null; note: string | null; member: GroupMember | null }[];
+  roles: { _id: string; role: 'LEADER' | 'DEPUTY'; startDate: string; endDate: string | null; note: string | null; member: GroupMember | null }[];
+}
+
+export const groupApi = {
+  list: () => apiJson<GroupView[]>('/groups'),
+  unassigned: () => apiJson<GroupMember[]>('/groups/unassigned'),
+  create: (body: { name: string; deputyCanReview?: boolean }) => apiJson<GroupView>('/groups', { method: 'POST', json: body }),
+  update: (id: string, body: { name: string; deputyCanReview?: boolean; isActive?: boolean }) => apiJson<GroupView>(`/groups/${id}`, { method: 'PUT', json: body }),
+  setRole: (id: string, role: 'LEADER' | 'DEPUTY', memberId?: string) => apiJson<GroupView>(`/groups/${id}/role`, { method: 'PUT', json: { role, memberId } }),
+  addMembers: (id: string, memberIds: string[]) => apiJson<{ moved: number; group: GroupView }>(`/groups/${id}/members`, { method: 'POST', json: { memberIds } }),
+  removeMember: (id: string, memberId: string) => apiJson<GroupView>(`/groups/${id}/members/${memberId}`, { method: 'DELETE' }),
+  history: (id: string) => apiJson<GroupHistory>(`/groups/${id}/history`)
+};
+
+export interface RecapRubric {
+  module: { _id: string; code: string; name: string; maxScore: number };
+  criteria: { _id: string; name: string; description: string | null; maxScore: number }[];
+}
+export interface RecapToScore {
+  _id: string;
+  role: 'MENTOR' | 'MENTEE';
+  content: string;
+  firstSubmittedAt: string;
+  isLate: boolean;
+  reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewNote: string | null;
+  score: number | null;
+  scoreDetails: { criterionId: string; name: string; maxScore: number; score: number }[];
+  scoreFeedback: string | null;
+  scoredAt: string | null;
+  files: FileView[];
+  author: MemberBrief | null;
+  session: { _id: string; code: string; scheduledStartAt: string; recapDeadlineAt: string; pairStatus: PairRecapStatus };
+  mentor: MemberBrief | null;
+  mentee: MemberBrief | null;
+  groupName: string | null;
+  canScore: boolean;
+  conflict: boolean;
+}
+
+export interface LeaderOverview {
+  period: PeriodView;
+  weeks: { weekKey: string; from: string; to: string }[];
+  groups: {
+    _id: string;
+    code: string;
+    name: string;
+    myRole: 'LEADER' | 'DEPUTY' | 'ADMIN';
+    canReview: boolean;
+    leader: GroupMember | null;
+    deputy: GroupMember | null;
+    members: {
+      member: GroupMember;
+      mentoring: { sessionCode: string; scheduledStartAt: string | null; pairStatus: PairRecapStatus; myStatus: RoleRecapStatus; recapScore: number | null; partner: GroupMember | null }[];
+      learning: { moduleId: string; name: string; cycleKey: string; submitted: number; min: number; reached: boolean }[];
+      fund: { weeks: { weekKey: string; status: WeekStatus }[]; doneWeeks: number; pending: number; approvedAmount: number };
+    }[];
+  }[];
+}
+
+export const leaderApi = {
+  overview: (code?: string) => apiJson<LeaderOverview>(`/leader/overview${q({ period: code })}`),
+  recaps: (params: { period?: string; groupId?: string; filter?: string }) => apiJson<{ rubric: RecapRubric; rows: RecapToScore[] }>(`/leader/recaps${q(params)}`),
+  score: (id: string, body: { status: 'APPROVED' | 'REJECTED'; scores?: { criterionId: string; score: number }[]; feedback?: string }) =>
+    apiJson(`/leader/recaps/${id}/score`, { method: 'PUT', json: body })
+};
+
+// ---------- Hồ sơ cá nhân ----------
+
+export interface ProfileLog { _id: string; field: string; oldValue: string | null; newValue: string | null; changedByRole: 'SELF' | 'ADMIN'; createdAt: string }
+export const PROFILE_FIELD_LABEL: Record<string, string> = {
+  fullName: 'Họ tên', memberType: 'Vai trò', status: 'Trạng thái', dateOfBirth: 'Ngày sinh', gender: 'Giới tính', phone: 'Số điện thoại',
+  email: 'Email', address: 'Địa chỉ hiện tại', hometown: 'Quê quán', profileUrl: 'Link profile', bankAccount: 'Số tài khoản', bankName: 'Ngân hàng', joinedAt: 'Ngày tham gia'
+};
+
+export const profileApi = {
+  mine: () => apiJson<Member>('/member/me/profile'),
+  update: (body: Partial<Member>) => apiJson<Member>('/member/me/profile', { method: 'PUT', json: body }),
+  logs: () => apiJson<ProfileLog[]>('/member/me/profile-logs'),
+  adminUpdate: (id: string, body: Partial<Member>) => apiJson<Member>(`/member/${id}/profile`, { method: 'PUT', json: body }),
+  adminLogs: (id: string) => apiJson<ProfileLog[]>(`/member/${id}/profile-logs`)
 };
