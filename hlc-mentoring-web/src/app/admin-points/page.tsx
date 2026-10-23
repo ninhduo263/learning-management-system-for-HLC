@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
+  Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
 } from 'antd';
-import { CalculatorOutlined, DownloadOutlined, LockOutlined, PlusOutlined, SettingOutlined, UnlockOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { PrinterOutlined, CalculatorOutlined, DownloadOutlined, LockOutlined, PlusOutlined, SettingOutlined, UnlockOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
   PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, POINT_CATEGORY_LABEL, SOURCE_TYPE_LABEL,
-  memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
+  GROUP_KIND_LABEL, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
   type AdjustmentView, type Member, type MemberBreakdown, type PeriodExportView, type PeriodSummary, type PointRule, type PointType, type SummaryRow
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
@@ -89,9 +89,9 @@ export default function AdminPointsPage() {
         <div>
           <p>Tạo mới {result.created}, bật lại {result.reactivated}, cập nhật {result.updated}, hủy {result.voided}, giữ nguyên {result.unchanged} dòng điểm.</p>
           {result.awards.length > 0
-            ? <p>Giải mentoring (xếp theo điểm recap trung bình, rồi lịch sớm hơn): {result.awards.map((item) => `${['', 'Nhất', 'Nhì', 'Ba'][item.rank]} – ${item.sessionCode} (${item.recapScore} điểm)`).join('; ')}</p>
+            ? <p>Giải mentoring (xếp theo điểm recap MTE, rồi lịch sớm hơn): {result.awards.map((item) => `${['', 'Nhất', 'Nhì', 'Ba'][item.rank]} – ${item.sessionCode} (${item.recapScore} điểm)`).join('; ')}</p>
             : <p>Chưa có cặp nào “Đã xong” để xếp giải.</p>}
-          {result.unscoredRecaps > 0 && <p className="text-orange-600">Còn {result.unscoredRecaps} recap của các cặp “Đã xong” chưa được chấm (đang tính 0 điểm). Leader nhóm chấm xong rồi bấm Tính lại.</p>}
+          {result.unscoredRecaps > 0 && <p className="text-orange-600">Còn {result.unscoredRecaps} recap MTE của các cặp “Đã xong” chưa được chấm (đang tính 0 điểm). Leader nhóm chấm xong rồi bấm Tính lại.</p>}
         </div>
       )
     });
@@ -183,6 +183,7 @@ export default function AdminPointsPage() {
       <Space wrap>
         <Button icon={<DownloadOutlined />} disabled={!locked} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx'), 'Đã xuất file Excel')}>Xuất Excel</Button>
         <Button icon={<DownloadOutlined />} disabled={!locked} loading={busy === 'csv'} onClick={() => run('csv', () => pointApi.exportFile(code, 'csv'), 'Đã xuất file CSV')}>Xuất CSV</Button>
+        <Button icon={<PrinterOutlined />} onClick={() => window.open(`/admin-points/report?period=${code}`, '_blank')}>Báo cáo PDF mùng 10</Button>
       </Space>
       <Table<PeriodExportView>
         rowKey="_id"
@@ -232,6 +233,7 @@ export default function AdminPointsPage() {
       <Card>
         <Tabs items={[
           { key: 'summary', label: 'Bảng tổng hợp', children: summaryTab },
+          { key: 'completion', label: 'Leader / Phó nhóm', children: <CompletionPanel code={code} /> },
           { key: 'adjust', label: `Điều chỉnh & khiếu nại${pending.length ? ` (${pending.length})` : ''}`, children: adjustmentTab },
           { key: 'export', label: 'Xuất file chi trả', children: exportTab },
           { key: 'config', label: 'Cấu hình loại điểm & quy tắc', children: <PointConfig /> }
@@ -441,6 +443,30 @@ function PointConfig() {
           <Form.Item name="isAllowance" label="Tính vào phụ cấp" valuePropName="checked"><Switch /></Form.Item>
         </Form>
       </Modal>
+    </div>
+  );
+}
+
+/** Tỷ lệ hoàn tất từng nhóm: căn cứ thưởng +1 của Leader / Phó nhóm */
+function CompletionPanel({ code }: { code: string }) {
+  const { message } = App.useApp();
+  const [rows, setRows] = useState<GroupCompletion[]>([]);
+  useEffect(() => {
+    let active = true;
+    completionApi.admin(code).then((result) => { if (active) setRows(result); }).catch((error) => message.error(errorMessage(error)));
+    return () => { active = false; };
+  }, [code, message]);
+  return (
+    <div className="space-y-3">
+      <Alert type="info" showIcon title="Leader 2 điểm, Phó nhóm 1 điểm mỗi tháng (người giữ chức vào ngày cuối tháng, tính theo từng nhóm). Thêm +1 khi tỷ lệ thành viên hoàn tất trên 90%." description="Nhóm MTE: hoàn tất = buổi mentoring tháng “Đã xong” (recap MTE đã duyệt) và đủ số bài tối thiểu các module học tập. Nhóm HLC Fund: mọi tuần của tháng có khoản đóng được duyệt (MTO và thầy cô). Sửa điểm ở tab Cấu hình (quy tắc POSITION_LEADER, POSITION_PHO_LEADER, *_BONUS)." />
+      <Table<GroupCompletion> rowKey="_id" size="small" pagination={false} dataSource={rows} columns={[
+        { title: 'Nhóm', dataIndex: 'name' },
+        { title: 'Loại', dataIndex: 'groupKind', render: (value: GroupCompletion['groupKind']) => GROUP_KIND_LABEL[value] },
+        { title: 'Leader', dataIndex: 'leader', render: (value: string | null) => value ?? '—' },
+        { title: 'Phó nhóm', dataIndex: 'deputy', render: (value: string | null) => value ?? '—' },
+        { title: 'Hoàn tất', render: (_: unknown, row: GroupCompletion) => row.total ? <Progress size="small" className="!m-0 min-w-40" percent={row.rate ?? 0} format={() => `${row.done}/${row.total}`} status={row.passed ? 'success' : 'normal'} /> : 'Chưa có dữ liệu' },
+        { title: 'Thưởng +1', render: (_: unknown, row: GroupCompletion) => row.passed ? <Tag color="green">Đạt</Tag> : <Tag>Chưa đạt</Tag> }
+      ]} />
     </div>
   );
 }

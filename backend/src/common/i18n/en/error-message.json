@@ -68,5 +68,13 @@
     "error-group-not-found": "Group not found",
     "error-group-leader-mentee-only": "Leader and deputy must be mentees",
     "error-recap-score-conflict": "You cannot score a recap of your own pair",
-    "error-mentoring-override-reason-required": "A reason is required to override a schedule"
+    "error-mentoring-override-reason-required": "A reason is required to override a schedule",
+    "error-fund-cover-until-invalid": "Cover-until date must be on or after the contribution date",
+    "error-fund-payer-required": "Choose exactly one payer: member or external contributor",
+    "error-fund-cycle-required": "Please declare the payment cycle for external contributors",
+    "error-recap-score-required": "Mentee recaps are approved by scoring with the rubric",
+    "error-recap-mentor-admin-only": "Only mentoring admins can review mentor recaps",
+    "error-group-member-type": "{name} does not match the group type",
+    "error-import-batch-reverted": "This import batch has already been reverted",
+    "error-recap-exists": "This session already has a {role} recap"
 }

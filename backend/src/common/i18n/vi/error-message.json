@@ -75,5 +75,13 @@
     "error-group-not-found": "Không tìm thấy nhóm",
     "error-group-leader-mentee-only": "Leader và Phó nhóm phải là mentee",
     "error-recap-score-conflict": "Bạn không được chấm recap của cặp mình tham gia",
-    "error-mentoring-override-reason-required": "Ghi đè lịch bắt buộc nhập lý do"
+    "error-mentoring-override-reason-required": "Ghi đè lịch bắt buộc nhập lý do",
+    "error-fund-cover-until-invalid": "Ngày \"đóng đến\" phải từ ngày đóng trở đi",
+    "error-fund-payer-required": "Chọn đúng 1 người đóng: thành viên hoặc thầy cô",
+    "error-fund-cycle-required": "Khoản đóng của thầy cô cần khai báo chu kỳ đóng",
+    "error-recap-score-required": "Recap MTE được duyệt bằng cách chấm điểm theo barem",
+    "error-recap-mentor-admin-only": "Chỉ Admin Mentoring hoặc Admin toàn cục được duyệt recap của MTO",
+    "error-group-member-type": "{name} không đúng loại thành viên của nhóm (nhóm MTE gồm mentee, nhóm HLC Fund gồm MTO)",
+    "error-import-batch-reverted": "Lô nhập này đã được hoàn tác",
+    "error-recap-exists": "Buổi này đã có recap của {role}"
 }

@@ -5,7 +5,7 @@ import { SystemRole } from "@module/user/common/constant";
 import { User } from "@module/user/entities/user.entity";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
-import { DepartmentType } from "../common/constant";
+import { DepartmentType, GroupKind } from "../common/constant";
 import { DepartmentModel } from "../models/department.model";
 import { GroupMembershipModel } from "../models/group-membership.model";
 import { MemberPositionModel } from "../models/member-position.model";
@@ -21,6 +21,7 @@ export interface LeaderGroup {
     code: string;
     name: string;
     role: GroupRole;
+    groupKind: GroupKind;
     /** Được chấm/duyệt (Phó nhóm phụ thuộc cấu hình nhóm) */
     canReview: boolean;
 }
@@ -67,10 +68,11 @@ export class GroupAccessService {
         };
     }
 
-    async groups(includeInactive = false) {
+    async groups(includeInactive = false, kind?: GroupKind) {
         return this.departmentModel.findAll({
             where: {
                 type: DepartmentType.GROUP,
+                ...(kind && { groupKind: kind }),
                 ...(!includeInactive && { isActive: true }),
             },
             order: [["code", "ASC"]],
@@ -122,12 +124,19 @@ export class GroupAccessService {
         });
     }
 
-    async groupOfMember(memberId: string) {
-        const row = await this.membershipModel.findOne({
+    /** Nhóm hiện tại của thành viên (theo loại nhóm nếu truyền kind) */
+    async groupOfMember(memberId: string, kind?: GroupKind) {
+        const rows = await this.membershipModel.findAll({
             where: { memberId, endDate: null },
             raw: true,
         });
-        return row?.groupId ?? null;
+        if (!rows.length) return null;
+        if (!kind) return rows[0].groupId;
+        const group = await this.departmentModel.findOne({
+            where: { _id: rows.map((row) => row.groupId), groupKind: kind },
+            raw: true,
+        });
+        return group?._id ?? null;
     }
 
     /** Nhóm mà thành viên đang làm Leader / Phó nhóm */
@@ -163,6 +172,7 @@ export class GroupAccessService {
                 code: group.code,
                 name: group.name,
                 role,
+                groupKind: group.groupKind ?? GroupKind.MENTEE,
                 canReview: role === "LEADER" || group.deputyCanReview !== false,
             };
         });
@@ -178,7 +188,11 @@ export class GroupAccessService {
     /** Phạm vi người duyệt theo nhóm. Admin: toàn quyền */
     async reviewerScope(
         user: User,
-        options: { requireReview?: boolean; groupId?: string } = {},
+        options: {
+            requireReview?: boolean;
+            groupId?: string;
+            kind?: GroupKind;
+        } = {},
     ): Promise<ReviewerScope> {
         if (user.systemRole === SystemRole.ADMIN) {
             const memberIds = options.groupId
@@ -208,6 +222,8 @@ export class GroupAccessService {
             groups = groups.filter((group) => group.canReview);
         if (options.groupId)
             groups = groups.filter((group) => group._id === options.groupId);
+        if (options.kind)
+            groups = groups.filter((group) => group.groupKind === options.kind);
         const groupIds = groups.map((group) => group._id);
         const memberIds = new Set(
             (groupIds.length

@@ -2,16 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tabs, Tag, Typography
+  Alert, App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload
 } from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import SubmissionData from '@/components/SubmissionData';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
   CYCLE_LABEL, FIELD_TYPE_LABEL, SUBMISSION_STATUS_COLOR, SUBMISSION_STATUS_LABEL, accessApi, departmentApi, learningApi, points,
-  type Department, type LearningModule, type LibraryItem, type ModuleConfigInput, type ModuleProgress, type SubmissionView
+  type Department, type LearningModule, type LibraryImportResult, type LibraryItem, type ModuleConfigInput, type ModuleProgress, type SubmissionView
 } from '@/services/hlcApi';
 
 const TARGET_LABEL = { MENTEE: 'Mentee', MENTOR: 'Mentor', ALL: 'Tất cả' };
@@ -364,6 +364,32 @@ function ProgressPanel({ module, moduleSelect }: { module: LearningModule; modul
 
 function LibraryPanel() {
   const { message } = App.useApp();
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ file: File; result: LibraryImportResult } | null>(null);
+  const checkImport = async (file: File) => {
+    setImporting(true);
+    try {
+      setImportResult({ file, result: await learningApi.importLibrary(file, true) });
+    } catch (error) {
+      message.error(errorMessage(error, 'Không đọc được file'));
+    } finally {
+      setImporting(false);
+    }
+  };
+  const applyImport = async () => {
+    if (!importResult) return;
+    setImporting(true);
+    try {
+      const result = await learningApi.importLibrary(importResult.file, false);
+      message.success(`Đã thêm ${result.added.length} mục vào thư viện`);
+      setImportResult(null);
+      await load();
+    } catch (error) {
+      message.error(errorMessage(error));
+    } finally {
+      setImporting(false);
+    }
+  };
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [editing, setEditing] = useState<LibraryItem | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
@@ -399,7 +425,40 @@ function LibraryPanel() {
 
   return (
     <div className="space-y-3">
-      <div className="flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ libraryType: 'BOOK', isActive: true }); setEditing('new'); }}>Thêm sách / tài liệu</Button></div>
+      <div className="flex flex-wrap justify-end gap-2">
+        <Button icon={<DownloadOutlined />} onClick={() => learningApi.exportLibrary().catch((error) => message.error(errorMessage(error)))}>Xuất .xlsx</Button>
+        <Upload accept=".xlsx" showUploadList={false} beforeUpload={(file) => { void checkImport(file); return Upload.LIST_IGNORE; }}>
+          <Button icon={<UploadOutlined />} loading={importing}>Nhập .xlsx</Button>
+        </Upload>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ libraryType: 'BOOK', isActive: true }); setEditing('new'); }}>Thêm sách / tài liệu</Button>
+      </div>
+      <Typography.Text type="secondary" className="text-xs">File nhập: xuất file mẫu rồi điền; cột “Link Google Drive (PDF)” cần dạng https://drive.google.com/file/d/… Sách trùng tên + tác giả (không phân biệt dấu) hoặc trùng link sẽ được cảnh báo và bỏ qua.</Typography.Text>
+      <Modal
+        title={`Nhập thư viện: ${importResult?.file.name ?? ''}`}
+        open={Boolean(importResult)}
+        onCancel={() => setImportResult(null)}
+        okText={`Thêm ${importResult?.result.added.length ?? 0} mục`}
+        okButtonProps={{ disabled: !importResult?.result.added.length }}
+        confirmLoading={importing}
+        onOk={applyImport}
+        width="min(860px, calc(100vw - 24px))"
+        destroyOnHidden
+      >
+        {importResult && (
+          <div className="space-y-3">
+            <Alert type={importResult.result.errors.length ? 'warning' : 'success'} showIcon title={`${importResult.result.added.length} mục hợp lệ sẽ được thêm · ${importResult.result.duplicates.length} trùng (bỏ qua) · ${importResult.result.errors.length} dòng lỗi`} />
+            {importResult.result.errors.length > 0 && <Alert type="error" showIcon title="Dòng lỗi (không thêm)" description={<ul className="ml-4 list-disc">{importResult.result.errors.map((item) => <li key={`${item.row}-${item.message}`}>Dòng {item.row}: {item.message}</li>)}</ul>} />}
+            {importResult.result.duplicates.length > 0 && <Alert type="warning" showIcon title="Sách trùng" description={<ul className="ml-4 list-disc">{importResult.result.duplicates.map((item) => <li key={item.row}>Dòng {item.row}: {item.title}: {item.message}</li>)}</ul>} />}
+            <Table rowKey="row" size="small" pagination={false} dataSource={importResult.result.added} columns={[
+              { title: 'Dòng', dataIndex: 'row' },
+              { title: 'Loại', dataIndex: 'libraryType', render: (value: string) => value === 'BOOK' ? 'Sách' : 'Tài liệu' },
+              { title: 'Tên', dataIndex: 'title' },
+              { title: 'Tác giả', dataIndex: 'author' },
+              { title: 'Drive', dataIndex: 'fileUrl', render: (value: string | null) => value ? <a href={value} target="_blank" rel="noreferrer">Mở</a> : '—' }
+            ]} />
+          </div>
+        )}
+      </Modal>
       <Table<LibraryItem>
         rowKey="_id"
         size="small"

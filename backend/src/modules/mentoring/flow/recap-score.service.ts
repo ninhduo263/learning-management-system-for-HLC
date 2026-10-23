@@ -6,6 +6,7 @@ import { LearningModuleModel } from "@module/learning/models/learning-module.mod
 import { ModuleCriterionModel } from "@module/learning/models/module-criterion.model";
 import { MemberModel } from "@module/member/models/member.model";
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
+import { GroupKind } from "@module/organization/common/constant";
 import { PeriodFlowService } from "@module/period/flow/period-flow.service";
 import { AdminScope } from "@module/permission/common/constant";
 import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
@@ -95,16 +96,29 @@ export class RecapScoreService {
         };
     }
 
-    /** Toàn quyền chấm: Admin hoặc được giao quyền module RECAP */
+    /** Toàn quyền: Admin toàn cục, Admin Mentoring (quyền MENTORING) hoặc được giao module RECAP */
     private async isGlobalReviewer(user: User, moduleId: string) {
         if (user.systemRole === SystemRole.ADMIN) return true;
         return Boolean(
             await this.permissionModel.findOne({
                 where: {
                     userId: user._id,
-                    scope: AdminScope.LEARNING_MODULE,
-                    moduleId,
+                    [Op.or]: [
+                        { scope: AdminScope.MENTORING },
+                        { scope: AdminScope.LEARNING_MODULE, moduleId },
+                    ],
                 },
+                raw: true,
+            }),
+        );
+    }
+
+    /** Duyệt recap MTO: chỉ Admin toàn cục / Admin Mentoring */
+    private async isMentoringAdmin(user: User) {
+        if (user.systemRole === SystemRole.ADMIN) return true;
+        return Boolean(
+            await this.permissionModel.findOne({
+                where: { userId: user._id, scope: AdminScope.MENTORING },
                 raw: true,
             }),
         );
@@ -125,9 +139,11 @@ export class RecapScoreService {
             );
             return { all: false, memberIds, selfId: null as string | null };
         }
+        // Leader/Phó: chỉ nhóm MTE của mình
         const scope = await this.groupAccess.reviewerScope(user, {
             requireReview: true,
             groupId,
+            kind: GroupKind.MENTEE,
         });
         if (!scope.groupIds.length) throw ApiError.Forbidden("error-forbidden");
         return {
@@ -164,21 +180,22 @@ export class RecapScoreService {
                 : []
             ).map((pair) => [pair._id, pair]),
         );
+        const canApproveMentor = await this.isMentoringAdmin(user);
+        // Cặp thuộc nhóm MTE của mentee
         const inScope = sessions.filter((session) => {
             const pair = pairs.get(session.pairId);
-            return (
-                pair &&
-                (scope.all ||
-                    scope.memberIds.has(pair.menteeId) ||
-                    scope.memberIds.has(pair.mentorId))
-            );
+            return pair && (scope.all || scope.memberIds.has(pair.menteeId));
         });
-        const recaps = inScope.length
+        const allRecaps = inScope.length
             ? await this.recapModel.findAll({
                   where: { sessionId: inScope.map((item) => item._id) },
                   raw: true,
               })
             : [];
+        // Leader/Phó không xử lý recap của MTO
+        const recaps = allRecaps.filter(
+            (recap) => recap.role === MentoringRole.MENTEE || canApproveMentor,
+        );
         const memberIds = [
             ...new Set(
                 [...pairs.values()].flatMap((pair) => [
@@ -197,14 +214,16 @@ export class RecapScoreService {
         );
         const memberships = await this.groupAccess.currentMemberships();
         const groups = new Map(
-            (await this.groupAccess.groups(true)).map((group) => [
-                group._id,
-                group,
-            ]),
+            (await this.groupAccess.groups(true, GroupKind.MENTEE)).map(
+                (group) => [group._id, group],
+            ),
         );
         const groupOf = (memberId: string) =>
             groups.get(
-                memberships.find((row) => row.memberId === memberId)?.groupId,
+                memberships.find(
+                    (row) =>
+                        row.memberId === memberId && groups.has(row.groupId),
+                )?.groupId,
             )?.name ?? null;
         const files = await this.attachments.listFor(
             AttachmentOwnerType.MENTORING_RECAP,
@@ -226,12 +245,12 @@ export class RecapScoreService {
                     (item) => item._id === recap.sessionId,
                 );
                 const pair = pairs.get(session.pairId);
-                const mentor = recaps.find(
+                const mentor = allRecaps.find(
                     (item) =>
                         item.sessionId === session._id &&
                         item.role === MentoringRole.MENTOR,
                 );
-                const mentee = recaps.find(
+                const mentee = allRecaps.find(
                     (item) =>
                         item.sessionId === session._id &&
                         item.role === MentoringRole.MENTEE,
@@ -270,20 +289,27 @@ export class RecapScoreService {
                     },
                     mentor: brief(pair.mentorId),
                     mentee: brief(pair.menteeId),
-                    groupName: groupOf(pair.menteeId) ?? groupOf(pair.mentorId),
+                    groupName: groupOf(pair.menteeId),
+                    /** SCORE: recap MTE chấm thang 100; APPROVE: recap MTO chỉ Duyệt / Không duyệt */
+                    mode:
+                        recap.role === MentoringRole.MENTOR
+                            ? ("APPROVE" as const)
+                            : ("SCORE" as const),
                     canScore:
                         !conflict &&
-                        recap.reviewStatus !== RecapReviewStatus.REJECTED,
+                        (recap.role === MentoringRole.MENTOR ||
+                            recap.reviewStatus !== RecapReviewStatus.REJECTED),
                     conflict,
                 };
             })
             .filter((row) => {
-                if (query.filter === "SCORED") return row.score !== null;
+                const done =
+                    row.mode === "APPROVE"
+                        ? row.reviewStatus !== RecapReviewStatus.PENDING
+                        : row.score !== null;
+                if (query.filter === "SCORED") return done;
                 if (query.filter === "ALL") return true;
-                return (
-                    row.score === null &&
-                    row.reviewStatus !== RecapReviewStatus.REJECTED
-                );
+                return !done && row.reviewStatus !== RecapReviewStatus.REJECTED;
             })
             .sort(
                 (a, b) =>
@@ -314,14 +340,15 @@ export class RecapScoreService {
         this.periodFlow.assertWritable(
             await this.periodFlow.getById(session.periodId),
         );
+        const isMentorRecap = recap.role === MentoringRole.MENTOR;
+        if (isMentorRecap && !(await this.isMentoringAdmin(user)))
+            throw ApiError.Forbidden("error-recap-mentor-admin-only");
         if (!(await this.isGlobalReviewer(user, rubric.module._id))) {
             const scope = await this.groupAccess.reviewerScope(user, {
                 requireReview: true,
+                kind: GroupKind.MENTEE,
             });
-            if (
-                !scope.memberIds.has(pair.menteeId) &&
-                !scope.memberIds.has(pair.mentorId)
-            )
+            if (!scope.memberIds.has(pair.menteeId))
                 throw ApiError.Forbidden("error-forbidden");
             if (
                 scope.memberId === pair.menteeId ||
@@ -346,6 +373,22 @@ export class RecapScoreService {
                     scoreFeedback: dto.feedback.trim(),
                     scoredBy: user._id,
                     scoredAt: now,
+                },
+                { where: { _id: recap._id } },
+            );
+        } else if (isMentorRecap) {
+            // Recap MTO: chỉ duyệt, không chấm điểm, không tính vào điểm của MTO
+            await this.recapModel.update(
+                {
+                    reviewStatus: RecapReviewStatus.APPROVED,
+                    reviewNote: null,
+                    reviewedBy: user._id,
+                    reviewedAt: now,
+                    score: null,
+                    scoreDetails: null,
+                    scoreFeedback: dto.feedback?.trim() || null,
+                    scoredBy: null,
+                    scoredAt: null,
                 },
                 { where: { _id: recap._id } },
             );

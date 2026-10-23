@@ -26,6 +26,9 @@ export interface RecapView {
   reviewStatus: ReviewStatus;
   reviewNote: string | null;
   reviewedAt: string | null;
+  score?: number | null;
+  /** Recap do admin nhập hộ / nhập dữ liệu quý cũ */
+  proxy?: { by: string | null; at: string | null; reason: string | null; importBatchId: string | null } | null;
   media: { fileId: string | null; url: string; fileName: string | null; mimeType: string | null }[];
 }
 

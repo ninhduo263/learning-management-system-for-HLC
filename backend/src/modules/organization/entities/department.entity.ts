@@ -7,7 +7,7 @@ import {
     IsString,
     MaxLength,
 } from "class-validator";
-import { DepartmentType } from "../common/constant";
+import { DepartmentType, GroupKind } from "../common/constant";
 
 export class Department implements BaseEntity {
     _id: string;
@@ -45,4 +45,12 @@ export class Department implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Phó nhóm được chấm/duyệt" })
     deputyCanReview?: boolean;
+
+    @IsEnum(GroupKind)
+    @IsOptional()
+    @EntityDefinition.field({
+        label: "Loại nhóm",
+        enum: Object.values(GroupKind),
+    })
+    groupKind?: GroupKind;
 }

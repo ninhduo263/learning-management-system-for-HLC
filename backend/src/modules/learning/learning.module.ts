@@ -6,6 +6,7 @@ import { Module } from "@nestjs/common";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { LearningFlowController } from "./flow/learning-flow.controller";
 import { LearningFlowService } from "./flow/learning-flow.service";
+import { LibraryExcelService } from "./flow/library-excel.service";
 import { LibraryItemController } from "./controllers/library-item.controller";
 import { LibraryItemModel } from "./models/library-item.model";
 import { LibraryItemSqlRepository } from "./repositories/library-item-sql.repository";
@@ -65,6 +66,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
     ],
     providers: [
         LearningFlowService,
+        LibraryExcelService,
         LibraryItemService,
         LearningModuleService,
         ModuleFieldService,

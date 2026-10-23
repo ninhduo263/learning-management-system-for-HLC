@@ -741,12 +741,12 @@ Leader / Phó nhóm (Admin dùng được với mọi nhóm; mentee thường nh
 - **Người chấm:**
   - Admin;
   - người có quyền `LEARNING_MODULE` với module này;
-  - Leader/Phó (khi `deputyCanReview`) của nhóm chứa mentor hoặc mentee của cặp.
+  - Leader/Phó (khi `deputyCanReview`) của nhóm MTE chứa mentee của cặp, và chỉ với recap MTE.
 - **Xung đột lợi ích:** không ai chấm được cặp mình tham gia (`403 error-recap-score-conflict`).
 - **Recap bị trả** (`REJECTED`) thì xóa điểm. Người viết nộp lại thì điểm cũng được xóa.
 - **Xếp giải Nhất/Nhì/Ba** (khi Tính lại):
   - chỉ xét cặp "Đã xong";
-  - sắp theo **điểm recap trung bình của 2 người** (recap chưa chấm tính 0);
+  - sắp theo **điểm recap MTE** (chưa chấm tính 0; recap MTO không có điểm, xem 11.13);
   - bằng điểm thì buổi diễn ra sớm hơn xếp trên, rồi cặp hoàn tất recap sớm hơn, rồi theo mã.
   - Kết quả `recalculate` có `awards[].recapScore` và `unscoredRecaps` (số recap của các cặp "Đã xong" chưa chấm).
 
@@ -787,6 +787,76 @@ Leader / Phó nhóm (Admin dùng được với mọi nhóm; mentee thường nh
 | `GET` | `/member/{id}/profile-logs` | Admin | `[{ field, oldValue, newValue, changedBy, changedByRole: "SELF" \| "ADMIN", createdAt }]` |
 
 Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi sửa qua CRUD `PUT /member/{id}`. Leader không nhận được số tài khoản hay địa chỉ của thành viên.
+
+### 11.13 Cập nhật vòng 2 (recap MTO/MTE, phụ cấp Leader, quỹ MTO, quý cũ, thư viện)
+
+**Recap**
+- Recap **MTO** chỉ có hai kết quả là Duyệt hoặc Không duyệt (bắt buộc lý do), không có điểm và không tính vào điểm của MTO.
+  - Chỉ **Admin toàn cục** hoặc **Admin Mentoring** (quyền `MENTORING`) được xử lý recap MTO. Người khác nhận `403 error-recap-mentor-admin-only`.
+- Recap **MTE** được chấm theo **một barem duy nhất** (3 tiêu chí của module `MENTORING_RECAP`).
+  - Endpoint chấm: `PUT /leader/recaps/{id}/score`, dùng chung cho màn hình Mentoring của admin và màn hình Leader.
+  - Duyệt recap MTE qua `PUT /mentoring/recaps/{id}/review` sẽ nhận `400 error-recap-score-required`; endpoint này vẫn dùng được để trả recap.
+  - Mỗi bài có một kết quả: chấm lại thì ghi đè lên chính bài đó.
+- `GET /leader/recaps`:
+  - Leader/Phó chỉ nhận recap MTE của nhóm MTE mình.
+  - Admin nhận cả recap MTO, với `mode: "APPROVE"`; recap MTE có `mode: "SCORE"`.
+- **Điểm mentoring sớm** chỉ tính khi recap MTE đã được duyệt (đã chấm). Mốc thời gian là lần nộp của bản được duyệt: bị trả rồi nộp lại thì tính từ lần nộp lại. Diễn giải dòng điểm ghi rõ mốc này.
+- **Xếp giải Nhất/Nhì/Ba** dùng điểm recap MTE.
+- **Nhập recap hộ** (Admin hoặc quyền `MENTORING`):
+  - `POST /mentoring/sessions/{id}/recap/proxy`, body `{ role: "MENTOR" | "MENTEE", content, fileIds?, submittedAt?, reason }`.
+  - Buổi đã có recap của vai trò đó thì nhận `409 error-recap-exists`.
+  - Recap trả về có `proxy: { by, at, reason, importBatchId }`.
+
+**Nhóm**
+- Nhóm có `groupKind`: `MENTEE` (nhóm MTE, chỉ gồm mentee) hoặc `FUND` (nhóm HLC Fund của MTO, chỉ gồm MTO). Truyền `groupKind` khi gọi `POST /groups`.
+- Mỗi người thuộc tối đa 1 nhóm của mỗi loại.
+- Leader/Phó nhóm Fund là MTE nhưng **không** là thành viên đóng quỹ của nhóm đó.
+
+**Phụ cấp Leader / Phó nhóm**
+- Rule `POSITION_LEADER` = 2 điểm, `POSITION_PHO_LEADER` = 1 điểm, tính theo **từng nhóm** người đó giữ chức.
+  - Đổi chức vụ giữa tháng: người giữ chức vào **ngày cuối tháng** (hoặc hôm nay nếu tháng chưa hết) nhận phụ cấp.
+- Thưởng `POSITION_LEADER_BONUS` / `POSITION_PHO_LEADER_BONUS` (+1, `sourceType: GROUP_COMPLETION`, `conditions.minCompletionRate: 0.9`) khi tỷ lệ thành viên hoàn tất **trên 90%**, tính theo số thành viên.
+  - Nhóm MTE: thành viên hoàn tất khi buổi mentoring của tháng "Đã xong", recap MTE đã duyệt, và đủ số bài tối thiểu của các module tháng/tuần (tuần thuộc tháng theo ngày thứ Năm, đã kết thúc).
+  - Nhóm Fund: thành viên hoàn tất khi mọi tuần của tháng có khoản đóng được duyệt bao phủ (tính cả MTO và thầy cô).
+- `GET /points/periods/{code}/group-completion` (Admin / quyền `POINT`) và `GET /leader/completion?period=` (Leader nhóm mình) trả `[{ name, groupKind, done, total, rate, passed, leader, deputy }]`.
+- `GET /points/periods/{code}/report`: dữ liệu báo cáo PDF mùng 10, gồm bảng tổng hợp, `entriesByMember` (từng dòng điểm và nguồn) và `completion`. FE in ra PDF ở trang `/admin-points/report?period=`.
+
+**HLC Fund**
+- Khoản đóng có thêm các trường:
+  - `cycleType` (`ONCE` | `WEEKLY` | `MONTHLY`);
+  - `coverUntil` ("đóng đến ngày": bao phủ các tuần từ ngày đóng tới ngày này);
+  - `contributorId` (thầy cô ngoài danh sách);
+  - `isProxy`, `submittedBy`, `proxyByName` (người nộp hộ);
+  - `payerKind` (`MTO` | `MTE` | `EXTERNAL`).
+- Thầy cô ngoài danh sách:
+  - `GET /fund/contributors?groupId=`, `POST /fund/contributors`, `PUT /fund/contributors/{id}` với `{ fullName, organization?, contact?, groupId, note? }`.
+  - Admin HLC Fund quản lý tất cả; Leader nhóm Fund chỉ quản lý nhóm mình.
+- Nộp hộ: `POST /fund/groups/contributions` với `{ memberId | contributorId, contributionDate, amount, cycleType, coverUntil?, fileIds }`.
+  - Người được nộp hộ: Leader/Phó (khi được bật quyền) cho nhóm mình, hoặc Admin HLC Fund.
+  - Khoản của thầy cô bắt buộc `cycleType`.
+- `GET /fund/groups/report?kind=FUND|MENTEE`:
+  - nhóm Fund liệt kê cả thầy cô;
+  - mỗi người có `paidUntil` (đã đóng đến ngày);
+  - trạng thái tuần tính theo khoản bao phủ tuần đó.
+- Sổ thu chi chung (Admin / quyền `FUND`):
+  - `GET /fund/ledger?year=&quarter=&kind=MTO|MTE|EXTERNAL` trả `{ totals: { income, expense, net, balance }, byMonth[{ income: { MTO, MTE, EXTERNAL, total }, expense }], byQuarter, expenses }`;
+  - khoản chi: `POST` / `PUT` / `DELETE /fund/expenses[/{id}]` với `{ expenseDate, amount, description, category? }`.
+
+**Dữ liệu mentoring quý cũ** (Admin / quyền `MENTORING`)
+- `GET /mentoring/history/export.xlsx?quarter=2023Q1`: file mẫu chuẩn (sheet `MENTORING_QUY_CU`) kèm dữ liệu sẵn có của quý. Mỗi dòng là một buổi gồm: tháng, mã MTO/MTE, giờ, recap MTO (nội dung, ngày nộp, Duyệt/Không duyệt), recap MTE (nội dung, ngày nộp, điểm 0–100).
+- `POST /mentoring/history/import?quarter=&dryRun=` (multipart `file`, `reason?`) trả `{ valid, applied, errors, rows, batchId }`.
+  - **Server kiểm tra:** đúng mẫu và quý; mã MTO/MTE tồn tại; mỗi MTE chỉ ghép 1 MTO trong quý; không trùng dòng (cùng MTE, cùng tháng); buổi đã có lịch hoặc recap thì không nhập đè; giờ nằm trong tháng; định dạng ngày và điểm hợp lệ.
+  - Một dòng lỗi là từ chối cả file.
+  - Recap nhập vào ghi `proxy` với lý do "Nhập dữ liệu quý cũ (…)".
+  - Lần nhập **không** tự tính điểm. Admin chủ động bấm Tính lại kỳ (chưa chốt) nếu muốn tính.
+- `GET /mentoring/history/batches`; `POST /mentoring/history/batches/{id}/revert`: hoàn tác cả lô, xóa cặp, lịch và recap do lô tạo. Hoàn tác lần hai nhận `409`.
+
+**Thư viện HLC** (Admin / quyền `LEARNING_MODULE`)
+- `GET /learning/library/export.xlsx`: file (sheet `THU_VIEN_HLC`) với các cột Loại, Tên sách, Tác giả, Thể loại, Mô tả, Link Google Drive (PDF), Link tham khảo khác.
+- `POST /learning/library/import?dryRun=` (multipart `file`) trả `{ added, duplicates, errors, applied }`.
+  - Link Drive phải có dạng `https://drive.google.com/file/d/…` hoặc `open?id=…`.
+  - Trùng tên và tác giả (không phân biệt dấu, hoa thường) hoặc trùng link sẽ được cảnh báo và bỏ qua.
+  - Dòng lỗi bị bỏ qua, dòng hợp lệ vẫn được thêm.
 
 ---
 

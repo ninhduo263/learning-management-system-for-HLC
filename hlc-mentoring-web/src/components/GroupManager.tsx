@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { HistoryOutlined, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
 import { errorMessage } from '@/lib/api';
-import { formatDate, groupApi, memberCrudApi, type GroupHistory, type GroupMember, type GroupView, type Member } from '@/services/hlcApi';
+import { GROUP_KIND_LABEL, formatDate, groupApi, memberCrudApi, type GroupHistory, type GroupKind, type GroupMember, type GroupView, type Member } from '@/services/hlcApi';
 
 const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'green'}>{type === 'MENTOR' ? 'Mentor' : 'Mentee'}</Tag>;
 
@@ -52,26 +52,32 @@ export default function GroupManager() {
     }
   };
 
-  const groupOf = (memberId: string) => groups.find((group) => group.members.some((item) => item._id === memberId));
-  const menteeOptions = members.filter((member) => member.memberType === 'MENTEE').map((member) => ({ value: member._id, label: `${member.memberCode} – ${member.fullName}${groupOf(member._id) ? ` (${groupOf(member._id)?.name})` : ''}` }));
+  const [kindFilter, setKindFilter] = useState<GroupKind | 'ALL'>('ALL');
+  /** Nhóm hiện tại của thành viên trong cùng loại nhóm */
+  const groupOf = (memberId: string, kind?: GroupKind) => groups.find((group) => (!kind || group.groupKind === kind) && group.members.some((item) => item._id === memberId));
+  const memberTypeFor = (group: GroupView) => (group.groupKind === 'FUND' ? 'MENTOR' : 'MENTEE');
+  const menteeOptions = members.filter((member) => member.memberType === 'MENTEE').map((member) => ({ value: member._id, label: `${member.memberCode} – ${member.fullName}${groupOf(member._id, 'MENTEE') ? ` (${groupOf(member._id, 'MENTEE')?.name})` : ''}` }));
 
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Mỗi nhóm gồm mentor và mentee, có 1 Leader và 1 Phó nhóm (là mentee). Leader/Phó chấm recap, duyệt minh chứng HLC Fund và theo dõi tiến độ của nhóm mình. Chuyển nhóm hay đổi Leader đều được lưu lịch sử, không mất dữ liệu cũ." />
+      <Alert type="info" showIcon title="Có 2 loại nhóm, mỗi nhóm có 1 Leader và 1 Phó nhóm (là MTE)" description="Nhóm MTE gồm các mentee: Leader/Phó chấm recap MTE, theo dõi học tập và duyệt quỹ của nhóm. Nhóm HLC Fund gồm các MTO (và thầy cô ngoài danh sách): Leader/Phó quan sát, duyệt và nộp hộ minh chứng, nhưng không phải thành viên đóng quỹ. Leader 2 điểm, Phó 1 điểm mỗi tháng, +1 khi thành viên hoàn tất trên 90%. Chuyển nhóm hay đổi Leader đều được lưu lịch sử." />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Typography.Text type="secondary">{groups.length} nhóm · {unassigned.length} thành viên chưa có nhóm</Typography.Text>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ deputyCanReview: true }); setEditing('new'); }}>Tạo nhóm</Button>
+        <Space wrap>
+          <Select className="w-52" value={kindFilter} onChange={setKindFilter} options={[{ value: 'ALL', label: 'Tất cả loại nhóm' }, { value: 'MENTEE', label: GROUP_KIND_LABEL.MENTEE }, { value: 'FUND', label: GROUP_KIND_LABEL.FUND }]} />
+          <Typography.Text type="secondary">{groups.length} nhóm · {unassigned.length} thành viên chưa có nhóm</Typography.Text>
+        </Space>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ deputyCanReview: true, groupKind: 'MENTEE' }); setEditing('new'); }}>Tạo nhóm</Button>
       </div>
       {unassigned.length > 0 && (
         <Alert type="warning" showIcon title={`Chưa có nhóm: ${unassigned.slice(0, 12).map((item) => item.fullName).join(', ')}${unassigned.length > 12 ? '…' : ''}`} />
       )}
       {!loading && !groups.length && <Empty description="Chưa có nhóm nào" />}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {groups.map((group) => (
+        {groups.filter((group) => kindFilter === 'ALL' || group.groupKind === kindFilter).map((group) => (
           <Card
             key={group._id}
             size="small"
-            title={<span>{group.name} <span className="text-xs font-normal text-gray-400">{group.code}</span>{!group.isActive && <Tag className="ml-2">Ngừng</Tag>}</span>}
+            title={<span>{group.name} <Tag color={group.groupKind === 'FUND' ? 'gold' : 'purple'} className="ml-1">{GROUP_KIND_LABEL[group.groupKind]}</Tag><span className="text-xs font-normal text-gray-400">{group.code}</span>{!group.isActive && <Tag className="ml-2">Ngừng</Tag>}</span>}
             extra={(
               <Space size="small">
                 <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
@@ -100,7 +106,7 @@ export default function GroupManager() {
               })}
             </div>
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm">{group.counts.mentors} mentor · {group.counts.mentees} mentee</span>
+              <span className="text-sm">{group.groupKind === 'FUND' ? `${group.counts.mentors} MTO đóng quỹ (Leader/Phó không đóng quỹ trong nhóm)` : `${group.counts.mentees} MTE`}</span>
               <Button size="small" icon={<UserAddOutlined />} onClick={() => { setAddIds([]); setAdding(group); }}>Thêm thành viên</Button>
             </div>
             <Table<GroupMember>
@@ -127,13 +133,20 @@ export default function GroupManager() {
         }}>
           <Form.Item name="name" label="Tên nhóm" rules={[{ required: true, message: 'Nhập tên nhóm' }]}><Input placeholder="VD: Nhóm 1 - Mentor Nguyễn A" /></Form.Item>
           <Form.Item name="deputyCanReview" label="Phó nhóm được chấm recap / duyệt quỹ độc lập" valuePropName="checked" extra="Tắt: Phó nhóm chỉ xem tiến độ, Leader và admin thực hiện chấm/duyệt."><Switch /></Form.Item>
+          {editing === 'new' && (
+            <Form.Item name="groupKind" label="Loại nhóm" rules={[{ required: true }]}>
+              <Select options={[{ value: 'MENTEE', label: 'Nhóm MTE (mentee: mentoring, học tập, quỹ)' }, { value: 'FUND', label: 'Nhóm HLC Fund của MTO' }]} />
+            </Form.Item>
+          )}
           {editing && editing !== 'new' && <Form.Item name="isActive" label="Đang hoạt động" valuePropName="checked"><Switch /></Form.Item>}
         </Form>
       </Modal>
 
       <Modal title={adding ? `Thêm thành viên vào ${adding.name}` : ''} open={Boolean(adding)} onCancel={() => setAdding(null)} okText="Thêm" okButtonProps={{ disabled: !addIds.length }} destroyOnHidden
         onOk={async () => { if (adding && await run(() => groupApi.addMembers(adding._id, addIds), 'Đã thêm vào nhóm')) setAdding(null); }}>
-        <Typography.Paragraph type="secondary">Thành viên đang ở nhóm khác sẽ được chuyển sang nhóm này (lịch sử nhóm cũ vẫn giữ).</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">
+          {adding?.groupKind === 'FUND' ? 'Nhóm HLC Fund chỉ nhận MTO.' : 'Nhóm MTE chỉ nhận mentee.'} Thành viên đang ở nhóm khác cùng loại sẽ được chuyển sang nhóm này (lịch sử nhóm cũ vẫn giữ).
+        </Typography.Paragraph>
         <Select
           mode="multiple"
           className="w-full"
@@ -142,8 +155,8 @@ export default function GroupManager() {
           onChange={setAddIds}
           placeholder="Chọn mentor / mentee"
           options={[
-            { label: 'Chưa có nhóm', options: unassigned.map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName}` })) },
-            { label: 'Đang ở nhóm khác', options: members.filter((item) => groupOf(item._id) && groupOf(item._id)?._id !== adding?._id).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName} (${groupOf(item._id)?.name})` })) }
+            { label: 'Chưa có nhóm', options: unassigned.filter((item) => adding && item.memberType === memberTypeFor(adding)).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName}` })) },
+            { label: 'Đang ở nhóm khác', options: members.filter((item) => adding && item.memberType === memberTypeFor(adding) && groupOf(item._id, adding.groupKind) && groupOf(item._id, adding.groupKind)?._id !== adding._id).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName} (${groupOf(item._id, adding?.groupKind)?.name})` })) }
           ]}
         />
       </Modal>

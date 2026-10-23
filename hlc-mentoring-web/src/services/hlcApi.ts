@@ -7,7 +7,9 @@ export interface MemberBrief {
   _id: string;
   memberCode: string;
   fullName: string;
-  memberType?: 'MENTOR' | 'MENTEE';
+  /** EXTERNAL = thầy cô ngoài danh sách MTO */
+  memberType?: 'MENTOR' | 'MENTEE' | 'EXTERNAL';
+  organization?: string | null;
 }
 
 export interface FileView {
@@ -259,7 +261,8 @@ export const SOURCE_TYPE_LABEL: Record<string, string> = {
   MEMBER_POSITION: 'Chức vụ',
   SUBMISSION: 'Bài nộp học tập',
   FUND_MONTHLY: 'Đóng quỹ tháng',
-  POINT_ADJUSTMENT: 'Điều chỉnh tay'
+  POINT_ADJUSTMENT: 'Điều chỉnh tay',
+  GROUP_COMPLETION: 'Thưởng nhóm hoàn tất'
 };
 
 // ---------- HLC Fund ----------
@@ -281,6 +284,29 @@ export interface ContributionView {
   reviewNote: string | null;
   files: FileView[];
   member?: MemberBrief;
+  contributorId?: string | null;
+  cycleType?: FundCycle;
+  coverUntil?: string | null;
+  isProxy?: boolean;
+  proxyByName?: string | null;
+  payerKind?: PayerKind;
+}
+
+export type FundCycle = 'ONCE' | 'WEEKLY' | 'MONTHLY';
+export const FUND_CYCLE_LABEL: Record<FundCycle, string> = { ONCE: 'Một lần', WEEKLY: 'Theo tuần', MONTHLY: 'Theo tháng' };
+export type PayerKind = 'MTO' | 'MTE' | 'EXTERNAL';
+export const PAYER_KIND_LABEL: Record<PayerKind, string> = { MTO: 'MTO', MTE: 'MTE', EXTERNAL: 'Thầy cô ngoài danh sách' };
+
+export interface FundContributor { _id: string; fullName: string; organization: string | null; contact: string | null; groupId: string | null; note: string | null; isActive: boolean }
+
+export interface FundLedger {
+  year: number;
+  quarter: number | null;
+  kind: PayerKind | null;
+  totals: { income: number; expense: number; net: number; balance: number };
+  byMonth: { month: number; code: string; income: { total: number; MTO: number; MTE: number; EXTERNAL: number }; expense: number }[];
+  byQuarter: { quarter: number; income: number; expense: number }[];
+  expenses: { _id: string; expenseDate: string; amount: number; description: string; category: string | null }[];
 }
 
 export interface MyFund {
@@ -307,11 +333,12 @@ export interface FundGroupReport {
     _id: string;
     code: string;
     name: string;
+    groupKind: GroupKind;
     leader: MemberBrief | null;
     deputy: MemberBrief | null;
     canReview: boolean;
     pending: number;
-    members: { member: MemberBrief; total: number; weeks: Record<string, { status: WeekStatus; amount: number; ids: string[] }> }[];
+    members: { member: MemberBrief; total: number; paidUntil: string | null; weeks: Record<string, { status: WeekStatus; amount: number; ids: string[] }> }[];
   }[];
   contributions: ContributionView[];
 }
@@ -324,7 +351,7 @@ export interface FundStats {
   members: { member: MemberBrief; approved: number; pending: number; rejected: number; count: number; reached: boolean }[];
 }
 
-export interface ContributionInput { contributionDate: string; amount: number; note?: string; fileIds: string[] }
+export interface ContributionInput { contributionDate: string; amount: number; note?: string; fileIds: string[]; cycleType?: FundCycle; coverUntil?: string; memberId?: string; contributorId?: string }
 
 export const fundApi = {
   mine: (code?: string) => apiJson<MyFund>(`/fund/me${q({ period: code })}`),
@@ -337,7 +364,16 @@ export const fundApi = {
   bulkReview: (ids: string[], status: 'DONE' | 'NOT_DONE', note?: string) =>
     apiJson<{ updated: number }>('/fund/contributions/review', { method: 'PUT', json: { ids, status, note } }),
   stats: (code: string) => apiJson<FundStats>(`/fund/stats/${encodeURIComponent(code)}`),
-  groupReport: (params: { period?: string; groupId?: string }) => apiJson<FundGroupReport>(`/fund/groups/report${q(params)}`),
+  groupReport: (params: { period?: string; groupId?: string; kind?: GroupKind }) => apiJson<FundGroupReport>(`/fund/groups/report${q(params)}`),
+  proxySubmit: (body: ContributionInput) => apiJson<ContributionView>('/fund/groups/contributions', { method: 'POST', json: body }),
+  contributors: (groupId?: string) => apiJson<FundContributor[]>(`/fund/contributors${q({ groupId })}`),
+  saveContributor: (body: Partial<FundContributor>, id?: string) =>
+    apiJson<FundContributor>(id ? `/fund/contributors/${id}` : '/fund/contributors', { method: id ? 'PUT' : 'POST', json: body }),
+  ledger: (params: { year?: number; quarter?: number; kind?: PayerKind }) =>
+    apiJson<FundLedger>(`/fund/ledger${q({ year: params.year ? String(params.year) : undefined, quarter: params.quarter ? String(params.quarter) : undefined, kind: params.kind })}`),
+  saveExpense: (body: { expenseDate: string; amount: number; description: string; category?: string }, id?: string) =>
+    apiJson(id ? `/fund/expenses/${id}` : '/fund/expenses', { method: id ? 'PUT' : 'POST', json: body }),
+  removeExpense: (id: string) => apiJson(`/fund/expenses/${id}`, { method: 'DELETE' }),
   groupReview: (ids: string[], status: 'DONE' | 'NOT_DONE', note?: string) =>
     apiJson<{ updated: number }>('/fund/groups/review', { method: 'PUT', json: { ids, status, note } })
 };
@@ -442,6 +478,14 @@ export interface LibraryItem {
   isActive: boolean;
 }
 
+export interface LibraryImportResult {
+  valid: boolean;
+  applied: boolean;
+  added: { row: number; title: string; author: string; libraryType: 'BOOK' | 'DOCUMENT'; fileUrl: string | null }[];
+  duplicates: { row: number; title: string; message: string }[];
+  errors: { row: number; message: string }[];
+}
+
 export interface ModuleConfigInput {
   name: string;
   description?: string;
@@ -477,6 +521,12 @@ export const learningApi = {
   removeSubmission: (id: string) => apiJson(`/learning/submissions/${id}`, { method: 'DELETE' }),
   library: (type?: string) => apiJson<LibraryItem[]>(`/learning/library${q({ type })}`),
   libraryAll: (type?: string) => apiJson<LibraryItem[]>(`/learning/library/all${q({ type })}`),
+  exportLibrary: () => downloadFile('/learning/library/export.xlsx', 'hlc-thu-vien.xlsx'),
+  importLibrary: (file: File, dryRun: boolean) => {
+    const form = new FormData();
+    form.append('file', file);
+    return apiJson<LibraryImportResult>(`/learning/library/import?dryRun=${dryRun}`, { method: 'POST', body: form });
+  },
   saveLibraryItem: (body: Partial<LibraryItem>, id?: string) =>
     apiJson<LibraryItem>(id ? `/learning/library/${id}` : '/learning/library', { method: id ? 'PUT' : 'POST', json: body }),
   removeLibraryItem: (id: string) => apiJson<{ deleted: boolean; deactivated: boolean }>(`/learning/library/${id}`, { method: 'DELETE' }),
@@ -565,10 +615,13 @@ export const dashboardApi = {
 // ---------- Nhóm & Leader ----------
 
 export interface GroupMember extends MemberBrief { status?: string; phone?: string | null; email?: string | null; joinedGroupAt?: string }
+export type GroupKind = 'MENTEE' | 'FUND';
+export const GROUP_KIND_LABEL: Record<GroupKind, string> = { MENTEE: 'Nhóm MTE', FUND: 'Nhóm HLC Fund (MTO)' };
 export interface GroupView {
   _id: string;
   code: string;
   name: string;
+  groupKind: GroupKind;
   isActive: boolean;
   deputyCanReview: boolean;
   leader: GroupMember | null;
@@ -584,7 +637,7 @@ export interface GroupHistory {
 export const groupApi = {
   list: () => apiJson<GroupView[]>('/groups'),
   unassigned: () => apiJson<GroupMember[]>('/groups/unassigned'),
-  create: (body: { name: string; deputyCanReview?: boolean }) => apiJson<GroupView>('/groups', { method: 'POST', json: body }),
+  create: (body: { name: string; deputyCanReview?: boolean; groupKind?: GroupKind }) => apiJson<GroupView>('/groups', { method: 'POST', json: body }),
   update: (id: string, body: { name: string; deputyCanReview?: boolean; isActive?: boolean }) => apiJson<GroupView>(`/groups/${id}`, { method: 'PUT', json: body }),
   setRole: (id: string, role: 'LEADER' | 'DEPUTY', memberId?: string) => apiJson<GroupView>(`/groups/${id}/role`, { method: 'PUT', json: { role, memberId } }),
   addMembers: (id: string, memberIds: string[]) => apiJson<{ moved: number; group: GroupView }>(`/groups/${id}/members`, { method: 'POST', json: { memberIds } }),
@@ -614,6 +667,8 @@ export interface RecapToScore {
   mentor: MemberBrief | null;
   mentee: MemberBrief | null;
   groupName: string | null;
+  /** SCORE: recap MTE chấm thang 100; APPROVE: recap MTO chỉ Duyệt / Không duyệt */
+  mode: 'SCORE' | 'APPROVE';
   canScore: boolean;
   conflict: boolean;
 }
@@ -659,4 +714,44 @@ export const profileApi = {
   logs: () => apiJson<ProfileLog[]>('/member/me/profile-logs'),
   adminUpdate: (id: string, body: Partial<Member>) => apiJson<Member>(`/member/${id}/profile`, { method: 'PUT', json: body }),
   adminLogs: (id: string) => apiJson<ProfileLog[]>(`/member/${id}/profile-logs`)
+};
+
+// ---------- Tỷ lệ hoàn tất nhóm (thưởng Leader/Phó) ----------
+
+export interface GroupCompletion { _id: string; name: string; groupKind: GroupKind; done: number; total: number; rate: number | null; passed: boolean; leader: string | null; deputy: string | null }
+export interface AllowanceReport extends PeriodSummary {
+  entriesByMember: Record<string, { pointType: string; description: string; points: number; sourceType: string }[]>;
+  completion: GroupCompletion[];
+  generatedAt: string;
+}
+
+export const completionApi = {
+  report: (code: string) => apiJson<AllowanceReport>(`/points/periods/${encodeURIComponent(code)}/report`),
+  admin: (code: string) => apiJson<GroupCompletion[]>(`/points/periods/${encodeURIComponent(code)}/group-completion`),
+  mine: (code: string) => apiJson<GroupCompletion[]>(`/leader/completion?period=${encodeURIComponent(code)}`)
+};
+
+// ---------- Dữ liệu mentoring quý cũ ----------
+
+export interface HistoryImportResult {
+  valid: boolean;
+  applied: boolean;
+  batchId: string | null;
+  errors: { row: number; message: string }[];
+  rows: { row: number; month: number; mentorCode: string; menteeCode: string; mentorName: string; menteeName: string; startAt: string | null; mentorRecap: unknown; menteeRecap: { score: number | null } | null }[];
+}
+export interface HistoryBatch { _id: string; quarterCode: string; fileName: string | null; status: 'ACTIVE' | 'REVERTED'; reason: string | null; created: { rows?: number; pairIds?: string[]; recapIds?: string[] }; createdAt: string; revertedAt: string | null }
+
+export const historyApi = {
+  exportQuarter: (quarter: string) => downloadFile(`/mentoring/history/export.xlsx?quarter=${encodeURIComponent(quarter)}`, `hlc-mentoring-quy-cu-${quarter}.xlsx`),
+  importQuarter: (quarter: string, file: File, dryRun: boolean, reason?: string) => {
+    const form = new FormData();
+    form.append('file', file);
+    if (reason) form.append('reason', reason);
+    return apiJson<HistoryImportResult>(`/mentoring/history/import?quarter=${encodeURIComponent(quarter)}&dryRun=${dryRun}`, { method: 'POST', body: form });
+  },
+  batches: () => apiJson<HistoryBatch[]>('/mentoring/history/batches'),
+  revert: (id: string) => apiJson(`/mentoring/history/batches/${id}/revert`, { method: 'POST' }),
+  proxyRecap: (sessionId: string, body: { role: 'MENTOR' | 'MENTEE'; content: string; fileIds?: string[]; submittedAt?: string; reason: string }) =>
+    apiJson(`/mentoring/sessions/${sessionId}/recap/proxy`, { method: 'POST', json: body })
 };

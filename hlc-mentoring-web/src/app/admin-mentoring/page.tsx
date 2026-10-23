@@ -5,11 +5,13 @@ import { Alert, App, Button, Card, Col, Descriptions, Form, Input, Modal, Popcon
 import { CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
 import ProfileLink from '@/components/ProfileLink';
 import RecapCard from '@/components/RecapCard';
+import RecapGradingPanel from '@/components/RecapGradingPanel';
+import HistoryImportPanel from '@/components/HistoryImportPanel';
+import ProxyRecapModal from '@/components/ProxyRecapModal';
 import { errorMessage } from '@/lib/api';
 import {
   PAIR_STATUS_COLOR,
   PAIR_STATUS_LABEL,
-  REVIEW_STATUS_LABEL,
   ROLE_STATUS_COLOR,
   ROLE_STATUS_LABEL,
   formatDateTime,
@@ -18,7 +20,6 @@ import {
   toDateTimeLocal,
   type MemberView,
   type QuarterBoard,
-  type RecapView,
   type ScheduleImportResult,
   type ScheduleLogView,
   type SessionView
@@ -97,6 +98,9 @@ export default function AdminMentoringPage() {
         </Card>
       )}
       {nextVisible && <QuarterPanel key={nextCode} quarterCode={nextCode} kind="next" />}
+      <Card className="overflow-hidden !rounded-xl !border-slate-200" title={<span className="font-semibold">Dữ liệu mentoring quý cũ</span>}>
+        <HistoryImportPanel />
+      </Card>
     </div>
   );
 }
@@ -117,12 +121,11 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const [modal, setModal] = useState<'create' | 'edit' | 'detail' | null>(null);
   const [selected, setSelected] = useState<SessionView | null>(null);
   const [overriding, setOverriding] = useState<SessionView | null>(null);
-  const [reviewing, setReviewing] = useState<{ session: SessionView; recap: RecapView } | null>(null);
-  const [reviewNote, setReviewNote] = useState('');
   const [importing, setImporting] = useState(false);
   const [importErrors, setImportErrors] = useState<{ row: number; message: string }[]>([]);
   const [scheduleImport, setScheduleImport] = useState<{ file: File; result: ScheduleImportResult } | null>(null);
   const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [proxyTarget, setProxyTarget] = useState<{ sessionId: string; code: string; role: 'MENTOR' | 'MENTEE' } | null>(null);
   const [logs, setLogs] = useState<{ title: string; rows: ScheduleLogView[] } | null>(null);
   const quarter = board?.quarter;
   const locked = Boolean(quarter?.isLocked);
@@ -181,12 +184,6 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const menteeOptions = (excludePaired: boolean) => mentees
     .filter((mentee) => mentee.status === 'ACTIVE' && (!excludePaired || !pairedMenteeCodes.has(mentee.memberCode)))
     .map((mentee) => ({ value: mentee.memberCode, label: `${mentee.memberCode} - ${mentee.fullName}` }));
-  const recapsToReview = sessions.flatMap((session) =>
-    (['mentee', 'mentor'] as const)
-      .map((role) => session.recaps[role])
-      .filter((recap): recap is RecapView => Boolean(recap))
-      .map((recap) => ({ session, recap }))
-  );
 
   const run = async (action: () => Promise<unknown>, success: string, fallback: string) => {
     try {
@@ -421,30 +418,14 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
         />
       </Card>
 
-      <Card
-        className="overflow-hidden !rounded-xl !border-slate-200"
-        title={<span className="font-semibold">Duyệt recap mentoring</span>}
-        extra={<Tag color="gold">{recapsToReview.filter((item) => item.recap.reviewStatus === 'PENDING').length} chờ duyệt</Tag>}
-      >
-        <Table
-          rowKey={(item) => item.recap._id}
-          size="small"
-          loading={loading}
-          dataSource={recapsToReview}
-          scroll={{ x: 'max-content' }}
-          pagination={{ pageSize: 8 }}
-          columns={[
-            { title: 'Mã cặp', render: (_: unknown, item: { session: SessionView }) => item.session.code },
-            { title: 'Mentee', render: (_: unknown, item: { session: SessionView }) => memberLabel(item.session.mentee) },
-            { title: 'Mentor', render: (_: unknown, item: { session: SessionView }) => memberLabel(item.session.mentor) },
-            { title: 'Người viết', render: (_: unknown, item: { recap: RecapView }) => <Tag color={item.recap.role === 'MENTOR' ? 'blue' : 'green'}>{item.recap.role}</Tag> },
-            { title: 'Nộp lúc', render: (_: unknown, item: { recap: RecapView }) => <>{formatDateTime(item.recap.firstSubmittedAt)}{item.recap.isLate && <Tag color="orange" className="ml-2">Muộn</Tag>}</> },
-            { title: 'Duyệt', render: (_: unknown, item: { recap: RecapView }) => <Tag color={item.recap.reviewStatus === 'APPROVED' ? 'green' : item.recap.reviewStatus === 'REJECTED' ? 'red' : 'gold'}>{REVIEW_STATUS_LABEL[item.recap.reviewStatus]}</Tag> },
-            { title: 'Ảnh', render: (_: unknown, item: { recap: RecapView }) => item.recap.media.length ? <a href={item.recap.media[0].url} target="_blank" rel="noreferrer">Xem ảnh ({item.recap.media.length})</a> : 'Thiếu ảnh' },
-            { title: 'Thao tác', render: (_: unknown, item: { session: SessionView; recap: RecapView }) => <Button disabled={locked || item.recap.reviewStatus !== 'PENDING'} onClick={() => { setReviewNote(''); setReviewing(item); }}>Xem & duyệt</Button> }
-          ]}
-        />
-      </Card>
+      {kind === 'current' && (
+        <Card
+          className="overflow-hidden !rounded-xl !border-slate-200"
+          title={<span className="font-semibold">Duyệt & chấm recap (barem chung với màn hình Leader nhóm)</span>}
+        >
+          <RecapGradingPanel />
+        </Card>
+      )}
 
       <Modal title="Thêm cặp mentoring" open={modal === 'create'} onCancel={() => setModal(null)} footer={null} forceRender destroyOnHidden>
         <PairForm form={createForm} months={months} mentorOptions={mentorOptions} menteeOptions={menteeOptions(true)} onFinish={submitCreate} hint="Hệ thống tạo buổi mentoring từ tháng đã chọn đến tháng cuối của quý. Mentor có nguyện vọng của mentee được xếp lên đầu." />
@@ -492,6 +473,15 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
               {(['mentee', 'mentor'] as const).map((role) => selected.recaps[role] && (
                 <RecapCard key={role} recap={selected.recaps[role]!} />
               ))}
+              {selected.schedule && !locked && (
+                <Space className="mt-3" wrap>
+                  {(['mentee', 'mentor'] as const).filter((role) => !selected.recaps[role]).map((role) => (
+                    <Button key={role} size="small" onClick={() => setProxyTarget({ sessionId: selected._id, code: selected.code, role: role === 'mentee' ? 'MENTEE' : 'MENTOR' })}>
+                      Nhập recap hộ {role === 'mentee' ? 'MTE' : 'MTO'}
+                    </Button>
+                  ))}
+                </Space>
+              )}
             </div>
           </div>
         )}
@@ -559,6 +549,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
           </div>
         )}
       </Modal>
+      <ProxyRecapModal target={proxyTarget} onClose={() => setProxyTarget(null)} onSaved={() => void loadData()} />
       <Modal title={logs?.title} open={Boolean(logs)} onCancel={() => setLogs(null)} footer={null} width="min(1000px, calc(100vw - 24px))">
         <Typography.Paragraph type="secondary">Nhật ký chỉ đọc: không ai sửa hoặc xóa được, dùng để đối soát điểm thưởng.</Typography.Paragraph>
         <Table<ScheduleLogView>
@@ -578,23 +569,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
           ]}
         />
       </Modal>
-      <Modal title="Duyệt recap" width="min(900px, calc(100vw - 24px))" open={Boolean(reviewing)} onCancel={() => setReviewing(null)} footer={null} destroyOnHidden styles={{ body: { maxHeight: 'min(72vh, 760px)', overflowY: 'auto' } }}>
-        {reviewing && (
-          <div className="space-y-4">
-            <Descriptions bordered column={1} size="small">
-              <Descriptions.Item label="Cặp">{reviewing.session.code}</Descriptions.Item>
-              <Descriptions.Item label="Mentee">{reviewing.session.mentee?.fullName} ({reviewing.session.mentee?.memberCode})</Descriptions.Item>
-              <Descriptions.Item label="Mentor">{reviewing.session.mentor?.fullName} ({reviewing.session.mentor?.memberCode})</Descriptions.Item>
-            </Descriptions>
-            <RecapCard recap={reviewing.recap} />
-            <Input.TextArea rows={3} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder="Ghi chú phản hồi (bắt buộc khi từ chối)" />
-            <Space>
-              <Button type="primary" onClick={async () => { if (await run(() => mentoringApi.reviewRecap(reviewing.recap._id, 'APPROVED', reviewNote), 'Đã duyệt recap', 'Không thể duyệt recap')) setReviewing(null); }}>Duyệt recap</Button>
-              <Button danger disabled={!reviewNote.trim()} onClick={async () => { if (await run(() => mentoringApi.reviewRecap(reviewing.recap._id, 'REJECTED', reviewNote), 'Đã từ chối recap', 'Không thể từ chối recap')) setReviewing(null); }}>Từ chối</Button>
-            </Space>
-          </div>
-        )}
-      </Modal>
+
     </section>
   );
 }

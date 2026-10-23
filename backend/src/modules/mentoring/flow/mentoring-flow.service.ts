@@ -43,6 +43,7 @@ import { MentoringScheduleLogModel } from "../models/mentoring-schedule-log.mode
 import { MentoringSessionModel } from "../models/mentoring-session.model";
 import { CreatePairDto } from "./dto/create-pair.dto";
 import { PreferenceDto } from "./dto/preference.dto";
+import { ProxyRecapDto } from "./dto/proxy-recap.dto";
 import { RecapDto } from "./dto/recap.dto";
 import { ReviewRecapDto } from "./dto/review-recap.dto";
 import { OverrideScheduleDto } from "./dto/override-schedule.dto";
@@ -101,6 +102,14 @@ export interface RecapView {
     reviewStatus: string;
     reviewNote: string | null;
     reviewedAt: Date | null;
+    score: number | null;
+    /** Recap do admin nhập hộ / nhập từ dữ liệu quý cũ */
+    proxy: {
+        by: string | null;
+        at: Date | null;
+        reason: string | null;
+        importBatchId: string | null;
+    } | null;
     media: {
         fileId: string | null;
         url: string;
@@ -300,7 +309,13 @@ export class MentoringFlowService {
      * Tạo quý nếu chưa có. Được tạo quý hiện tại, hoặc quý kế tiếp từ ngày 5 tháng cuối quý hiện tại
      * (để mentee gửi nguyện vọng); admin chỉ ghép cặp quý kế tiếp từ ngày 10.
      */
-    async ensureQuarter(code: string, user?: User, transaction?: Transaction) {
+    /** historical = true: cho phép mở quý đã qua (nhập dữ liệu quý cũ) */
+    async ensureQuarter(
+        code: string,
+        user?: User,
+        transaction?: Transaction,
+        historical = false,
+    ) {
         const ref = parseQuarterCode(code);
         if (!ref)
             throw ApiError.BadRequest("error-mentoring-quarter-not-found", {
@@ -318,6 +333,7 @@ export class MentoringFlowService {
         const target = quarterIndex(ref);
         const timeline = quarterTimeline(ref);
         const allowed =
+            (historical && target <= current) ||
             target === current ||
             (target === current + 1 && now >= timeline.preferenceOpenAt);
         if (!allowed) {
@@ -491,6 +507,19 @@ export class MentoringFlowService {
                       reviewStatus: recap.reviewStatus,
                       reviewNote: recap.reviewNote ?? null,
                       reviewedAt: recap.reviewedAt ?? null,
+                      score:
+                          recap.score === null || recap.score === undefined
+                              ? null
+                              : Number(recap.score),
+                      proxy:
+                          recap.proxyBy || recap.importBatchId
+                              ? {
+                                    by: recap.proxyBy ?? null,
+                                    at: recap.proxyAt ?? null,
+                                    reason: recap.proxyReason ?? null,
+                                    importBatchId: recap.importBatchId ?? null,
+                                }
+                              : null,
                       media: attachments
                           .filter((item) => item.ownerId === recap._id)
                           .map((item) => ({
@@ -688,7 +717,7 @@ export class MentoringFlowService {
         );
     }
 
-    private async createPairInTransaction(
+    async createPairInTransaction(
         quarter: Plain<MentoringQuarter>,
         dto: CreatePairDto,
         user: User,
@@ -1484,6 +1513,79 @@ export class MentoringFlowService {
         return view;
     }
 
+    /**
+     * Admin Mentoring / Admin toàn cục nhập recap hộ. Ghi rõ người nhập, lúc nhập, lý do.
+     * Không ghi đè recap đã có của vai trò đó (chống trùng).
+     */
+    async proxyRecap(sessionId: string, dto: ProxyRecapDto, user: User) {
+        const { session, pair, quarter } =
+            await this.getSessionContext(sessionId);
+        this.assertQuarterWritable(quarter);
+        if (!session.scheduledStartAt)
+            throw ApiError.Conflict("error-mentoring-recap-too-early");
+        const role =
+            dto.role === "MENTOR" ? MentoringRole.MENTOR : MentoringRole.MENTEE;
+        const existing = await this.recapModel.findOne({
+            where: { sessionId, role },
+            raw: true,
+        });
+        if (existing)
+            throw ApiError.Conflict("error-recap-exists", {
+                role: role === MentoringRole.MENTOR ? "MTO" : "MTE",
+            });
+        const now = this.now();
+        const submittedAt = dto.submittedAt ? new Date(dto.submittedAt) : now;
+        const fileIds = [...new Set(dto.fileIds ?? [])];
+        const files = fileIds.length
+            ? await this.fileModel.findAll({
+                  where: { _id: fileIds },
+                  attributes: ["_id", "name", "mimetype"],
+                  raw: true,
+              })
+            : [];
+        if (files.length !== fileIds.length)
+            throw ApiError.BadRequest("error-mentoring-recap-file-invalid");
+        await this.sequelize.transaction(async (t) => {
+            const recap = await this.recapModel.create(
+                {
+                    sessionId,
+                    memberId:
+                        role === MentoringRole.MENTOR
+                            ? pair.mentorId
+                            : pair.menteeId,
+                    role,
+                    content: dto.content.trim(),
+                    firstSubmittedAt: submittedAt,
+                    lastSubmittedAt: submittedAt,
+                    isLate:
+                        submittedAt.getTime() >
+                        new Date(session.recapDeadlineAt).getTime(),
+                    proxyBy: user._id,
+                    proxyAt: now,
+                    proxyReason: dto.reason.trim(),
+                },
+                { transaction: t },
+            );
+            if (files.length) {
+                await this.attachmentModel.bulkCreate(
+                    files.map((file, index) => ({
+                        ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                        ownerId: recap._id,
+                        fileId: file._id,
+                        url: this.fileUrl(file._id, file.name),
+                        fileName: file.name,
+                        mimeType: file.mimetype,
+                        sortOrder: index,
+                        uploadedBy: user._id,
+                    })),
+                    { transaction: t },
+                );
+            }
+        });
+        const [view] = await this.buildSessionViews([session]);
+        return view;
+    }
+
     async reviewRecap(recapId: string, dto: ReviewRecapDto, user: User) {
         const recap = await this.recapModel.findOne({
             where: { _id: recapId },
@@ -1494,6 +1596,10 @@ export class MentoringFlowService {
         this.assertQuarterWritable(quarter);
         if (dto.status === "REJECTED" && !dto.note?.trim()) {
             throw ApiError.BadRequest("error-mentoring-review-note-required");
+        }
+        // Một barem duy nhất: recap MTE được duyệt bằng cách chấm điểm (PUT /leader/recaps/:id/score)
+        if (dto.status === "APPROVED" && recap.role === MentoringRole.MENTEE) {
+            throw ApiError.BadRequest("error-recap-score-required");
         }
         await this.recapModel.update(
             {

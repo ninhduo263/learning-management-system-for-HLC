@@ -16,6 +16,9 @@ import {
     Post,
     Put,
     Query,
+    Res,
+    UploadedFile,
+    UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { LibraryItemDto } from "./dto/library-item.dto";
@@ -23,6 +26,10 @@ import { ModuleConfigDto } from "./dto/module-config.dto";
 import { ReviewSubmissionDto } from "./dto/review-submission.dto";
 import { SubmissionDto } from "./dto/submission.dto";
 import { LearningFlowService } from "./learning-flow.service";
+import { LibraryExcelService } from "./library-excel.service";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { ApiError } from "@config/exception/api-error";
+import { Response } from "express";
 
 /**
  * Học tập. Quản lý module: Admin tổng hoặc người được giao quyền LEARNING_MODULE
@@ -32,7 +39,10 @@ import { LearningFlowService } from "./learning-flow.service";
 @ApiTags("learning")
 @Authorization()
 export class LearningFlowController {
-    constructor(private readonly flowService: LearningFlowService) {}
+    constructor(
+        private readonly flowService: LearningFlowService,
+        private readonly libraryExcel: LibraryExcelService,
+    ) {}
 
     // ---- Thành viên ----
 
@@ -148,6 +158,40 @@ export class LearningFlowController {
         @Body() dto: ReviewSubmissionDto,
     ) {
         return this.flowService.review(user, id, dto);
+    }
+
+    /** Xuất danh sách sách ra .xlsx */
+    @Get("library/export.xlsx")
+    @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING_MODULE)
+    async exportLibrary(@Res() res: Response) {
+        const { fileName, buffer } = await this.libraryExcel.export();
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        );
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${fileName}"`,
+        );
+        res.send(buffer);
+    }
+
+    /** Nhập hàng loạt sách (có link Google Drive PDF): ?dryRun=true chỉ kiểm tra */
+    @Post("library/import")
+    @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING_MODULE)
+    @UseInterceptors(
+        FileInterceptor("file", { limits: { fileSize: 5 * 1024 * 1024 } }),
+    )
+    importLibrary(
+        @ReqUser() user: User,
+        @UploadedFile() file: Express.Multer.File,
+        @Query("dryRun") dryRun?: string,
+    ) {
+        if (!file?.buffer?.length)
+            throw ApiError.BadRequest("error-import-file-invalid");
+        return this.libraryExcel.import(file.buffer, user, dryRun === "true");
     }
 
     @Get("library/all")

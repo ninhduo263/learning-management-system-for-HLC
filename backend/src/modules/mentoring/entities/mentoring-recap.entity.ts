@@ -80,4 +80,12 @@ export class MentoringRecap implements BaseEntity {
     scoredBy?: string;
 
     scoredAt?: Date;
+
+    proxyBy?: string;
+
+    proxyAt?: Date;
+
+    proxyReason?: string;
+
+    importBatchId?: string;
 }

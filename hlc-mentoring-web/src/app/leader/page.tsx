@@ -7,7 +7,7 @@ import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import { errorMessage } from '@/lib/api';
 import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL } from '@/services/mentoringApi';
-import { WEEK_STATUS_COLOR, WEEK_STATUS_LABEL, leaderApi, money, points, type LeaderOverview } from '@/services/hlcApi';
+import { GROUP_KIND_LABEL, WEEK_STATUS_COLOR, WEEK_STATUS_LABEL, completionApi, leaderApi, money, points, type GroupCompletion, type LeaderOverview } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
 type MemberRow = LeaderOverview['groups'][number]['members'][number];
@@ -20,12 +20,13 @@ export default function LeaderPage() {
   const [data, setData] = useState<LeaderOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [denied, setDenied] = useState(false);
+  const [completion, setCompletion] = useState<GroupCompletion[]>([]);
 
   useEffect(() => {
     let active = true;
     Promise.resolve()
       .then(() => { if (active) setLoading(true); return leaderApi.overview(code); })
-      .then((result) => { if (active) setData(result); })
+      .then((result) => { if (active) setData(result); return completionApi.mine(code).then((rows) => { if (active) setCompletion(rows); }).catch(() => undefined); })
       .catch((error) => {
         if (!active) return;
         if ((error as { status?: number }).status === 403) setDenied(true);
@@ -49,6 +50,11 @@ export default function LeaderPage() {
               <Tag>{group.members.length} thành viên</Tag>
               <Tag color="green">Mentee đã xong mentoring: {done}/{mentees.length}</Tag>
               {!group.canReview && <Tag color="gold">Chỉ xem (chưa được bật quyền chấm/duyệt)</Tag>}
+              {(() => {
+                const item = completion.find((row) => row._id === group._id);
+                if (!item) return null;
+                return <Tag color={item.passed ? 'green' : 'orange'}>{GROUP_KIND_LABEL[item.groupKind]} · hoàn tất {item.total ? `${item.done}/${item.total} (${item.rate}%)` : 'chưa có dữ liệu'}{item.passed ? ' · Leader/Phó +1 điểm' : ' · cần trên 90% để thưởng +1'}</Tag>;
+              })()}
             </div>
             <Table<MemberRow>
               rowKey={(row) => row.member._id}
@@ -102,7 +108,7 @@ export default function LeaderPage() {
         <Tabs items={[
           { key: 'progress', label: 'Tiến độ nhóm', children: progress },
           { key: 'recap', label: 'Chấm recap', children: <RecapGradingPanel /> },
-          { key: 'fund', label: 'Duyệt HLC Fund', children: <FundGroupReport /> }
+          { key: 'fund', label: 'HLC Fund (duyệt, nộp hộ)', children: <FundGroupReport /> }
         ]} />
       </Card>
     </div>

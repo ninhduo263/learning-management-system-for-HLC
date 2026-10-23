@@ -1,10 +1,12 @@
 import {
     IsBoolean,
+    IsEnum,
     IsNotEmpty,
     IsOptional,
     IsString,
     MaxLength,
 } from "class-validator";
+import { GroupKind } from "../../common/constant";
 
 export class GroupDto {
     @IsString()
@@ -19,4 +21,9 @@ export class GroupDto {
     @IsBoolean()
     @IsOptional()
     isActive?: boolean;
+
+    /** Chỉ đặt lúc tạo: MENTEE (nhóm MTE) hoặc FUND (nhóm HLC Fund của MTO) */
+    @IsEnum(GroupKind)
+    @IsOptional()
+    groupKind?: GroupKind;
 }

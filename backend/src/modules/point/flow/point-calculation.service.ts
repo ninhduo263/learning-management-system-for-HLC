@@ -1,7 +1,22 @@
-import { vnParts } from "@common/utils/vn-date.util";
+import { vnDateKey, vnParts } from "@common/utils/vn-date.util";
+import {
+    coveredWeeks,
+    weeksOwnedByMonth,
+} from "@module/fund/flow/fund-weeks.util";
+import { FundContributorModel } from "@module/fund/models/fund-contributor.model";
+import { GroupMembershipModel } from "@module/organization/models/group-membership.model";
+import {
+    DepartmentType,
+    GroupKind,
+} from "@module/organization/common/constant";
 import { FundContributionStatus } from "@module/fund/common/constant";
 import { FundContributionModel } from "@module/fund/models/fund-contribution.model";
-import { SubmissionReviewStatus } from "@module/learning/common/constant";
+import {
+    CycleType,
+    RECAP_MODULE_CODE,
+    SubmissionReviewStatus,
+    SubmissionStatus,
+} from "@module/learning/common/constant";
 import { LearningModuleModel } from "@module/learning/models/learning-module.model";
 import { SubmissionModel } from "@module/learning/models/submission.model";
 import { MemberStatus, TargetMemberType } from "@module/member/common/constant";
@@ -92,6 +107,10 @@ export class PointCalculationService {
         private readonly submissionModel: typeof SubmissionModel,
         @InjectModel(LearningModuleModel)
         private readonly moduleModel: typeof LearningModuleModel,
+        @InjectModel(GroupMembershipModel)
+        private readonly membershipModel: typeof GroupMembershipModel,
+        @InjectModel(FundContributorModel)
+        private readonly contributorModel: typeof FundContributorModel,
     ) {}
 
     /** Rule đang bật và có hiệu lực ít nhất 1 ngày trong kỳ */
@@ -238,7 +257,8 @@ export class PointCalculationService {
             priority: number;
         })[] = [];
         for (const recap of data.recaps) {
-            if (recap.reviewStatus === RecapReviewStatus.REJECTED) continue;
+            // Chỉ tính khi recap đã được duyệt (recap MTE được chấm điểm)
+            if (recap.reviewStatus !== RecapReviewStatus.APPROVED) continue;
             if (new Date(recap.firstSubmittedAt) > now) continue;
             const session = sessionMap.get(recap.sessionId);
             const local = vnParts(new Date(recap.firstSubmittedAt));
@@ -268,7 +288,8 @@ export class PointCalculationService {
                     points: Number(rule.points),
                     sourceType: PointSourceType.MENTORING_RECAP,
                     sourceId: recap._id,
-                    description: `${rule.name}: recap ${session.code} nộp lúc ${formatVn(recap.firstSubmittedAt)}`,
+                    // Mốc: lần nộp của bản recap được duyệt (nộp lại sau khi bị trả thì tính từ lần nộp lại)
+                    description: `${rule.name}: recap ${session.code} nộp lúc ${formatVn(recap.firstSubmittedAt)} (lần nộp được duyệt${recap.reviewedAt ? ` ${formatVn(recap.reviewedAt)}` : ""})`,
                     group: rule.exclusiveGroup ?? null,
                     priority: Number(rule.priority ?? 0),
                 });
@@ -314,17 +335,13 @@ export class PointCalculationService {
                           )
                         : null;
                 // Điểm chất lượng recap (thang 100) do Leader/admin chấm; chưa chấm tính 0
-                const scores = [mentor, mentee].map((recap) =>
-                    recap?.score === null || recap?.score === undefined
+                // Barem xếp giải: điểm recap MTE (thang 100). Recap MTO chỉ duyệt, không có điểm
+                const menteeScore =
+                    mentee?.score === null || mentee?.score === undefined
                         ? null
-                        : Number(recap.score),
-                );
-                const recapScore =
-                    Math.round(((scores[0] ?? 0) + (scores[1] ?? 0)) * 50) /
-                    100;
-                const unscored = scores.filter(
-                    (value) => value === null,
-                ).length;
+                        : Number(mentee.score);
+                const recapScore = menteeScore ?? 0;
+                const unscored = menteeScore === null ? 1 : 0;
                 return { session, status, completedAt, recapScore, unscored };
             })
             .filter((item) => item.status === "DONE");
@@ -462,26 +479,36 @@ export class PointCalculationService {
     }
 
     /** Phụ cấp chức vụ: chức vụ còn hiệu lực ít nhất 1 ngày trong kỳ */
-    private async positionEntries(
-        period: Period,
-        rules: PointRule[],
-        members: Map<string, Member>,
-        t: Transaction,
-    ) {
-        const positionRules = rules.filter(
-            (rule) => rule.sourceType === PointSourceType.MEMBER_POSITION,
-        );
-        if (!positionRules.length) return [];
-        const assignments = await this.memberPositionModel.findAll({
+    /** Ngày chốt chức vụ / tỷ lệ hoàn tất: ngày cuối tháng, hoặc hôm nay nếu tháng chưa hết */
+    private refDate(period: Period) {
+        const today = vnDateKey(this.timeService.now());
+        return today < period.endDate ? today : period.endDate;
+    }
+
+    /**
+     * Người giữ chức vụ vào ngày chốt (đổi giữa tháng: tính cho người giữ vào ngày cuối tháng).
+     * Mỗi nhóm/ban + chức vụ chỉ lấy 1 người (bản ghi bắt đầu muộn nhất nếu trùng ngày bàn giao).
+     */
+    private async positionHolders(period: Period, t: Transaction) {
+        const ref = this.refDate(period);
+        const rows = await this.memberPositionModel.findAll({
             where: {
-                startDate: { [Op.lte]: period.endDate },
-                [Op.or]: [
-                    { endDate: null },
-                    { endDate: { [Op.gte]: period.startDate } },
-                ],
+                startDate: { [Op.lte]: ref },
+                [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: ref } }],
             },
+            order: [
+                ["startDate", "DESC"],
+                ["createdAt", "DESC"],
+            ],
             raw: true,
             transaction: t,
+        });
+        const seen = new Set<string>();
+        const holders = rows.filter((row) => {
+            const key = `${row.departmentId}|${row.positionId}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
         });
         const positions = new Map(
             (
@@ -496,28 +523,315 @@ export class PointCalculationService {
                 })
             ).map((item) => [item._id, item]),
         );
+        return holders.map((row) => ({
+            ...row,
+            position: positions.get(row.positionId),
+            department: departments.get(row.departmentId),
+        }));
+    }
+
+    /** Phụ cấp chức vụ: Leader 2đ, Phó nhóm 1đ (mặc định), tính theo từng nhóm/ban đang giữ */
+    private positionEntries(
+        period: Period,
+        rules: PointRule[],
+        members: Map<string, Member>,
+        holders: Awaited<
+            ReturnType<PointCalculationService["positionHolders"]>
+        >,
+    ) {
+        const positionRules = rules.filter(
+            (rule) => rule.sourceType === PointSourceType.MEMBER_POSITION,
+        );
         const entries: DesiredEntry[] = [];
-        for (const assignment of assignments) {
-            const position = positions.get(assignment.positionId);
+        for (const holder of holders) {
             for (const rule of positionRules) {
-                if ((rule.conditions ?? {}).positionCode !== position?.code)
+                if (
+                    (rule.conditions ?? {}).positionCode !==
+                    holder.position?.code
+                )
                     continue;
-                if (!this.targets(rule, members.get(assignment.memberId)))
-                    continue;
+                if (!this.targets(rule, members.get(holder.memberId))) continue;
                 entries.push({
-                    _id: stableId(rule._id, assignment._id, period._id),
+                    _id: stableId(rule._id, holder._id, period._id),
                     periodId: period._id,
-                    memberId: assignment.memberId,
+                    memberId: holder.memberId,
                     pointTypeId: rule.pointTypeId,
                     ruleId: rule._id,
                     points: Number(rule.points),
                     sourceType: PointSourceType.MEMBER_POSITION,
-                    sourceId: assignment._id,
-                    description: `${rule.name}: ${position.name} - ${departments.get(assignment.departmentId)?.name ?? ""}`,
+                    sourceId: holder._id,
+                    description: `${rule.name}: ${holder.position.name} - ${holder.department?.name ?? ""}`,
                 });
             }
         }
         return entries;
+    }
+
+    /**
+     * Tỷ lệ hoàn tất của thành viên từng nhóm (theo số thành viên):
+     * - Nhóm MTE: buổi mentoring của tháng "Đã xong" và recap MTE đã duyệt; đủ số bài tối thiểu
+     *   của các module học tập theo tháng / theo tuần (tuần thuộc tháng theo ngày thứ Năm, đã kết thúc).
+     * - Nhóm HLC Fund: mọi tuần của tháng (đã kết thúc) có khoản đóng được duyệt bao phủ (MTO và thầy cô).
+     */
+    private async groupCompletion(
+        period: Period,
+        mentoring: Awaited<
+            ReturnType<PointCalculationService["mentoringSessions"]>
+        >,
+        now: Date,
+        t: Transaction,
+    ) {
+        const ref = this.refDate(period);
+        const groups = await this.departmentModel.findAll({
+            where: { type: DepartmentType.GROUP },
+            raw: true,
+            transaction: t,
+        });
+        const result = new Map<string, { done: number; total: number }>();
+        if (!groups.length) return result;
+        const memberships = await this.membershipModel.findAll({
+            where: {
+                groupId: groups.map((group) => group._id),
+                startDate: { [Op.lte]: ref },
+                [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: ref } }],
+            },
+            raw: true,
+            transaction: t,
+        });
+        const weeks = weeksOwnedByMonth(period).filter(
+            (week) => week.endDate <= ref,
+        );
+
+        // Học tập
+        const modules = (
+            await this.moduleModel.findAll({
+                where: { isActive: true, code: { [Op.ne]: RECAP_MODULE_CODE } },
+                raw: true,
+                transaction: t,
+            })
+        ).filter(
+            (module) =>
+                Number(module.minSubmissionsPerCycle ?? 0) > 0 &&
+                [CycleType.MONTHLY, CycleType.WEEKLY].includes(
+                    module.cycleType as CycleType,
+                ),
+        );
+        const cycleKeys = [period.code, ...weeks.map((week) => week.weekKey)];
+        const submissions = modules.length
+            ? await this.submissionModel.findAll({
+                  where: {
+                      moduleId: modules.map((module) => module._id),
+                      cycleKey: cycleKeys,
+                      status: SubmissionStatus.SUBMITTED,
+                      reviewStatus: {
+                          [Op.ne]: SubmissionReviewStatus.REJECTED,
+                      },
+                  },
+                  attributes: ["memberId", "moduleId", "cycleKey"],
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const learningDone = (memberId: string, memberType: string) =>
+            modules
+                .filter((module) => {
+                    const target =
+                        module.targetMemberType ?? TargetMemberType.MENTEE;
+                    return (
+                        target === TargetMemberType.ALL ||
+                        (target as string) === memberType
+                    );
+                })
+                .every((module) => {
+                    const keys =
+                        module.cycleType === CycleType.MONTHLY
+                            ? [period.code]
+                            : weeks.map((week) => week.weekKey);
+                    return keys.every(
+                        (key) =>
+                            submissions.filter(
+                                (row) =>
+                                    row.memberId === memberId &&
+                                    row.moduleId === module._id &&
+                                    row.cycleKey === key,
+                            ).length >= Number(module.minSubmissionsPerCycle),
+                    );
+                });
+        const mentoringDone = (memberId: string) =>
+            mentoring.sessions
+                .filter((session) => {
+                    const pair = mentoring.pairMap.get(session.pairId);
+                    return (
+                        pair &&
+                        (pair.menteeId === memberId ||
+                            pair.mentorId === memberId)
+                    );
+                })
+                .every((session) => {
+                    const mentor = mentoring.recaps.find(
+                        (recap) =>
+                            recap.sessionId === session._id &&
+                            recap.role === MentoringRole.MENTOR,
+                    );
+                    const mentee = mentoring.recaps.find(
+                        (recap) =>
+                            recap.sessionId === session._id &&
+                            recap.role === MentoringRole.MENTEE,
+                    );
+                    return (
+                        pairRecapStatus(
+                            session,
+                            roleRecapStatus(session, mentor, now),
+                            roleRecapStatus(session, mentee, now),
+                        ) === "DONE" &&
+                        mentee?.reviewStatus === RecapReviewStatus.APPROVED
+                    );
+                });
+
+        // Quỹ (nhóm HLC Fund)
+        const fundGroupIds = groups
+            .filter((group) => group.groupKind === GroupKind.FUND)
+            .map((group) => group._id);
+        const contributors = fundGroupIds.length
+            ? await this.contributorModel.findAll({
+                  where: { groupId: fundGroupIds, isActive: true },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const fundRows = await this.fundModel.findAll({
+            where: {
+                status: FundContributionStatus.DONE,
+                contributionDate: { [Op.lte]: period.endDate },
+                [Op.or]: [
+                    { periodId: period._id },
+                    { coverUntil: { [Op.gte]: period.startDate } },
+                ],
+            },
+            raw: true,
+            transaction: t,
+        });
+        const fundDone = (payer: {
+            memberId?: string;
+            contributorId?: string;
+        }) => {
+            if (!weeks.length) return null;
+            const own = fundRows.filter((row) =>
+                payer.contributorId
+                    ? row.contributorId === payer.contributorId
+                    : row.memberId === payer.memberId,
+            );
+            return weeks.every((week) =>
+                own.some((row) => coveredWeeks(row).has(week.weekKey)),
+            );
+        };
+
+        const memberTypes = new Map(
+            (
+                await this.memberModel.findAll({
+                    attributes: ["_id", "memberType", "status"],
+                    raw: true,
+                    transaction: t,
+                })
+            ).map((member) => [member._id, member]),
+        );
+        for (const group of groups) {
+            const ids = memberships
+                .filter((row) => row.groupId === group._id)
+                .map((row) => row.memberId)
+                .filter(
+                    (id) =>
+                        memberTypes.get(id)?.status !== MemberStatus.INACTIVE,
+                );
+            let done = 0;
+            let total = 0;
+            if (group.groupKind === GroupKind.FUND) {
+                for (const payer of [
+                    ...ids.map((memberId) => ({ memberId })),
+                    ...contributors
+                        .filter((item) => item.groupId === group._id)
+                        .map((item) => ({ contributorId: item._id })),
+                ]) {
+                    const value = fundDone(payer);
+                    if (value === null) continue;
+                    total += 1;
+                    if (value) done += 1;
+                }
+            } else {
+                for (const memberId of ids) {
+                    total += 1;
+                    if (
+                        mentoringDone(memberId) &&
+                        learningDone(
+                            memberId,
+                            memberTypes.get(memberId)?.memberType,
+                        )
+                    )
+                        done += 1;
+                }
+            }
+            result.set(group._id, { done, total });
+        }
+        return result;
+    }
+
+    /** Thưởng cuối tháng +1 cho Leader / Phó nhóm khi tỷ lệ hoàn tất của nhóm vượt ngưỡng (mặc định trên 90%) */
+    private completionEntries(
+        period: Period,
+        rules: PointRule[],
+        members: Map<string, Member>,
+        holders: Awaited<
+            ReturnType<PointCalculationService["positionHolders"]>
+        >,
+        completion: Map<string, { done: number; total: number }>,
+    ) {
+        const bonusRules = rules.filter(
+            (rule) => rule.sourceType === PointSourceType.GROUP_COMPLETION,
+        );
+        const entries: DesiredEntry[] = [];
+        for (const holder of holders) {
+            const stats = completion.get(holder.departmentId);
+            if (!stats?.total) continue;
+            const rate = stats.done / stats.total;
+            for (const rule of bonusRules) {
+                const conditions = (rule.conditions ?? {}) as Record<
+                    string,
+                    unknown
+                >;
+                if (conditions.positionCode !== holder.position?.code) continue;
+                if (rate <= Number(conditions.minCompletionRate ?? 0.9))
+                    continue;
+                if (!this.targets(rule, members.get(holder.memberId))) continue;
+                entries.push({
+                    _id: stableId(
+                        rule._id,
+                        holder.departmentId,
+                        holder.memberId,
+                        period._id,
+                    ),
+                    periodId: period._id,
+                    memberId: holder.memberId,
+                    pointTypeId: rule.pointTypeId,
+                    ruleId: rule._id,
+                    points: Number(rule.points),
+                    sourceType: PointSourceType.GROUP_COMPLETION,
+                    sourceId: holder.departmentId,
+                    description: `${rule.name}: ${holder.position.name} - ${holder.department?.name ?? ""}, hoàn tất ${stats.done}/${stats.total} (${Math.round(rate * 100)}%)`,
+                });
+            }
+        }
+        return entries;
+    }
+
+    /** Tỷ lệ hoàn tất từng nhóm (dùng cho màn hình) */
+    async completionOf(period: Period, t: Transaction) {
+        const mentoring = await this.mentoringSessions(period, t);
+        return this.groupCompletion(
+            period,
+            mentoring,
+            this.timeService.now(),
+            t,
+        );
     }
 
     /** Bài nộp được duyệt (rule tùy chọn): conditions.moduleCode, conditions.minScore */
@@ -599,6 +913,7 @@ export class PointCalculationService {
             ),
         );
         const mentoring = await this.mentoringSessions(period, t);
+        const holders = await this.positionHolders(period, t);
         const awards = await this.rankAwards(period, mentoring, now, userId, t);
         const desired = this.applyCaps(
             [
@@ -611,7 +926,14 @@ export class PointCalculationService {
                 ),
                 ...this.awardEntries(period, rules, awards, mentoring, members),
                 ...(await this.fundEntries(period, rules, members, t)),
-                ...(await this.positionEntries(period, rules, members, t)),
+                ...this.positionEntries(period, rules, members, holders),
+                ...this.completionEntries(
+                    period,
+                    rules,
+                    members,
+                    holders,
+                    await this.groupCompletion(period, mentoring, now, t),
+                ),
                 ...(await this.submissionEntries(period, rules, members, t)),
             ].filter(
                 (entry) =>

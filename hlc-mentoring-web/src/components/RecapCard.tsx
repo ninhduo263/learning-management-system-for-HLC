@@ -7,10 +7,20 @@ import { REVIEW_STATUS_LABEL, formatDateTime, type RecapView } from '@/services/
 export default function RecapCard({ recap }: { recap: RecapView }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <Card size="small" className="mt-3" title={`Recap của ${recap.role === 'MENTOR' ? 'Mentor' : 'Mentee'} (${recap.memberCode})`} extra={<Tag color={recap.reviewStatus === 'APPROVED' ? 'green' : recap.reviewStatus === 'REJECTED' ? 'red' : 'gold'}>{REVIEW_STATUS_LABEL[recap.reviewStatus]}</Tag>}>
+    <Card size="small" className="mt-3" title={`Recap của ${recap.role === 'MENTOR' ? 'MTO' : 'MTE'} (${recap.memberCode})`} extra={<Tag color={recap.reviewStatus === 'APPROVED' ? 'green' : recap.reviewStatus === 'REJECTED' ? 'red' : 'gold'}>{REVIEW_STATUS_LABEL[recap.reviewStatus]}</Tag>}>
       <Typography.Paragraph type="secondary" className="!mb-2 text-xs">
         Nộp lần đầu {formatDateTime(recap.firstSubmittedAt)}{recap.isLate ? ' (muộn)' : ''} · sửa gần nhất {formatDateTime(recap.lastSubmittedAt)}
       </Typography.Paragraph>
+      {recap.proxy && (
+        <Alert
+          className="!mb-2"
+          type="warning"
+          showIcon
+          title={recap.proxy.importBatchId ? 'Nhập từ dữ liệu quý cũ' : 'Admin nhập hộ'}
+          description={`${recap.proxy.reason ?? ''}${recap.proxy.at ? ` · lúc ${formatDateTime(recap.proxy.at)}` : ''}`}
+        />
+      )}
+      {recap.role === 'MENTEE' && recap.score !== null && recap.score !== undefined && <Tag color="geekblue" className="!mb-2">Điểm recap {recap.score}/100</Tag>}
       <div style={expanded ? { whiteSpace: 'pre-wrap' } : { display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 6, overflow: 'hidden', whiteSpace: 'pre-wrap' }}>{recap.content}</div>
       {recap.content.length > 400 && <Button type="link" className="!px-0" onClick={() => setExpanded(!expanded)}>{expanded ? 'Thu gọn' : 'Hiển thị thêm'}</Button>}
       {recap.reviewNote && (

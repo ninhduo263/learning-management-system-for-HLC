@@ -1,7 +1,7 @@
 import { vnParts } from "@common/utils/vn-date.util";
 import { ApiError } from "@config/exception/api-error";
 import {
-    weekOfDate,
+    rowsOfWeek,
     weekStatus,
     weeksOfPeriod,
 } from "@module/fund/flow/fund-flow.service";
@@ -164,7 +164,16 @@ export class LeaderService {
         const weeks = weeksOfPeriod(period);
         const contributions = memberIds.length
             ? await this.fundModel.findAll({
-                  where: { periodId: period._id, memberId: memberIds },
+                  where: {
+                      memberId: memberIds,
+                      [Op.or]: [
+                          { periodId: period._id },
+                          {
+                              coverUntil: { [Op.gte]: period.startDate },
+                              contributionDate: { [Op.lte]: period.endDate },
+                          },
+                      ],
+                  },
                   raw: true,
               })
             : [];
@@ -256,12 +265,7 @@ export class LeaderService {
             );
             const fundWeeks = weeks.map((week) => ({
                 weekKey: week.weekKey,
-                status: weekStatus(
-                    own.filter(
-                        (row) =>
-                            weekOfDate(row.contributionDate) === week.weekKey,
-                    ),
-                ),
+                status: weekStatus(rowsOfWeek(own, week.weekKey)),
             }));
             return {
                 member: brief(memberId),
@@ -275,7 +279,11 @@ export class LeaderService {
                     pending: own.filter((row) => row.status === "PENDING")
                         .length,
                     approvedAmount: own
-                        .filter((row) => row.status === "DONE")
+                        .filter(
+                            (row) =>
+                                row.periodId === period._id &&
+                                row.status === "DONE",
+                        )
                         .reduce((sum, row) => sum + Number(row.amount), 0),
                 },
             };

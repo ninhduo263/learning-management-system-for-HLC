@@ -68,4 +68,18 @@ export class MentoringRecapModel extends Model implements MentoringRecap {
 
     @Column({ type: DataType.DATE, allowNull: true })
     scoredAt?: Date;
+
+    /** Nhập hộ: tài khoản admin nhập, thời điểm, lý do (null = thành viên tự nộp) */
+    @Column({ type: DataType.STRING(24), allowNull: true })
+    proxyBy?: string;
+
+    @Column({ type: DataType.DATE, allowNull: true })
+    proxyAt?: Date;
+
+    @Column({ type: DataType.TEXT, allowNull: true })
+    proxyReason?: string;
+
+    /** Lô nhập dữ liệu quý cũ */
+    @Column({ type: DataType.STRING(24), allowNull: true })
+    importBatchId?: string;
 }

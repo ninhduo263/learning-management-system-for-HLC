@@ -23,6 +23,8 @@ export enum PointSourceType {
     /** sourceId = Period._id */
     FUND_MONTHLY = "FUND_MONTHLY",
     POINT_ADJUSTMENT = "POINT_ADJUSTMENT",
+    /** Thưởng Leader/Phó nhóm khi tỷ lệ thành viên hoàn tất vượt ngưỡng; sourceId = nhóm */
+    GROUP_COMPLETION = "GROUP_COMPLETION",
 }
 
 export enum PointAdjustmentKind {

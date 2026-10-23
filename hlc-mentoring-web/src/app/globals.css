@@ -326,3 +326,14 @@ body {
     animation-duration: 4s;
   }
 }
+/* Báo cáo phụ cấp mùng 10 (in / lưu PDF) */
+.report-table { border-collapse: collapse; }
+.report-table th, .report-table td { border: 1px solid #d9dce5; padding: 4px 6px; vertical-align: top; }
+.report-table th { background: #f4f5fa; font-weight: 600; }
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  .role-sider, .app-header, .role-tabs, .no-print, .ant-drawer { display: none !important; }
+  .app-content { padding: 0 !important; }
+  .allowance-report { max-width: none; padding: 0; }
+  .report-block { break-inside: avoid; }
+}

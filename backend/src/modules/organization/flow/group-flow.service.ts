@@ -6,7 +6,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { Op, Transaction } from "sequelize";
 import { Sequelize } from "sequelize-typescript";
-import { DepartmentType } from "../common/constant";
+import { DepartmentType, GroupKind } from "../common/constant";
 import { DepartmentModel } from "../models/department.model";
 import { GroupMembershipModel } from "../models/group-membership.model";
 import { MemberPositionModel } from "../models/member-position.model";
@@ -68,7 +68,15 @@ export class GroupFlowService {
         const members = new Map(
             (
                 await this.memberModel.findAll({
-                    where: { _id: memberships.map((row) => row.memberId) },
+                    where: {
+                        _id: [
+                            ...memberships.map((row) => row.memberId),
+                            ...[...leaders.values()].flatMap((item) => [
+                                item.leaderId,
+                                item.deputyId,
+                            ]),
+                        ].filter(Boolean),
+                    },
                     raw: true,
                 })
             ).map((member) => [member._id, member]),
@@ -102,8 +110,15 @@ export class GroupFlowService {
 
     /** Thành viên đang hoạt động chưa thuộc nhóm nào */
     async unassigned() {
+        // Mentee cần 1 nhóm MTE, MTO cần 1 nhóm HLC Fund
+        const groups = new Map(
+            (await this.access.groups(true)).map((group) => [group._id, group]),
+        );
         const assigned = new Set(
-            (await this.access.currentMemberships()).map((row) => row.memberId),
+            (await this.access.currentMemberships()).map(
+                (row) =>
+                    `${row.memberId}:${groups.get(row.groupId)?.groupKind ?? GroupKind.MENTEE}`,
+            ),
         );
         const members = await this.memberModel.findAll({
             where: { status: { [Op.ne]: MemberStatus.INACTIVE } },
@@ -111,7 +126,12 @@ export class GroupFlowService {
             raw: true,
         });
         return members
-            .filter((member) => !assigned.has(member._id))
+            .filter(
+                (member) =>
+                    !assigned.has(
+                        `${member._id}:${member.memberType === MemberType.MENTOR ? GroupKind.FUND : GroupKind.MENTEE}`,
+                    ),
+            )
             .map((member) => memberBrief(member));
     }
 
@@ -136,6 +156,7 @@ export class GroupFlowService {
                     code: await this.nextCode(t),
                     name: dto.name.trim(),
                     type: DepartmentType.GROUP,
+                    groupKind: dto.groupKind ?? GroupKind.MENTEE,
                     deputyCanReview: dto.deputyCanReview ?? true,
                     isActive: dto.isActive ?? true,
                 },
@@ -194,8 +215,23 @@ export class GroupFlowService {
         note?: string,
     ) {
         const today = this.access.today();
+        // Mỗi người thuộc tối đa 1 nhóm của mỗi loại (nhóm MTE / nhóm HLC Fund)
+        const target = await this.getGroup(groupId, t);
+        const sameKind = await this.departmentModel.findAll({
+            where: {
+                type: DepartmentType.GROUP,
+                groupKind: target.groupKind ?? GroupKind.MENTEE,
+            },
+            attributes: ["_id"],
+            raw: true,
+            transaction: t,
+        });
         const current = await this.membershipModel.findOne({
-            where: { memberId, endDate: null },
+            where: {
+                memberId,
+                endDate: null,
+                groupId: sameKind.map((item) => item._id),
+            },
             transaction: t,
         });
         if (current?.groupId === groupId) return false;
@@ -243,6 +279,17 @@ export class GroupFlowService {
         });
         if (members.length !== new Set(memberIds).size)
             throw ApiError.NotFound("error-record-not-found");
+        // Nhóm MTE gồm mentee; nhóm HLC Fund gồm MTO (Leader/Phó nhóm Fund là MTE nhưng không đóng quỹ trong nhóm)
+        const group = await this.getGroup(groupId);
+        const expected =
+            group.groupKind === GroupKind.FUND
+                ? MemberType.MENTOR
+                : MemberType.MENTEE;
+        const wrong = members.find((member) => member.memberType !== expected);
+        if (wrong)
+            throw ApiError.BadRequest("error-group-member-type", {
+                name: wrong.fullName,
+            });
         let moved = 0;
         await this.sequelize.transaction(async (t) => {
             for (const member of members)
@@ -325,13 +372,17 @@ export class GroupFlowService {
                         transaction: t,
                     },
                 );
-                await this.moveMember(
-                    groupId,
-                    memberId,
-                    user,
-                    t,
-                    role === "LEADER" ? "Làm Leader" : "Làm Phó nhóm",
-                );
+                const group = await this.getGroup(groupId, t);
+                // Nhóm HLC Fund: Leader/Phó chỉ quản lý, không là thành viên đóng quỹ
+                if (group.groupKind !== GroupKind.FUND) {
+                    await this.moveMember(
+                        groupId,
+                        memberId,
+                        user,
+                        t,
+                        role === "LEADER" ? "Làm Leader" : "Làm Phó nhóm",
+                    );
+                }
                 await this.memberPositionModel.create(
                     {
                         memberId,

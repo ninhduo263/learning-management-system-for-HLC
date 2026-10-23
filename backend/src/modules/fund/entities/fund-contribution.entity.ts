@@ -19,6 +19,16 @@ export class FundContribution implements BaseEntity {
     @EntityDefinition.field({ label: "Thành viên", required: true })
     memberId: string;
 
+    contributorId?: string;
+
+    cycleType?: string;
+
+    coverUntil?: string;
+
+    submittedBy?: string;
+
+    isProxy?: boolean;
+
     @IsString()
     @MaxLength(24)
     @EntityDefinition.field({ label: "Kỳ tháng", required: true })

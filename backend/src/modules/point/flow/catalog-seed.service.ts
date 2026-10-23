@@ -110,6 +110,8 @@ const rule = (
     priority,
     isActive,
 });
+/** Phụ cấp mặc định theo chức vụ nhóm: Leader 2 điểm, Phó nhóm 1 điểm */
+const GROUP_ROLE_POINTS: Record<string, number> = { LEADER: 2, PHO_LEADER: 1 };
 const RULES = [
     rule(
         "MENTORING_EARLY_D1_7",
@@ -195,10 +197,24 @@ const RULES = [
             PointRuleKind.POSITION,
             PointSourceType.MEMBER_POSITION,
             { positionCode: position.code },
-            0,
+            GROUP_ROLE_POINTS[position.code] ?? 0,
             null,
             0,
-            false,
+            position.code in GROUP_ROLE_POINTS,
+        ),
+    ),
+    // Thưởng cuối tháng khi thành viên nhóm hoàn tất trên 90%
+    ...Object.keys(GROUP_ROLE_POINTS).map((code) =>
+        rule(
+            `POSITION_${code}_BONUS`,
+            `Thưởng ${code === "LEADER" ? "Leader" : "Phó nhóm"}: nhóm hoàn tất trên 90%`,
+            "POSITION",
+            PointRuleKind.AUTO,
+            PointSourceType.GROUP_COMPLETION,
+            { positionCode: code, minCompletionRate: 0.9 },
+            1,
+            null,
+            0,
         ),
     ),
 ];
@@ -361,6 +377,25 @@ export class CatalogSeedService implements OnApplicationBootstrap {
         private readonly criterionModel: typeof ModuleCriterionModel,
     ) {}
 
+    /** DB cũ: rule Leader/Phó nhóm còn ở mặc định (0 điểm, tắt) thì bật theo barem mới */
+    private async upgradeGroupRoleRules() {
+        let updated = 0;
+        for (const [code, points] of Object.entries(GROUP_ROLE_POINTS)) {
+            const [count] = await this.pointRuleModel.update(
+                { points, isActive: true },
+                {
+                    where: {
+                        code: `POSITION_${code}`,
+                        points: 0,
+                        isActive: false,
+                    },
+                },
+            );
+            updated += count;
+        }
+        return updated;
+    }
+
     /** Module RECAP: tạo nếu thiếu; tiêu chí chỉ tạo khi module chưa có tiêu chí nào */
     private async seedRecapModule() {
         const moduleId = seedId(`MOD:${RECAP_MODULE_CODE}`);
@@ -467,7 +502,8 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                     })),
                     (row) => ({ moduleId: row.moduleId, key: row.key }),
                 )) +
-                (await this.seedRecapModule());
+                (await this.seedRecapModule()) +
+                (await this.upgradeGroupRoleRules());
             if (created)
                 this.logger.log(`Đã tạo ${created} bản ghi danh mục mặc định`);
         } catch (error) {

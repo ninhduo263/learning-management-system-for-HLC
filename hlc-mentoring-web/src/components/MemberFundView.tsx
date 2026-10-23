@@ -1,17 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Progress, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Table, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import FileThumbs from '@/components/FileThumbs';
 import ImageUpload, { type UploadedImage } from '@/components/ImageUpload';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
-import { FUND_STATUS_COLOR, FUND_STATUS_LABEL, WEEK_STATUS_COLOR, WEEK_STATUS_LABEL, formatDate, fundApi, money, periodLabel, type ContributionView, type MyFund } from '@/services/hlcApi';
+import { FUND_CYCLE_LABEL, type FundCycle, FUND_STATUS_COLOR, FUND_STATUS_LABEL, WEEK_STATUS_COLOR, WEEK_STATUS_LABEL, formatDate, fundApi, money, periodLabel, type ContributionView, type MyFund } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
-interface FormValues { contributionDate: Dayjs; amount: number; note?: string; images: UploadedImage[] }
+interface FormValues { contributionDate: Dayjs; amount: number; note?: string; images: UploadedImage[]; cycleType?: FundCycle; coverUntil?: Dayjs }
 
 export default function MemberFundView({ role }: { role: 'MENTOR' | 'MENTEE' }) {
   const { message } = App.useApp();
@@ -42,15 +42,15 @@ export default function MemberFundView({ role }: { role: 'MENTOR' | 'MENTEE' }) 
   const openForm = (row?: ContributionView) => {
     form.resetFields();
     form.setFieldsValue(row
-      ? { contributionDate: dayjs(row.contributionDate), amount: row.amount, note: row.note ?? '', images: row.files.map((file) => ({ fileId: file.fileId, url: file.url, name: file.fileName })) }
-      : { contributionDate: dayjs(getCurrentTime()), images: [] });
+      ? { contributionDate: dayjs(row.contributionDate), amount: row.amount, note: row.note ?? '', cycleType: row.cycleType ?? 'ONCE', coverUntil: row.coverUntil ? dayjs(row.coverUntil) : undefined, images: row.files.map((file) => ({ fileId: file.fileId, url: file.url, name: file.fileName })) }
+      : { contributionDate: dayjs(getCurrentTime()), images: [], cycleType: role === 'MENTOR' ? 'WEEKLY' : 'ONCE' });
     setEditing(row ?? 'new');
   };
 
   const save = async (values: FormValues) => {
     setSaving(true);
     try {
-      const body = { contributionDate: values.contributionDate.format('YYYY-MM-DD'), amount: values.amount, note: values.note, fileIds: values.images.map((image) => image.fileId) };
+      const body = { contributionDate: values.contributionDate.format('YYYY-MM-DD'), amount: values.amount, note: values.note, cycleType: values.cycleType, coverUntil: values.coverUntil ? values.coverUntil.format('YYYY-MM-DD') : undefined, fileIds: values.images.map((image) => image.fileId) };
       if (editing && editing !== 'new') await fundApi.update(editing._id, body);
       else await fundApi.submit(body);
       message.success('Đã gửi minh chứng, chờ ban HLC Fund duyệt');
@@ -115,6 +115,7 @@ export default function MemberFundView({ role }: { role: 'MENTOR' | 'MENTEE' }) 
           columns={[
             { title: 'Ngày đóng', render: (_: unknown, row: ContributionView) => formatDate(row.contributionDate) },
             { title: 'Số tiền', align: 'right' as const, render: (_: unknown, row: ContributionView) => money(row.amount) },
+            { title: 'Chu kỳ', render: (_: unknown, row: ContributionView) => `${FUND_CYCLE_LABEL[row.cycleType ?? 'ONCE']}${row.coverUntil ? ` · đến ${formatDate(row.coverUntil)}` : ''}${row.isProxy ? ` · nộp hộ: ${row.proxyByName}` : ''}` },
             { title: 'Ảnh', render: (_: unknown, row: ContributionView) => <FileThumbs files={row.files} size={44} /> },
             { title: 'Trạng thái', render: (_: unknown, row: ContributionView) => <div><Tag color={FUND_STATUS_COLOR[row.status]}>{FUND_STATUS_LABEL[row.status]}</Tag>{row.reviewNote && <div className="text-xs text-red-500">{row.reviewNote}</div>}</div> },
             {
@@ -138,6 +139,10 @@ export default function MemberFundView({ role }: { role: 'MENTOR' | 'MENTEE' }) 
           <Form.Item name="amount" label="Số tiền (đ)" rules={[{ required: true, message: 'Nhập số tiền' }]}>
             <InputNumber<number> className="w-full" min={1000} step={10000} formatter={(value) => `${value ?? ''}`.replace(/\B(?=(\d{3})+(?!\d))/g, '.')} parser={(value) => Number((value ?? '').replace(/\./g, ''))} />
           </Form.Item>
+          <div className="grid grid-cols-2 gap-3">
+            <Form.Item name="cycleType" label="Chu kỳ"><Select options={Object.entries(FUND_CYCLE_LABEL).map(([value, label]) => ({ value, label }))} /></Form.Item>
+            <Form.Item name="coverUntil" label="Đóng đến ngày (nếu đóng trước)"><DatePicker className="w-full" format="DD/MM/YYYY" inputReadOnly /></Form.Item>
+          </div>
           <Form.Item name="images" label="Ảnh chuyển khoản" rules={[{ validator: (_, value: UploadedImage[]) => value?.length ? Promise.resolve() : Promise.reject(new Error('Cần ít nhất 1 ảnh')) }]}>
             <ImageUpload max={5} />
           </Form.Item>

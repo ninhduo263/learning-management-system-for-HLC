@@ -6,6 +6,7 @@ import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import FileThumbs from '@/components/FileThumbs';
 import FundGroupReport from '@/components/FundGroupReport';
+import FundLedgerPanel from '@/components/FundLedgerPanel';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
@@ -161,7 +162,8 @@ export default function AdminFundPage() {
         <Tabs items={[
           { key: 'list', label: date ? `Minh chứng ngày ${formatDate(date)}` : 'Minh chứng', children: listTab },
           { key: 'stats', label: 'Thống kê tháng', children: statsTab },
-          { key: 'groups', label: 'Theo nhóm / tuần', children: <FundGroupReport /> }
+          { key: 'groups', label: 'Theo nhóm / tuần', children: <FundGroupReport showKindFilter /> },
+          { key: 'ledger', label: 'Sổ thu chi', children: <FundLedgerPanel /> }
         ]} />
       </Card>
       <Modal title={`Từ chối ${rejecting?.length ?? 0} minh chứng`} open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Từ chối" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden>

@@ -56,7 +56,8 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
       message.warning('Nhập nhận xét để người viết biết lý do trả recap');
       return;
     }
-    if (status === 'APPROVED') {
+    const approveOnly = scoring.mode === 'APPROVE';
+    if (status === 'APPROVED' && !approveOnly) {
       try { await form.validateFields(); } catch { return; }
     }
     setSaving(true);
@@ -64,9 +65,9 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
       await leaderApi.score(scoring._id, {
         status,
         feedback: values.feedback,
-        scores: status === 'APPROVED' ? rubric.criteria.map((criterion) => ({ criterionId: criterion._id, score: Number(values.scores?.[criterion._id] ?? 0) })) : undefined
+        scores: status === 'APPROVED' && !approveOnly ? rubric.criteria.map((criterion) => ({ criterionId: criterion._id, score: Number(values.scores?.[criterion._id] ?? 0) })) : undefined
       });
-      message.success(status === 'APPROVED' ? 'Đã chấm recap' : 'Đã trả recap');
+      message.success(approveOnly ? (status === 'APPROVED' ? 'Đã duyệt recap MTO' : 'Đã không duyệt recap MTO') : status === 'APPROVED' ? 'Đã chấm recap' : 'Đã trả recap');
       setScoring(null);
       await load();
     } catch (error) {
@@ -89,7 +90,7 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
       </div>
       {rubric && (
         <Typography.Text type="secondary">
-          Barem thang {rubric.module.maxScore}: {rubric.criteria.map((item) => `${item.name} (${item.maxScore})`).join(' · ')}. Điểm trung bình 2 recap của cặp là căn cứ xếp giải Nhất/Nhì/Ba tháng.
+          Barem thang {rubric.module.maxScore}: {rubric.criteria.map((item) => `${item.name} (${item.maxScore})`).join(' · ')}. Điểm recap MTE là căn cứ xếp giải Nhất/Nhì/Ba tháng; recap MTO chỉ duyệt, không chấm điểm. Mọi màn hình chấm dùng chung barem này.
         </Typography.Text>
       )}
       <Table<RecapToScore>
@@ -104,15 +105,20 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
         columns={[
           { title: 'Buổi', render: (_: unknown, row: RecapToScore) => <div><code className="text-xs">{row.session.code}</code><div className="text-xs text-gray-500">{formatDateTime(row.session.scheduledStartAt)}</div></div> },
           { title: 'Nhóm', dataIndex: 'groupName', render: (value: string | null) => value ?? '—' },
-          { title: 'Người viết', render: (_: unknown, row: RecapToScore) => <div>{row.author?.fullName}<div><Tag color={row.role === 'MENTOR' ? 'blue' : 'green'}>{row.role === 'MENTOR' ? 'Mentor' : 'Mentee'}</Tag></div></div> },
+          { title: 'Người viết', render: (_: unknown, row: RecapToScore) => <div>{row.author?.fullName}<div><Tag color={row.role === 'MENTOR' ? 'blue' : 'green'}>{row.role === 'MENTOR' ? 'MTO · chỉ duyệt' : 'MTE · chấm điểm'}</Tag></div></div> },
           { title: 'Cặp', render: (_: unknown, row: RecapToScore) => <Tag color={PAIR_STATUS_COLOR[row.session.pairStatus]}>{PAIR_STATUS_LABEL[row.session.pairStatus]}</Tag> },
           { title: 'Nộp lúc', render: (_: unknown, row: RecapToScore) => <>{formatDateTime(row.firstSubmittedAt)}{row.isLate && <Tag color="orange" className="ml-1">Muộn</Tag>}</> },
-          { title: 'Điểm', render: (_: unknown, row: RecapToScore) => row.score !== null ? <strong>{points(row.score)}/100</strong> : row.reviewStatus === 'REJECTED' ? <Tag color="red">Đã trả</Tag> : <Tag>Chưa chấm</Tag> },
+          {
+            title: 'Kết quả',
+            render: (_: unknown, row: RecapToScore) => row.mode === 'APPROVE'
+              ? <Tag color={row.reviewStatus === 'APPROVED' ? 'green' : row.reviewStatus === 'REJECTED' ? 'red' : 'gold'}>{row.reviewStatus === 'APPROVED' ? 'Đã duyệt' : row.reviewStatus === 'REJECTED' ? 'Không duyệt' : 'Chờ duyệt'}</Tag>
+              : row.score !== null ? <strong>{points(row.score)}/100</strong> : row.reviewStatus === 'REJECTED' ? <Tag color="red">Đã trả</Tag> : <Tag>Chưa chấm</Tag>
+          },
           { title: '', render: (_: unknown, row: RecapToScore) => row.conflict ? <Tag color="purple" title="Leader không chấm recap của cặp mình tham gia">Cặp của bạn</Tag> : null }
         ]}
       />
       <Modal
-        title={scoring ? `Recap ${scoring.role === 'MENTOR' ? 'mentor' : 'mentee'} · ${scoring.session.code}` : ''}
+        title={scoring ? `Recap ${scoring.role === 'MENTOR' ? 'MTO' : 'MTE'} · ${scoring.session.code}` : ''}
         open={Boolean(scoring)}
         onCancel={() => setScoring(null)}
         width="min(860px, calc(100vw - 24px))"
@@ -121,8 +127,17 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
         footer={scoring?.canScore ? (
           <Space>
             <Button onClick={() => setScoring(null)}>Đóng</Button>
-            <Button danger loading={saving} onClick={() => submit('REJECTED')}>Trả recap</Button>
-            <Button type="primary" loading={saving} onClick={() => submit('APPROVED')}>Lưu điểm ({points(preview)}/100)</Button>
+            {scoring.mode === 'APPROVE' ? (
+              <>
+                <Button danger loading={saving} onClick={() => submit('REJECTED')}>Không duyệt</Button>
+                <Button type="primary" loading={saving} onClick={() => submit('APPROVED')}>Duyệt</Button>
+              </>
+            ) : (
+              <>
+                <Button danger loading={saving} onClick={() => submit('REJECTED')}>Trả recap</Button>
+                <Button type="primary" loading={saving} onClick={() => submit('APPROVED')}>Lưu điểm ({points(preview)}/100)</Button>
+              </>
+            )}
           </Space>
         ) : <Button onClick={() => setScoring(null)}>Đóng</Button>}
       >
@@ -138,7 +153,13 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
             ]} />
             <div className="whitespace-pre-wrap rounded-lg bg-gray-50 p-3">{scoring.content}</div>
             <FileThumbs files={scoring.files} size={88} />
-            {scoring.canScore && rubric && (
+            {scoring.canScore && scoring.mode === 'APPROVE' && (
+              <Form form={form} layout="vertical">
+                <Alert className="!mb-3" type="info" showIcon title="Recap của MTO chỉ Duyệt / Không duyệt, không chấm điểm và không tính vào điểm của MTO." />
+                <Form.Item name="feedback" label="Lý do (bắt buộc khi không duyệt)"><Input.TextArea rows={3} /></Form.Item>
+              </Form>
+            )}
+            {scoring.canScore && scoring.mode === 'SCORE' && rubric && (
               <Form form={form} layout="vertical">
                 <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-3">
                   {rubric.criteria.map((criterion) => (

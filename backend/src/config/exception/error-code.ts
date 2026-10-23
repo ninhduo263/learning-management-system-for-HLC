@@ -92,4 +92,12 @@ export type ErrorCode =
     | "error-group-leader-mentee-only"
     | "error-recap-score-conflict"
     | "error-mentoring-override-reason-required"
+    | "error-fund-cover-until-invalid"
+    | "error-fund-payer-required"
+    | "error-fund-cycle-required"
+    | "error-recap-score-required"
+    | "error-recap-mentor-admin-only"
+    | "error-group-member-type"
+    | "error-import-batch-reverted"
+    | "error-recap-exists"
     | FileErrorCode;

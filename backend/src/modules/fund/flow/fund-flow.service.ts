@@ -5,64 +5,57 @@ import { AttachmentOwnerType } from "@module/attachment/common/constant";
 import { MemberStatus, MemberType } from "@module/member/common/constant";
 import { Member } from "@module/member/entities/member.entity";
 import { MemberModel } from "@module/member/models/member.model";
+import { GroupKind } from "@module/organization/common/constant";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
+import { Period } from "@module/period/entities/period.entity";
 import { PeriodFlowService } from "@module/period/flow/period-flow.service";
-import { PointRuleModel } from "@module/point/models/point-rule.model";
+import { AdminScope } from "@module/permission/common/constant";
+import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
 import { PointSourceType } from "@module/point/common/constant";
+import { PointRuleModel } from "@module/point/models/point-rule.model";
 import { TimeService } from "@module/time/time.service";
+import { SystemRole } from "@module/user/common/constant";
 import { User } from "@module/user/entities/user.entity";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { Op, WhereOptions } from "sequelize";
 import { Sequelize } from "sequelize-typescript";
-import { FundContributionStatus } from "../common/constant";
+import { FundContributionStatus, FundCycleType } from "../common/constant";
 import { FundContribution } from "../entities/fund-contribution.entity";
 import { FundContributionModel } from "../models/fund-contribution.model";
-import { GroupAccessService } from "@module/organization/flow/group-access.service";
-import { AdminScope } from "@module/permission/common/constant";
-import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
-import { SystemRole } from "@module/user/common/constant";
-import { vnIsoWeekKey } from "@common/utils/vn-date.util";
-import { Period } from "@module/period/entities/period.entity";
-
-export type WeekStatus = "NONE" | FundContributionStatus;
-
-/** Các tuần ISO giao với tháng (cắt theo đầu/cuối tháng) */
-export function weeksOfPeriod(period: Pick<Period, "year" | "month">) {
-    const lastDay = new Date(
-        Date.UTC(period.year, period.month, 0),
-    ).getUTCDate();
-    const weeks: { weekKey: string; from: string; to: string }[] = [];
-    for (let day = 1; day <= lastDay; day += 1) {
-        const date = `${period.year}-${String(period.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-        const weekKey = weekOfDate(date);
-        const current = weeks[weeks.length - 1];
-        if (current?.weekKey === weekKey) current.to = date;
-        else weeks.push({ weekKey, from: date, to: date });
-    }
-    return weeks;
-}
-
-/** Tuần ISO của ngày YYYY-MM-DD */
-export const weekOfDate = (date: string) =>
-    vnIsoWeekKey(new Date(`${date}T12:00:00+07:00`));
-
-/** Trạng thái tuần: Đã xong nếu có minh chứng được duyệt; Chờ nếu đang chờ; Chưa xong nếu chỉ có minh chứng bị từ chối */
-export function weekStatus(rows: { status?: string }[]): WeekStatus {
-    if (rows.some((row) => row.status === FundContributionStatus.DONE))
-        return FundContributionStatus.DONE;
-    if (rows.some((row) => row.status === FundContributionStatus.PENDING))
-        return FundContributionStatus.PENDING;
-    if (rows.length) return FundContributionStatus.NOT_DONE;
-    return "NONE";
-}
+import { FundContributorModel } from "../models/fund-contributor.model";
+import { FundExpenseModel } from "../models/fund-expense.model";
 import { ContributionDto } from "./dto/contribution.dto";
+import { rowsOfWeek, weekStatus, weeksOfPeriod } from "./fund-weeks.util";
+
+export {
+    coveredWeeks,
+    rowsOfWeek,
+    weekOfDate,
+    weekStatus,
+    weeksOfPeriod,
+    weeksOwnedByMonth,
+} from "./fund-weeks.util";
+export type { WeekStatus } from "./fund-weeks.util";
 
 export interface ContributionQuery {
     period?: string;
     date?: string;
     status?: FundContributionStatus;
     memberId?: string;
+    contributorId?: string;
 }
+
+/** Loại người đóng trong sổ quỹ */
+export type PayerKind = "MTO" | "MTE" | "EXTERNAL";
+
+export interface ProxyContributionInput extends ContributionDto {
+    memberId?: string;
+    contributorId?: string;
+}
+
+const sum = (rows: { amount: number | string }[]) =>
+    rows.reduce((total, row) => total + Number(row.amount), 0);
 
 @Injectable()
 export class FundFlowService {
@@ -76,6 +69,10 @@ export class FundFlowService {
         private readonly permissionModel: typeof AdminPermissionModel,
         @InjectModel(FundContributionModel)
         private readonly contributionModel: typeof FundContributionModel,
+        @InjectModel(FundContributorModel)
+        private readonly contributorModel: typeof FundContributorModel,
+        @InjectModel(FundExpenseModel)
+        private readonly expenseModel: typeof FundExpenseModel,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
         @InjectModel(PointRuleModel)
@@ -112,47 +109,119 @@ export class FundFlowService {
             AttachmentOwnerType.FUND_CONTRIBUTION,
             rows.map((row) => row._id),
         );
+        const memberIds = [
+            ...new Set(rows.map((row) => row.memberId).filter(Boolean)),
+        ];
+        const contributorIds = [
+            ...new Set(rows.map((row) => row.contributorId).filter(Boolean)),
+        ];
         const members = new Map(
-            (
-                await this.memberModel.findAll({
-                    where: {
-                        _id: [...new Set(rows.map((row) => row.memberId))],
-                    },
-                    raw: true,
-                })
+            (memberIds.length
+                ? await this.memberModel.findAll({
+                      where: { _id: memberIds },
+                      raw: true,
+                  })
+                : []
             ).map((member) => [member._id, member]),
         );
+        const contributors = new Map(
+            (contributorIds.length
+                ? await this.contributorModel.findAll({
+                      where: { _id: contributorIds },
+                      raw: true,
+                  })
+                : []
+            ).map((item) => [item._id, item]),
+        );
+        const submitterIds = [
+            ...new Set(
+                rows
+                    .filter((row) => row.isProxy && row.submittedBy)
+                    .map((row) => row.submittedBy),
+            ),
+        ];
+        const submitters = new Map(
+            (submitterIds.length
+                ? await this.memberModel.findAll({
+                      where: { userId: submitterIds },
+                      raw: true,
+                  })
+                : []
+            ).map((member) => [member.userId, member.fullName]),
+        );
         return rows.map((row) => {
-            const member = members.get(row.memberId);
+            const member = row.memberId ? members.get(row.memberId) : null;
+            const contributor = row.contributorId
+                ? contributors.get(row.contributorId)
+                : null;
             return {
                 ...row,
                 amount: Number(row.amount),
                 files: files.get(row._id) ?? [],
-                member: member && {
-                    _id: member._id,
-                    memberCode: member.memberCode,
-                    fullName: member.fullName,
-                    memberType: member.memberType,
-                },
+                payerKind: (contributor
+                    ? "EXTERNAL"
+                    : member?.memberType === MemberType.MENTOR
+                      ? "MTO"
+                      : "MTE") as PayerKind,
+                member: member
+                    ? {
+                          _id: member._id,
+                          memberCode: member.memberCode,
+                          fullName: member.fullName,
+                          memberType: member.memberType,
+                      }
+                    : contributor
+                      ? {
+                            _id: contributor._id,
+                            memberCode: "",
+                            fullName: contributor.fullName,
+                            memberType: "EXTERNAL",
+                            organization: contributor.organization ?? null,
+                        }
+                      : null,
+                /** Người nộp hộ (Leader / admin) */
+                proxyByName: row.isProxy
+                    ? (submitters.get(row.submittedBy) ?? "Admin")
+                    : null,
             };
         });
     }
 
-    private validateDate(date: string) {
+    private validateInput(dto: ContributionDto) {
         const today = vnDateKey(this.timeService.now());
-        if (!isValidDateKey(date) || date > today)
+        if (
+            !isValidDateKey(dto.contributionDate) ||
+            dto.contributionDate > today
+        )
             throw ApiError.BadRequest("error-fund-date-invalid");
-        const [year, month] = date.split("-").map(Number);
+        if (
+            dto.coverUntil &&
+            (!isValidDateKey(dto.coverUntil) ||
+                dto.coverUntil < dto.contributionDate)
+        ) {
+            throw ApiError.BadRequest("error-fund-cover-until-invalid");
+        }
+        const [year, month] = dto.contributionDate.split("-").map(Number);
         return { year, month };
     }
 
+    private payload(dto: ContributionDto) {
+        return {
+            contributionDate: dto.contributionDate,
+            amount: dto.amount,
+            note: dto.note?.trim() || null,
+            cycleType: dto.cycleType ?? FundCycleType.ONCE,
+            coverUntil: dto.coverUntil || null,
+        };
+    }
+
     // ------------------------------------------------------------------
-    // Thành viên
+    // Thành viên tự nộp
     // ------------------------------------------------------------------
 
     async submit(user: User, dto: ContributionDto, id?: string) {
         const member = await this.memberOf(user);
-        const { year, month } = this.validateDate(dto.contributionDate);
+        const { year, month } = this.validateInput(dto);
         await this.attachments.loadFiles(dto.fileIds, { requireImage: true });
         const contributionId = await this.sequelize.transaction(async (t) => {
             const period = await this.periodFlow.ensurePeriod(year, month, t);
@@ -164,19 +233,15 @@ export class FundFlowService {
                     transaction: t,
                 });
                 if (!row) throw ApiError.NotFound("error-record-not-found");
-                if (
-                    row.status !== FundContributionStatus.PENDING &&
-                    row.status !== FundContributionStatus.NOT_DONE
-                ) {
+                if (row.status === FundContributionStatus.DONE)
                     throw ApiError.Conflict("error-fund-contribution-reviewed");
-                }
                 await row.update(
                     {
+                        ...this.payload(dto),
                         periodId: period._id,
-                        contributionDate: dto.contributionDate,
-                        amount: dto.amount,
-                        note: dto.note?.trim() || null,
                         submittedAt: this.timeService.now(),
+                        submittedBy: user._id,
+                        isProxy: false,
                         status: FundContributionStatus.PENDING,
                         reviewedBy: null,
                         reviewedAt: null,
@@ -186,12 +251,11 @@ export class FundFlowService {
             } else {
                 row = await this.contributionModel.create(
                     {
+                        ...this.payload(dto),
                         memberId: member._id,
                         periodId: period._id,
-                        contributionDate: dto.contributionDate,
-                        amount: dto.amount,
-                        note: dto.note?.trim() || null,
                         submittedAt: this.timeService.now(),
+                        submittedBy: user._id,
                     },
                     { transaction: t },
                 );
@@ -236,7 +300,19 @@ export class FundFlowService {
         return { deleted: true };
     }
 
-    /** Tiến độ tháng của tôi so với mức tối thiểu */
+    /** Khoản đóng có liên quan tới kỳ: đóng trong tháng, hoặc đóng trước và còn bao phủ tới tháng này */
+    private periodWhere(period: Period) {
+        return {
+            [Op.or]: [
+                { periodId: period._id },
+                {
+                    coverUntil: { [Op.gte]: period.startDate },
+                    contributionDate: { [Op.lte]: period.endDate },
+                },
+            ],
+        };
+    }
+
     async getMine(user: User, code?: string) {
         const member = await this.memberOf(user);
         const now = vnParts(this.timeService.now());
@@ -244,52 +320,59 @@ export class FundFlowService {
             ? await this.periodFlow.getByCode(code)
             : await this.periodFlow.ensurePeriod(now.year, now.month);
         const rows = await this.contributionModel.findAll({
-            where: { memberId: member._id, periodId: period._id },
+            where: { memberId: member._id, ...this.periodWhere(period) },
             order: [
                 ["contributionDate", "DESC"],
                 ["submittedAt", "DESC"],
             ],
             raw: true,
         });
+        const inMonth = rows.filter((row) => row.periodId === period._id);
         const target = await this.monthlyTarget();
-        const approved = rows
-            .filter((row) => row.status === FundContributionStatus.DONE)
-            .reduce((sum, row) => sum + Number(row.amount), 0);
-        const pending = rows
-            .filter((row) => row.status === FundContributionStatus.PENDING)
-            .reduce((sum, row) => sum + Number(row.amount), 0);
+        const approved = sum(
+            inMonth.filter((row) => row.status === FundContributionStatus.DONE),
+        );
         return {
             period: { ...period, isLocked: this.periodFlow.isLocked(period) },
             target,
             approvedAmount: approved,
-            pendingAmount: pending,
+            pendingAmount: sum(
+                inMonth.filter(
+                    (row) => row.status === FundContributionStatus.PENDING,
+                ),
+            ),
             reached: approved >= target.minApprovedAmount,
             isEligible: member.memberType === MemberType.MENTEE,
-            /** Mentor nộp minh chứng theo tuần; Leader nhóm duyệt */
             weeks: weeksOfPeriod(period).map((week) => {
-                const items = rows.filter(
-                    (row) => weekOfDate(row.contributionDate) === week.weekKey,
-                );
+                const items = rowsOfWeek(rows, week.weekKey);
                 return {
                     ...week,
                     status: weekStatus(items),
-                    amount: items.reduce(
-                        (sum, row) => sum + Number(row.amount),
-                        0,
+                    amount: sum(
+                        items.filter(
+                            (row) =>
+                                row.contributionDate >= week.from &&
+                                row.contributionDate <= week.to,
+                        ),
                     ),
                 };
             }),
-            groupId: await this.groupAccess.groupOfMember(member._id),
+            groupId: await this.groupAccess.groupOfMember(
+                member._id,
+                member.memberType === MemberType.MENTOR
+                    ? GroupKind.FUND
+                    : GroupKind.MENTEE,
+            ),
             contributions: await this.views(rows),
         };
     }
 
     // ------------------------------------------------------------------
-    // Theo nhóm: Leader / Phó nhóm duyệt minh chứng của nhóm mình
+    // Quyền: Admin HLC Fund / Leader nhóm
     // ------------------------------------------------------------------
 
-    /** Admin hoặc người có quyền FUND: xem/duyệt toàn bộ */
-    private async isFundAdmin(user: User) {
+    /** Admin toàn cục hoặc quyền FUND: xem/duyệt/nộp hộ toàn bộ */
+    async isFundAdmin(user: User) {
         if (user.systemRole === SystemRole.ADMIN) return true;
         return Boolean(
             await this.permissionModel.findOne({
@@ -299,54 +382,121 @@ export class FundFlowService {
         );
     }
 
-    /** Báo cáo tuần theo nhóm: mỗi thành viên x mỗi tuần trong tháng */
+    /** Nhóm người dùng quản lý: { groupIds xem được, groupIds được duyệt/nộp hộ }. null = toàn quyền */
+    private async managedGroups(user: User) {
+        if (await this.isFundAdmin(user)) return null;
+        const member = await this.groupAccess.memberOfUser(user);
+        const leading = member
+            ? await this.groupAccess.leadershipOf(member._id)
+            : [];
+        if (!leading.length) throw ApiError.Forbidden("error-forbidden");
+        return {
+            selfId: member._id,
+            view: new Set(leading.map((item) => item._id)),
+            review: new Set(
+                leading
+                    .filter((item) => item.canReview)
+                    .map((item) => item._id),
+            ),
+        };
+    }
+
+    /** Leader/Phó: chỉ thành viên (hoặc thầy cô) của nhóm mình, không tự duyệt khoản của chính mình */
+    async assertCanReview(
+        user: User,
+        rows: Pick<FundContribution, "memberId" | "contributorId">[],
+    ) {
+        const managed = await this.managedGroups(user).catch(() => {
+            throw ApiError.Forbidden("error-forbidden");
+        });
+        if (!managed) return;
+        const memberships = await this.groupAccess.currentMemberships([
+            ...managed.review,
+        ]);
+        const memberIds = new Set(memberships.map((row) => row.memberId));
+        const contributorIds = new Set(
+            (
+                await this.contributorModel.findAll({
+                    where: { groupId: [...managed.review] },
+                    attributes: ["_id"],
+                    raw: true,
+                })
+            ).map((item) => item._id),
+        );
+        for (const row of rows) {
+            const allowed = row.contributorId
+                ? contributorIds.has(row.contributorId)
+                : memberIds.has(row.memberId) &&
+                  row.memberId !== managed.selfId;
+            if (!allowed) throw ApiError.Forbidden("error-forbidden");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Báo cáo theo nhóm, theo tuần
+    // ------------------------------------------------------------------
+
     async groupReport(
         user: User,
-        query: { period?: string; groupId?: string },
+        query: { period?: string; groupId?: string; kind?: GroupKind },
     ) {
         const now = vnParts(this.timeService.now());
         const period = query.period
             ? await this.periodFlow.getByCode(query.period)
             : await this.periodFlow.ensurePeriod(now.year, now.month);
-        const isAdmin = await this.isFundAdmin(user);
-        let groups = await this.groupAccess.groups();
-        let canReviewGroupIds = new Set(groups.map((group) => group._id));
-        if (!isAdmin) {
-            const member = await this.groupAccess.memberOfUser(user);
-            const leading = member
-                ? await this.groupAccess.leadershipOf(member._id)
-                : [];
-            if (!leading.length) throw ApiError.Forbidden("error-forbidden");
-            groups = groups.filter((group) =>
-                leading.some((item) => item._id === group._id),
-            );
-            canReviewGroupIds = new Set(
-                leading
-                    .filter((item) => item.canReview)
-                    .map((item) => item._id),
-            );
-        }
+        const managed = await this.managedGroups(user);
+        let groups = await this.groupAccess.groups(false, query.kind);
+        if (managed)
+            groups = groups.filter((group) => managed.view.has(group._id));
         if (query.groupId)
             groups = groups.filter((group) => group._id === query.groupId);
+        const groupIds = groups.map((group) => group._id);
         const weeks = weeksOfPeriod(period);
-        const memberships = await this.groupAccess.currentMemberships(
-            groups.map((group) => group._id),
-        );
-        const leaders = await this.groupAccess.leadersOf(
-            groups.map((group) => group._id),
-        );
+        const memberships = await this.groupAccess.currentMemberships(groupIds);
+        const leaders = await this.groupAccess.leadersOf(groupIds);
+        const contributors = groupIds.length
+            ? await this.contributorModel.findAll({
+                  where: { groupId: groupIds, isActive: true },
+                  order: [["fullName", "ASC"]],
+                  raw: true,
+              })
+            : [];
         const memberIds = memberships.map((row) => row.memberId);
         const members = new Map(
-            (
-                await this.memberModel.findAll({
-                    where: { _id: memberIds },
-                    raw: true,
-                })
+            (memberIds.length
+                ? await this.memberModel.findAll({
+                      where: { _id: memberIds },
+                      raw: true,
+                  })
+                : []
             ).map((member) => [member._id, member]),
         );
-        const rows = memberIds.length
+        const leaderIds = [...leaders.values()]
+            .flatMap((item) => [item.leaderId, item.deputyId])
+            .filter(Boolean);
+        const leaderMembers = new Map(
+            (leaderIds.length
+                ? await this.memberModel.findAll({
+                      where: { _id: leaderIds },
+                      raw: true,
+                  })
+                : []
+            ).map((member) => [member._id, member]),
+        );
+        const payerWhere = [
+            ...(memberIds.length ? [{ memberId: memberIds }] : []),
+            ...(contributors.length
+                ? [{ contributorId: contributors.map((item) => item._id) }]
+                : []),
+        ];
+        const rows = payerWhere.length
             ? await this.contributionModel.findAll({
-                  where: { periodId: period._id, memberId: memberIds },
+                  where: {
+                      [Op.and]: [
+                          this.periodWhere(period),
+                          { [Op.or]: payerWhere },
+                      ],
+                  },
                   order: [
                       ["contributionDate", "ASC"],
                       ["submittedAt", "ASC"],
@@ -354,85 +504,119 @@ export class FundFlowService {
                   raw: true,
               })
             : [];
-        const brief = (id?: string | null) => {
-            const member = id ? members.get(id) : null;
-            return member
-                ? {
-                      _id: member._id,
-                      memberCode: member.memberCode,
-                      fullName: member.fullName,
-                      memberType: member.memberType,
-                  }
-                : null;
-        };
+        const brief = (member?: Member) =>
+            member && {
+                _id: member._id,
+                memberCode: member.memberCode,
+                fullName: member.fullName,
+                memberType: member.memberType,
+            };
+        const payerRow = (
+            payer: {
+                _id: string;
+                memberCode: string;
+                fullName: string;
+                memberType: string;
+                organization?: string | null;
+            },
+            own: FundContribution[],
+        ) => ({
+            member: payer,
+            total: sum(
+                own.filter(
+                    (row) =>
+                        row.status === FundContributionStatus.DONE &&
+                        row.periodId === period._id,
+                ),
+            ),
+            /** Đã đóng (được duyệt) tới ngày */
+            paidUntil: own
+                .filter((row) => row.status === FundContributionStatus.DONE)
+                .reduce<string | null>((max, row) => {
+                    const until = row.coverUntil ?? row.contributionDate;
+                    return !max || until > max ? until : max;
+                }, null),
+            weeks: Object.fromEntries(
+                weeks.map((week) => {
+                    const items = rowsOfWeek(own, week.weekKey);
+                    return [
+                        week.weekKey,
+                        {
+                            status: weekStatus(items),
+                            amount: sum(
+                                items.filter(
+                                    (row) =>
+                                        row.contributionDate >= week.from &&
+                                        row.contributionDate <= week.to,
+                                ),
+                            ),
+                            ids: items.map((row) => row._id),
+                        },
+                    ];
+                }),
+            ),
+        });
         return {
             period: { ...period, isLocked: this.periodFlow.isLocked(period) },
             weeks,
-            isAdmin,
+            isAdmin: !managed,
             groups: groups.map((group) => {
+                const roles = leaders.get(group._id);
                 const ids = memberships
                     .filter((row) => row.groupId === group._id)
                     .map((row) => row.memberId);
-                const roles = leaders.get(group._id);
-                const memberRows = ids
-                    .map((id) => {
-                        const own = rows.filter((row) => row.memberId === id);
-                        return {
-                            member: brief(id),
-                            total: own
-                                .filter(
-                                    (row) =>
-                                        row.status ===
-                                        FundContributionStatus.DONE,
-                                )
-                                .reduce(
-                                    (sum, row) => sum + Number(row.amount),
-                                    0,
+                const groupContributors = contributors.filter(
+                    (item) => item.groupId === group._id,
+                );
+                const memberRows = [
+                    ...ids
+                        .map((id) => members.get(id))
+                        .filter(Boolean)
+                        .sort((a, b) =>
+                            a.memberType === b.memberType
+                                ? a.memberCode.localeCompare(b.memberCode)
+                                : a.memberType === MemberType.MENTOR
+                                  ? -1
+                                  : 1,
+                        )
+                        .map((member) =>
+                            payerRow(
+                                brief(member),
+                                rows.filter(
+                                    (row) => row.memberId === member._id,
                                 ),
-                            weeks: Object.fromEntries(
-                                weeks.map((week) => {
-                                    const items = own.filter(
-                                        (row) =>
-                                            weekOfDate(row.contributionDate) ===
-                                            week.weekKey,
-                                    );
-                                    return [
-                                        week.weekKey,
-                                        {
-                                            status: weekStatus(items),
-                                            amount: items.reduce(
-                                                (sum, row) =>
-                                                    sum + Number(row.amount),
-                                                0,
-                                            ),
-                                            ids: items.map((row) => row._id),
-                                        },
-                                    ];
-                                }),
                             ),
-                        };
-                    })
-                    .filter((row) => row.member)
-                    // Mentor (người nộp quỹ theo tuần) lên trước
-                    .sort((a, b) =>
-                        a.member.memberType === b.member.memberType
-                            ? a.member.memberCode.localeCompare(
-                                  b.member.memberCode,
-                              )
-                            : a.member.memberType === MemberType.MENTOR
-                              ? -1
-                              : 1,
-                    );
+                        ),
+                    ...groupContributors.map((item) =>
+                        payerRow(
+                            {
+                                _id: item._id,
+                                memberCode: "",
+                                fullName: item.fullName,
+                                memberType: "EXTERNAL",
+                                organization: item.organization ?? null,
+                            },
+                            rows.filter(
+                                (row) => row.contributorId === item._id,
+                            ),
+                        ),
+                    ),
+                ];
+                const payerIds = new Set([
+                    ...ids,
+                    ...groupContributors.map((item) => item._id),
+                ]);
                 return {
                     _id: group._id,
                     code: group.code,
                     name: group.name,
-                    leader: brief(roles?.leaderId),
-                    deputy: brief(roles?.deputyId),
-                    canReview: canReviewGroupIds.has(group._id),
+                    groupKind: group.groupKind ?? GroupKind.MENTEE,
+                    leader: brief(leaderMembers.get(roles?.leaderId)) ?? null,
+                    deputy: brief(leaderMembers.get(roles?.deputyId)) ?? null,
+                    canReview: !managed || managed.review.has(group._id),
                     pending: rows.filter(
                         (row) =>
-                            ids.includes(row.memberId) &&
+                            payerIds.has(row.memberId ?? row.contributorId) &&
                             row.status === FundContributionStatus.PENDING,
                     ).length,
                     members: memberRows,
@@ -442,16 +626,123 @@ export class FundFlowService {
         };
     }
 
-    /** Kiểm tra người duyệt được duyệt các minh chứng này (Leader: chỉ nhóm mình, không duyệt của chính mình) */
-    async assertCanReview(user: User, memberIds: string[]) {
-        if (await this.isFundAdmin(user)) return;
-        const scope = await this.groupAccess.reviewerScope(user, {
-            requireReview: true,
-        });
-        for (const memberId of memberIds) {
-            if (!scope.memberIds.has(memberId) || memberId === scope.memberId)
-                throw ApiError.Forbidden("error-forbidden");
+    // ------------------------------------------------------------------
+    // Nộp hộ (Leader nhóm / Admin HLC Fund)
+    // ------------------------------------------------------------------
+
+    async proxySubmit(user: User, input: ProxyContributionInput) {
+        if (!input.memberId === !input.contributorId)
+            throw ApiError.BadRequest("error-fund-payer-required");
+        const { year, month } = this.validateInput(input);
+        if (input.contributorId) {
+            const contributor = await this.contributorModel.findByPk(
+                input.contributorId,
+                { raw: true },
+            );
+            if (!contributor) throw ApiError.NotFound("error-record-not-found");
+            // Thầy cô: bắt buộc khai báo chu kỳ và thời gian đóng
+            if (!input.cycleType)
+                throw ApiError.BadRequest("error-fund-cycle-required");
+        } else if (
+            !(await this.memberModel.findByPk(input.memberId, { raw: true }))
+        ) {
+            throw ApiError.NotFound("error-record-not-found");
         }
+        await this.assertCanReview(user, [
+            { memberId: input.memberId, contributorId: input.contributorId },
+        ]);
+        await this.attachments.loadFiles(input.fileIds, { requireImage: true });
+        const id = await this.sequelize.transaction(async (t) => {
+            const period = await this.periodFlow.ensurePeriod(year, month, t);
+            this.periodFlow.assertWritable(period);
+            const row = await this.contributionModel.create(
+                {
+                    ...this.payload(input),
+                    memberId: input.memberId ?? null,
+                    contributorId: input.contributorId ?? null,
+                    periodId: period._id,
+                    submittedAt: this.timeService.now(),
+                    submittedBy: user._id,
+                    isProxy: true,
+                },
+                { transaction: t },
+            );
+            await this.attachments.replace(
+                AttachmentOwnerType.FUND_CONTRIBUTION,
+                row._id,
+                input.fileIds,
+                user,
+                t,
+            );
+            return row._id;
+        });
+        const [view] = await this.views([
+            await this.contributionModel.findByPk(id, { raw: true }),
+        ]);
+        return view;
+    }
+
+    // ------------------------------------------------------------------
+    // Thầy cô ngoài danh sách MTO
+    // ------------------------------------------------------------------
+
+    async listContributors(user: User, groupId?: string) {
+        const managed = await this.managedGroups(user);
+        const where: WhereOptions = {};
+        if (managed) where.groupId = [...managed.view];
+        if (groupId)
+            where.groupId =
+                managed && !managed.view.has(groupId) ? [] : groupId;
+        return this.contributorModel.findAll({
+            where,
+            order: [["fullName", "ASC"]],
+            raw: true,
+        });
+    }
+
+    async saveContributor(
+        user: User,
+        dto: {
+            fullName: string;
+            organization?: string;
+            contact?: string;
+            groupId?: string;
+            note?: string;
+            isActive?: boolean;
+        },
+        id?: string,
+    ) {
+        const managed = await this.managedGroups(user);
+        if (dto.groupId) {
+            const groups = await this.groupAccess.groups(true, GroupKind.FUND);
+            if (!groups.some((group) => group._id === dto.groupId))
+                throw ApiError.BadRequest("error-group-not-found");
+        }
+        // Leader nhóm Fund chỉ thêm/sửa thầy cô trong nhóm mình
+        if (managed && (!dto.groupId || !managed.review.has(dto.groupId)))
+            throw ApiError.Forbidden("error-forbidden");
+        const values = {
+            fullName: dto.fullName.trim(),
+            organization: dto.organization?.trim() || null,
+            contact: dto.contact?.trim() || null,
+            groupId: dto.groupId || null,
+            note: dto.note?.trim() || null,
+            ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        };
+        if (id) {
+            const row = await this.contributorModel.findByPk(id);
+            if (!row) throw ApiError.NotFound("error-record-not-found");
+            if (managed && !managed.review.has(row.groupId))
+                throw ApiError.Forbidden("error-forbidden");
+            await row.update(values);
+            return row.get({ plain: true });
+        }
+        return (
+            await this.contributorModel.create({
+                ...values,
+                createdBy: user._id,
+            })
+        ).get({ plain: true });
     }
 
     // ------------------------------------------------------------------
@@ -467,6 +758,7 @@ export class FundFlowService {
         if (query.date) where.contributionDate = query.date;
         if (query.status) where.status = query.status;
         if (query.memberId) where.memberId = query.memberId;
+        if (query.contributorId) where.contributorId = query.contributorId;
         const rows = await this.contributionModel.findAll({
             where,
             order: [
@@ -491,15 +783,11 @@ export class FundFlowService {
         });
         if (rows.length !== new Set(ids).size)
             throw ApiError.NotFound("error-record-not-found");
-        await this.assertCanReview(
-            user,
-            rows.map((row) => row.memberId),
-        );
-        for (const periodId of new Set(rows.map((row) => row.periodId))) {
+        await this.assertCanReview(user, rows);
+        for (const periodId of new Set(rows.map((row) => row.periodId)))
             this.periodFlow.assertWritable(
                 await this.periodFlow.getById(periodId),
             );
-        }
         const [affected] = await this.contributionModel.update(
             {
                 status,
@@ -520,7 +808,7 @@ export class FundFlowService {
         };
     }
 
-    /** Thống kê tháng: tổng tiền, số người đạt mức, ai chưa đóng */
+    /** Thống kê tháng của mentee: tổng tiền, số người đạt mức, ai chưa đóng */
     async stats(code: string) {
         const period = await this.periodFlow.getByCode(code);
         const target = await this.monthlyTarget();
@@ -536,46 +824,30 @@ export class FundFlowService {
             order: [["memberCode", "ASC"]],
             raw: true,
         });
-        const byMember = new Map<
-            string,
-            {
-                approved: number;
-                pending: number;
-                rejected: number;
-                count: number;
-            }
-        >();
-        for (const row of rows) {
-            const bucket = byMember.get(row.memberId) ?? {
-                approved: 0,
-                pending: 0,
-                rejected: 0,
-                count: 0,
-            };
-            const amount = Number(row.amount);
-            if (row.status === FundContributionStatus.DONE)
-                bucket.approved += amount;
-            else if (row.status === FundContributionStatus.PENDING)
-                bucket.pending += amount;
-            else bucket.rejected += amount;
-            bucket.count += 1;
-            byMember.set(row.memberId, bucket);
-        }
         const memberRows = members.map((member: Member) => {
-            const bucket = byMember.get(member._id) ?? {
-                approved: 0,
-                pending: 0,
-                rejected: 0,
-                count: 0,
-            };
+            const own = rows.filter((row) => row.memberId === member._id);
+            const approved = sum(
+                own.filter((row) => row.status === FundContributionStatus.DONE),
+            );
             return {
                 member: {
                     _id: member._id,
                     memberCode: member.memberCode,
                     fullName: member.fullName,
                 },
-                ...bucket,
-                reached: bucket.approved >= target.minApprovedAmount,
+                approved,
+                pending: sum(
+                    own.filter(
+                        (row) => row.status === FundContributionStatus.PENDING,
+                    ),
+                ),
+                rejected: sum(
+                    own.filter(
+                        (row) => row.status === FundContributionStatus.NOT_DONE,
+                    ),
+                ),
+                count: own.length,
+                reached: approved >= target.minApprovedAmount,
             };
         });
         const byDate = new Map<
@@ -615,9 +887,11 @@ export class FundFlowService {
                 pending: rows.filter(
                     (row) => row.status === FundContributionStatus.PENDING,
                 ).length,
-                approvedAmount: rows
-                    .filter((row) => row.status === FundContributionStatus.DONE)
-                    .reduce((sum, row) => sum + Number(row.amount), 0),
+                approvedAmount: sum(
+                    rows.filter(
+                        (row) => row.status === FundContributionStatus.DONE,
+                    ),
+                ),
                 mentees: memberRows.length,
                 reached: memberRows.filter((row) => row.reached).length,
                 notContributed: memberRows.filter((row) => row.count === 0)
@@ -628,5 +902,168 @@ export class FundFlowService {
             ),
             members: memberRows,
         };
+    }
+
+    // ------------------------------------------------------------------
+    // Sổ thu chi chung (MTO + MTE + thầy cô), theo tháng và quý
+    // ------------------------------------------------------------------
+
+    async ledger(query: { year?: number; quarter?: number; kind?: PayerKind }) {
+        const year = query.year || vnParts(this.timeService.now()).year;
+        const months = query.quarter
+            ? [0, 1, 2].map((index) => (query.quarter - 1) * 3 + 1 + index)
+            : Array.from({ length: 12 }, (_, index) => index + 1);
+        const from = `${year}-${String(months[0]).padStart(2, "0")}-01`;
+        const lastMonth = months[months.length - 1];
+        const to = `${year}-${String(lastMonth).padStart(2, "0")}-${String(new Date(Date.UTC(year, lastMonth, 0)).getUTCDate()).padStart(2, "0")}`;
+        const income = await this.contributionModel.findAll({
+            where: {
+                status: FundContributionStatus.DONE,
+                contributionDate: { [Op.lte]: to },
+            },
+            raw: true,
+        });
+        const expenses = await this.expenseModel.findAll({
+            where: { expenseDate: { [Op.lte]: to } },
+            order: [["expenseDate", "DESC"]],
+            raw: true,
+        });
+        const members = new Map(
+            (
+                await this.memberModel.findAll({
+                    where: {
+                        _id: [
+                            ...new Set(
+                                income
+                                    .map((row) => row.memberId)
+                                    .filter(Boolean),
+                            ),
+                        ],
+                    },
+                    attributes: ["_id", "memberType"],
+                    raw: true,
+                })
+            ).map((member) => [member._id, member.memberType]),
+        );
+        const kindOf = (row: FundContribution): PayerKind =>
+            row.contributorId
+                ? "EXTERNAL"
+                : members.get(row.memberId) === MemberType.MENTOR
+                  ? "MTO"
+                  : "MTE";
+        const incomeRows = income.filter(
+            (row) => !query.kind || kindOf(row) === query.kind,
+        );
+        const inRange = (date: string) => date >= from && date <= to;
+        const monthOf = (date: string) => Number(date.slice(5, 7));
+        const byMonth = months.map((month) => {
+            const monthIncome = incomeRows.filter(
+                (row) =>
+                    inRange(row.contributionDate) &&
+                    monthOf(row.contributionDate) === month,
+            );
+            const monthExpense = expenses.filter(
+                (row) =>
+                    inRange(row.expenseDate) &&
+                    monthOf(row.expenseDate) === month,
+            );
+            return {
+                month,
+                code: `${year}-${String(month).padStart(2, "0")}`,
+                income: {
+                    total: sum(monthIncome),
+                    MTO: sum(
+                        monthIncome.filter((row) => kindOf(row) === "MTO"),
+                    ),
+                    MTE: sum(
+                        monthIncome.filter((row) => kindOf(row) === "MTE"),
+                    ),
+                    EXTERNAL: sum(
+                        monthIncome.filter((row) => kindOf(row) === "EXTERNAL"),
+                    ),
+                },
+                expense: sum(monthExpense),
+            };
+        });
+        const quarters = [1, 2, 3, 4]
+            .filter((item) => !query.quarter || item === query.quarter)
+            .map((item) => {
+                const rows = byMonth.filter(
+                    (row) => Math.ceil(row.month / 3) === item,
+                );
+                return {
+                    quarter: item,
+                    income: rows.reduce(
+                        (total, row) => total + row.income.total,
+                        0,
+                    ),
+                    expense: rows.reduce(
+                        (total, row) => total + row.expense,
+                        0,
+                    ),
+                };
+            });
+        const totalIncome = byMonth.reduce(
+            (total, row) => total + row.income.total,
+            0,
+        );
+        const totalExpense = byMonth.reduce(
+            (total, row) => total + row.expense,
+            0,
+        );
+        return {
+            year,
+            quarter: query.quarter ?? null,
+            kind: query.kind ?? null,
+            from,
+            to,
+            totals: {
+                income: totalIncome,
+                expense: totalExpense,
+                net: totalIncome - totalExpense,
+                /** Tồn quỹ cuối kỳ (mọi khoản thu đã duyệt - mọi khoản chi đến ngày cuối kỳ) */
+                balance: sum(income) - sum(expenses),
+            },
+            byMonth,
+            byQuarter: quarters,
+            expenses: expenses
+                .filter((row) => inRange(row.expenseDate))
+                .map((row) => ({ ...row, amount: Number(row.amount) })),
+        };
+    }
+
+    async saveExpense(
+        user: User,
+        dto: {
+            expenseDate: string;
+            amount: number;
+            description: string;
+            category?: string;
+        },
+        id?: string,
+    ) {
+        if (!isValidDateKey(dto.expenseDate))
+            throw ApiError.BadRequest("error-fund-date-invalid");
+        const values = {
+            expenseDate: dto.expenseDate,
+            amount: dto.amount,
+            description: dto.description.trim(),
+            category: dto.category?.trim() || null,
+        };
+        if (id) {
+            const row = await this.expenseModel.findByPk(id);
+            if (!row) throw ApiError.NotFound("error-record-not-found");
+            await row.update(values);
+            return row.get({ plain: true });
+        }
+        return (
+            await this.expenseModel.create({ ...values, createdBy: user._id })
+        ).get({ plain: true });
+    }
+
+    async removeExpense(id: string) {
+        const deleted = await this.expenseModel.destroy({ where: { _id: id } });
+        if (!deleted) throw ApiError.NotFound("error-record-not-found");
+        return { deleted: true };
     }
 }

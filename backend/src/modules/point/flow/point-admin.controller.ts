@@ -74,6 +74,17 @@ export class PointAdminController {
         return this.flowService.markPaid(periodCode(code));
     }
 
+    /** Dữ liệu báo cáo PDF mùng 10 (FE in ra PDF) */
+    @Get("periods/:code/report")
+    report(@Param("code") code: string) {
+        return this.flowService.report(periodCode(code));
+    }
+
+    @Get("periods/:code/group-completion")
+    groupCompletion(@Param("code") code: string) {
+        return this.flowService.groupCompletion(periodCode(code));
+    }
+
     @Get("periods/:code/summary")
     getSummary(@Param("code") code: string) {
         return this.flowService.getSummary(periodCode(code));

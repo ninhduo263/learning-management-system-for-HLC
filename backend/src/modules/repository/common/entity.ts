@@ -53,3 +53,6 @@ export const PERIOD_EXPORT = "PeriodExport";
 export const ADMIN_PERMISSION = "AdminPermission";
 export const GROUP_MEMBERSHIP = "GroupMembership";
 export const MEMBER_PROFILE_LOG = "MemberProfileLog";
+export const FUND_CONTRIBUTOR = "FundContributor";
+export const FUND_EXPENSE = "FundExpense";
+export const MENTORING_IMPORT_BATCH = "MentoringImportBatch";

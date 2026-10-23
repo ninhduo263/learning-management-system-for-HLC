@@ -31,9 +31,11 @@ import { MemberListQueryDto } from "./dto/member-list-query.dto";
 import { QuarterLockDto } from "./dto/quarter-lock.dto";
 import { ReviewRecapDto } from "./dto/review-recap.dto";
 import { OverrideScheduleDto } from "./dto/override-schedule.dto";
+import { ProxyRecapDto } from "./dto/proxy-recap.dto";
 import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
 import { MentoringExcelService } from "./mentoring-excel.service";
 import { MentoringFlowService } from "./mentoring-flow.service";
+import { MentoringHistoryService } from "./mentoring-history.service";
 
 /** Nghiệp vụ mentoring cho Admin tổng hoặc người có quyền MENTORING */
 @Controller("mentoring")
@@ -45,6 +47,7 @@ export class MentoringAdminController {
     constructor(
         private readonly flowService: MentoringFlowService,
         private readonly excelService: MentoringExcelService,
+        private readonly historyService: MentoringHistoryService,
     ) {}
 
     @Get("quarters")
@@ -151,6 +154,79 @@ export class MentoringAdminController {
             `attachment; filename="${fileName}"`,
         );
         res.send(buffer);
+    }
+
+    /** Mẫu chuẩn dữ liệu mentoring quý cũ (kèm dữ liệu đã có): ?quarter=2023Q1 */
+    @Get("history/export.xlsx")
+    async exportHistory(
+        @Query("quarter") quarter: string,
+        @Res() res: Response,
+    ) {
+        const { fileName, buffer } =
+            await this.historyService.exportQuarter(quarter);
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        );
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${fileName}"`,
+        );
+        res.send(buffer);
+    }
+
+    /** Nhập quý cũ: ?quarter=2023Q1&dryRun=true (xem trước). Có lỗi thì không ghi gì */
+    @Post("history/import")
+    @ApiConsumes("multipart/form-data")
+    @ApiBody({
+        schema: {
+            type: "object",
+            properties: {
+                file: { type: "string", format: "binary" },
+                reason: { type: "string" },
+            },
+        },
+    })
+    @UseInterceptors(
+        FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }),
+    )
+    importHistory(
+        @ReqUser() user: User,
+        @Query("quarter") quarter: string,
+        @Query("dryRun") dryRun: string,
+        @UploadedFile() file: Express.Multer.File,
+        @Body("reason") reason?: string,
+    ) {
+        if (!file?.buffer?.length)
+            throw ApiError.BadRequest("error-import-file-invalid");
+        return this.historyService.importQuarter(
+            quarter,
+            file.buffer,
+            file.originalname,
+            user,
+            { dryRun: dryRun === "true", reason },
+        );
+    }
+
+    @Get("history/batches")
+    listHistoryBatches() {
+        return this.historyService.listBatches();
+    }
+
+    /** Hoàn tác cả lô nhập */
+    @Post("history/batches/:id/revert")
+    revertHistoryBatch(@ReqUser() user: User, @Param("id") id: string) {
+        return this.historyService.revertBatch(id, user);
+    }
+
+    /** Nhập recap hộ cho MTE / MTO (ghi người nhập, thời điểm, lý do) */
+    @Post("sessions/:id/recap/proxy")
+    proxyRecap(
+        @ReqUser() user: User,
+        @Param("id") id: string,
+        @Body() dto: ProxyRecapDto,
+    ) {
+        return this.flowService.proxyRecap(id, dto, user);
     }
 
     /** Xuất lịch mentoring của quý theo mẫu chuẩn (.xlsx) để sửa rồi nhập lại */

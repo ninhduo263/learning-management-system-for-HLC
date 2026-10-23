@@ -31,6 +31,7 @@ import { PointAdjustmentModel } from "../models/point-adjustment.model";
 import { PointEntryModel } from "../models/point-entry.model";
 import { PointTypeModel } from "../models/point-type.model";
 import { PointCalculationService, stableId } from "./point-calculation.service";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
 
 export interface PeriodSettingsInput {
     pointRate?: number;
@@ -57,6 +58,7 @@ export class PointFlowService {
         private readonly timeService: TimeService,
         private readonly periodFlow: PeriodFlowService,
         private readonly calculation: PointCalculationService,
+        private readonly groupAccess: GroupAccessService,
         @InjectModel(PeriodModel)
         private readonly periodModel: typeof PeriodModel,
         @InjectModel(PointTypeModel)
@@ -162,6 +164,88 @@ export class PointFlowService {
                 );
             }
         }
+    }
+
+    /** Báo cáo chi trả mùng 10: bảng tổng hợp + từng dòng điểm (nguồn) của mỗi người */
+    async report(code: string) {
+        const summary = await this.getSummary(code);
+        const types = new Map(
+            (await this.pointTypes()).map((type) => [type._id, type]),
+        );
+        const entries = await this.entryModel.findAll({
+            where: {
+                periodId: summary.period._id,
+                status: PointEntryStatus.ACTIVE,
+            },
+            order: [["createdAt", "ASC"]],
+            raw: true,
+        });
+        const byMember: Record<
+            string,
+            {
+                pointType: string;
+                description: string;
+                points: number;
+                sourceType: string;
+            }[]
+        > = {};
+        for (const entry of entries) {
+            (byMember[entry.memberId] ??= []).push({
+                pointType: types.get(entry.pointTypeId)?.name ?? "",
+                description: entry.description ?? "",
+                points: Number(entry.points),
+                sourceType: entry.sourceType,
+            });
+        }
+        return {
+            ...summary,
+            entriesByMember: byMember,
+            completion: await this.groupCompletion(code),
+            generatedAt: this.timeService.now(),
+        };
+    }
+
+    /** Tỷ lệ hoàn tất của từng nhóm (căn cứ thưởng Leader/Phó nhóm) */
+    async groupCompletion(code: string, groupIds?: string[]) {
+        const period = await this.periodFlow.getByCode(code);
+        const stats = await this.sequelize.transaction((t) =>
+            this.calculation.completionOf(period, t),
+        );
+        const groups = await this.groupAccess.groups(true);
+        const leaders = await this.groupAccess.leadersOf(
+            groups.map((group) => group._id),
+        );
+        const members = new Map(
+            (
+                await this.memberModel.findAll({
+                    where: {
+                        _id: [...leaders.values()]
+                            .flatMap((item) => [item.leaderId, item.deputyId])
+                            .filter(Boolean),
+                    },
+                    raw: true,
+                })
+            ).map((member) => [member._id, member.fullName]),
+        );
+        return groups
+            .filter((group) => !groupIds || groupIds.includes(group._id))
+            .map((group) => {
+                const item = stats.get(group._id) ?? { done: 0, total: 0 };
+                const roles = leaders.get(group._id);
+                return {
+                    _id: group._id,
+                    name: group.name,
+                    groupKind: group.groupKind,
+                    done: item.done,
+                    total: item.total,
+                    rate: item.total
+                        ? Math.round((item.done / item.total) * 1000) / 10
+                        : null,
+                    passed: item.total > 0 && item.done / item.total > 0.9,
+                    leader: members.get(roles?.leaderId) ?? null,
+                    deputy: members.get(roles?.deputyId) ?? null,
+                };
+            });
     }
 
     async lock(code: string, user: User) {

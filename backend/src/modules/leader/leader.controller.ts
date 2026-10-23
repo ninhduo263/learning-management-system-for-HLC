@@ -10,6 +10,9 @@ import { User } from "@module/user/entities/user.entity";
 import { Body, Controller, Get, Param, Put, Query } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { LeaderService } from "./leader.service";
+import { PointFlowService } from "@module/point/flow/point-flow.service";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
+import { ApiError } from "@config/exception/api-error";
 
 /**
  * Leader / Phó nhóm (và Admin): tiến độ nhóm, chấm recap thang 100.
@@ -23,7 +26,26 @@ export class LeaderController {
     constructor(
         private readonly leaderService: LeaderService,
         private readonly recapScoreService: RecapScoreService,
+        private readonly pointFlow: PointFlowService,
+        private readonly groupAccess: GroupAccessService,
     ) {}
+
+    /** Tỷ lệ hoàn tất của nhóm mình trong tháng (thưởng +1 khi trên 90%) */
+    @Get("completion")
+    async completion(@ReqUser() user: User, @Query("period") period: string) {
+        const member = await this.groupAccess.memberOfUser(user);
+        const groups =
+            user.systemRole === SystemRole.ADMIN
+                ? undefined
+                : member
+                  ? (await this.groupAccess.leadershipOf(member._id)).map(
+                        (item) => item._id,
+                    )
+                  : [];
+        if (groups && !groups.length)
+            throw ApiError.Forbidden("error-forbidden");
+        return this.pointFlow.groupCompletion(period, groups);
+    }
 
     /** ?period=YYYY-MM */
     @Get("overview")
