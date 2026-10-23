@@ -1,10 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import GroupManager from '@/components/GroupManager';
+import RolesPanel from '@/components/RolesPanel';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
@@ -18,6 +19,7 @@ const DEPARTMENT_TYPE: Record<string, string> = { ACADEMIC: 'Học tập', FUND:
 export default function AdminOrganizationPage() {
   const { message } = App.useApp();
   const [departments, setDepartments] = useState<Department[]>([]);
+  const groupIds = new Set(departments.filter((item) => item.type === 'GROUP').map((item) => item._id));
   const [positions, setPositions] = useState<Position[]>([]);
   const [assignments, setAssignments] = useState<MemberPosition[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -59,10 +61,12 @@ export default function AdminOrganizationPage() {
       <Typography.Title level={3} className="!mb-0">Tổ chức & phân quyền</Typography.Title>
       <Card loading={loading}>
         <Tabs items={[
-          { key: 'groups', label: 'Nhóm (Leader / Phó nhóm)', children: <GroupManager /> },
-          { key: 'assign', label: 'Chức vụ thành viên', children: <AssignmentPanel assignments={assignments} members={members} departments={departments} positions={positions} onChanged={load} /> },
-          { key: 'permission', label: 'Phân quyền quản trị', children: <PermissionPanel permissions={permissions} members={members} modules={modules} onChanged={load} /> },
-          { key: 'catalog', label: 'Ban & chức vụ', children: <CatalogPanel departments={departments} positions={positions} onChanged={load} /> }
+          { key: 'mte', label: 'Nhóm MTE', children: <GroupManager kind="MENTEE" /> },
+          { key: 'fund', label: 'Nhóm HLC Fund (MTO & thầy cô)', children: <GroupManager kind="FUND" /> },
+          { key: 'roles', label: 'Vai trò & điểm', children: <RolesPanel /> },
+          { key: 'assign', label: 'Chức vụ ban', children: <AssignmentPanel assignments={assignments.filter((row) => !groupIds.has(row.departmentId))} members={members} departments={departments.filter((item) => item.type !== 'GROUP')} positions={positions.filter((item) => !(item as Position & { groupKind?: string | null }).groupKind)} onChanged={load} /> },
+          { key: 'permission', label: 'Quyền theo module học tập', children: <PermissionPanel permissions={permissions} members={members} modules={modules} onChanged={load} /> },
+          { key: 'catalog', label: 'Danh sách ban', children: <CatalogPanel departments={departments.filter((item) => item.type !== 'GROUP')} onChanged={load} /> }
         ]} />
       </Card>
     </div>
@@ -100,7 +104,7 @@ function AssignmentPanel({ assignments, members, departments, positions, onChang
 
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Phụ cấp chức vụ: bật quy tắc POSITION_* ở trang Điểm phụ cấp (điền số điểm), hoặc cộng tay theo tháng. Chức vụ còn hiệu lực ít nhất 1 ngày trong tháng thì được tính." />
+      <Alert type="info" showIcon title="Chức vụ của ban (không gắn nhóm), ví dụ Trưởng ban, Admin HLC Fund. Quyền hạn và điểm phụ cấp lấy từ cấu hình vai trò (tab Vai trò & điểm). Leader / Phó nhóm gán ở màn hình từng loại nhóm." />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Space><Switch checked={showEnded} onChange={setShowEnded} /> Hiện cả chức vụ đã kết thúc</Space>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ startDate: dayjs(getCurrentTime()) }); setEditing('new'); }}>Gán chức vụ</Button>
@@ -169,7 +173,7 @@ function PermissionPanel({ permissions, members, modules, onChanged }: { permiss
 
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Admin tổng có mọi quyền. Giao quyền theo phạm vi cho thành viên phụ trách (ví dụ ban HLC Fund duyệt minh chứng, ban học tập chấm bài một module). Người được giao sẽ thấy thêm mục quản trị tương ứng trên menu." />
+      <Alert type="info" showIcon title="Quyền quản trị HLC Fund / Mentoring / Điểm nay gán bằng vai trò (ví dụ vai trò “Admin HLC Fund” ở tab Chức vụ ban). Tại đây chỉ còn cấp quyền quản lý từng module học tập; các quyền cũ vẫn hiển thị để thu hồi nếu cần." />
       <div className="flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true); }}>Giao quyền</Button></div>
       <Table<PermissionView>
         rowKey="_id"
@@ -190,7 +194,7 @@ function PermissionPanel({ permissions, members, modules, onChanged }: { permiss
           <Form.Item name="account" label="Thành viên" rules={[{ required: true }]}>
             <Select showSearch={{ optionFilterProp: 'label' }} options={members.filter((item) => item.userId).map((item) => ({ value: item.memberCode, label: `${item.memberCode} – ${item.fullName}` }))} placeholder="Chỉ hiện thành viên đã có tài khoản" />
           </Form.Item>
-          <Form.Item name="scope" label="Quyền" rules={[{ required: true }]}><Select options={Object.entries(SCOPE_LABEL).map(([value, label]) => ({ value, label }))} /></Form.Item>
+          <Form.Item name="scope" label="Quyền" rules={[{ required: true }]}><Select options={Object.entries(SCOPE_LABEL).filter(([value]) => value === 'LEARNING_MODULE').map(([value, label]) => ({ value, label }))} /></Form.Item>
           {scope === 'LEARNING_MODULE' && (
             <Form.Item name="moduleId" label="Module" rules={[{ required: true }]}><Select options={modules.map((item) => ({ value: item._id, label: item.name }))} /></Form.Item>
           )}
@@ -201,12 +205,10 @@ function PermissionPanel({ permissions, members, modules, onChanged }: { permiss
   );
 }
 
-function CatalogPanel({ departments, positions, onChanged }: { departments: Department[]; positions: Position[]; onChanged: () => Promise<void> }) {
+function CatalogPanel({ departments, onChanged }: { departments: Department[]; onChanged: () => Promise<void> }) {
   const { message } = App.useApp();
   const [editingDepartment, setEditingDepartment] = useState<Department | 'new' | null>(null);
-  const [editingPosition, setEditingPosition] = useState<Position | 'new' | null>(null);
   const [departmentForm] = Form.useForm();
-  const [positionForm] = Form.useForm();
 
   const save = async <T,>(action: () => Promise<T>, done: () => void) => {
     try {
@@ -220,8 +222,8 @@ function CatalogPanel({ departments, positions, onChanged }: { departments: Depa
   };
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-      <Card size="small" title="Ban / nhóm" extra={<Button size="small" icon={<PlusOutlined />} onClick={() => { departmentForm.resetFields(); departmentForm.setFieldsValue({ type: 'OTHER', isActive: true }); setEditingDepartment('new'); }}>Thêm ban</Button>}>
+    <div className="grid grid-cols-1 gap-4">
+      <Card size="small" title="Ban" extra={<Button size="small" icon={<PlusOutlined />} onClick={() => { departmentForm.resetFields(); departmentForm.setFieldsValue({ type: 'OTHER', isActive: true }); setEditingDepartment('new'); }}>Thêm ban</Button>}>
         <Table<Department> rowKey="_id" size="small" pagination={false} dataSource={departments} columns={[
           { title: 'Mã', dataIndex: 'code' },
           { title: 'Tên', dataIndex: 'name' },
@@ -230,29 +232,12 @@ function CatalogPanel({ departments, positions, onChanged }: { departments: Depa
           { title: '', render: (_: unknown, row: Department) => <Button size="small" onClick={() => { departmentForm.setFieldsValue(row); setEditingDepartment(row); }}>Sửa</Button> }
         ]} />
       </Card>
-      <Card size="small" title="Chức vụ" extra={<Button size="small" icon={<PlusOutlined />} onClick={() => { positionForm.resetFields(); positionForm.setFieldsValue({ sortOrder: positions.length + 1, isActive: true }); setEditingPosition('new'); }}>Thêm chức vụ</Button>}>
-        <Table<Position> rowKey="_id" size="small" pagination={false} dataSource={positions} columns={[
-          { title: 'Mã', dataIndex: 'code' },
-          { title: 'Tên', dataIndex: 'name' },
-          { title: 'Thứ tự', dataIndex: 'sortOrder' },
-          { title: '', dataIndex: 'isActive', render: (value: boolean) => value ? <Tag color="green">Dùng</Tag> : <Tag>Ẩn</Tag> },
-          { title: '', render: (_: unknown, row: Position) => <Button size="small" onClick={() => { positionForm.setFieldsValue(row); setEditingPosition(row); }}>Sửa</Button> }
-        ]} />
-      </Card>
       <Modal title={editingDepartment && editingDepartment !== 'new' ? 'Sửa ban' : 'Thêm ban'} open={Boolean(editingDepartment)} onCancel={() => setEditingDepartment(null)} onOk={() => departmentForm.submit()} destroyOnHidden>
         <Form form={departmentForm} layout="vertical" onFinish={(values) => save(() => (editingDepartment && editingDepartment !== 'new' ? departmentApi.update(editingDepartment._id, values) : departmentApi.create(values)), () => setEditingDepartment(null))}>
           <Form.Item name="code" label="Mã (VD: BAN_TRUYEN_THONG)" rules={[{ required: true, pattern: /^[A-Z0-9_]+$/, message: 'Chữ in hoa, số, _' }]}><Input disabled={Boolean(editingDepartment && editingDepartment !== 'new')} /></Form.Item>
           <Form.Item name="name" label="Tên" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="type" label="Loại"><Select options={Object.entries(DEPARTMENT_TYPE).map(([value, label]) => ({ value, label }))} /></Form.Item>
           <Form.Item name="isActive" label="Hoạt động" valuePropName="checked"><Switch /></Form.Item>
-        </Form>
-      </Modal>
-      <Modal title={editingPosition && editingPosition !== 'new' ? 'Sửa chức vụ' : 'Thêm chức vụ'} open={Boolean(editingPosition)} onCancel={() => setEditingPosition(null)} onOk={() => positionForm.submit()} destroyOnHidden>
-        <Form form={positionForm} layout="vertical" onFinish={(values) => save(() => (editingPosition && editingPosition !== 'new' ? positionApi.update(editingPosition._id, values) : positionApi.create(values)), () => setEditingPosition(null))}>
-          <Form.Item name="code" label="Mã" rules={[{ required: true, pattern: /^[A-Z0-9_]+$/, message: 'Chữ in hoa, số, _' }]}><Input disabled={Boolean(editingPosition && editingPosition !== 'new')} /></Form.Item>
-          <Form.Item name="name" label="Tên" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="sortOrder" label="Thứ tự"><InputNumber className="w-full" /></Form.Item>
-          <Form.Item name="isActive" label="Đang dùng" valuePropName="checked"><Switch /></Form.Item>
         </Form>
       </Modal>
     </div>

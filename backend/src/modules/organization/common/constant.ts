@@ -11,3 +11,15 @@ export enum DepartmentType {
     GROUP = "GROUP",
     OTHER = "OTHER",
 }
+
+/** Quyền hạn gắn với vai trò trong nhóm */
+export enum RolePermission {
+    /** Xem tiến độ nhóm */
+    VIEW_PROGRESS = "VIEW_PROGRESS",
+    /** Chấm recap MTE (chỉ nhóm MTE) */
+    SCORE_RECAP = "SCORE_RECAP",
+    /** Duyệt minh chứng quỹ */
+    REVIEW_FUND = "REVIEW_FUND",
+    /** Nộp hộ minh chứng quỹ */
+    PROXY_FUND = "PROXY_FUND",
+}

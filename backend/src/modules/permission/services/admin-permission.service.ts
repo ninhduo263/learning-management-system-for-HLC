@@ -5,6 +5,7 @@ import { InjectRepository } from "@module/repository/common/repository";
 import { InjectTransaction } from "@module/repository/common/transaction";
 import { AdminScopeChecker } from "@common/interface/admin-scope-checker.interface";
 import { Injectable } from "@nestjs/common";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import { AdminScope } from "../common/constant";
 import { AdminPermission } from "../entities/admin-permission.entity";
 import { AdminPermissionRepository } from "../repositories/admin-permission-repository.interface";
@@ -19,6 +20,7 @@ export class AdminPermissionService
         private readonly adminPermissionRepository: AdminPermissionRepository,
         @InjectTransaction()
         private readonly adminPermissionTransaction: BaseTransaction,
+        private readonly groupAccess: GroupAccessService,
     ) {
         super(adminPermissionRepository, {
             notFoundCode: "error-record-not-found",
@@ -26,11 +28,21 @@ export class AdminPermissionService
         });
     }
 
-    /** Có ít nhất 1 quyền thuộc phạm vi này (với LEARNING_MODULE: bất kỳ module nào) */
-    hasScope(userId: string, scope: string): Promise<boolean> {
-        return this.adminPermissionRepository.exists({
-            userId,
-            scope: scope as AdminScope,
-        });
+    /**
+     * Có quyền thuộc phạm vi này: được cấp trực tiếp (bảng admin-permission, ví dụ quyền theo module học tập)
+     * hoặc đang giữ vai trò có quyền quản trị tương ứng (Position.adminScope, ví dụ "Admin HLC Fund").
+     */
+    async hasScope(userId: string, scope: string): Promise<boolean> {
+        if (
+            await this.adminPermissionRepository.exists({
+                userId,
+                scope: scope as AdminScope,
+            })
+        )
+            return true;
+        const member = await this.groupAccess.memberOfUser({ _id: userId });
+        return member
+            ? (await this.groupAccess.adminScopesOf(member._id)).includes(scope)
+            : false;
     }
 }

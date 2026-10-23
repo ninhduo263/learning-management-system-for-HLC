@@ -79,4 +79,8 @@ export class PointAdjustment implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Ghi chú duyệt" })
     reviewNote?: string;
+
+    amount?: number;
+
+    sourcePeriodId?: string;
 }

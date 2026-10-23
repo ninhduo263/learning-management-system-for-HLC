@@ -36,6 +36,7 @@ import { MentoringSession } from "../entities/mentoring-session.entity";
 import { MentorPreferenceItemModel } from "../models/mentor-preference-item.model";
 import { MentorPreferenceModel } from "../models/mentor-preference.model";
 import { MentoringAwardModel } from "../models/mentoring-award.model";
+import { MentoringPairLogModel } from "../models/mentoring-pair-log.model";
 import { MentoringPairModel } from "../models/mentoring-pair.model";
 import { MentoringQuarterModel } from "../models/mentoring-quarter.model";
 import { MentoringRecapModel } from "../models/mentoring-recap.model";
@@ -177,6 +178,8 @@ export class MentoringFlowService {
         private readonly scheduleLogModel: typeof MentoringScheduleLogModel,
         @InjectModel(MentoringAwardModel)
         private readonly awardModel: typeof MentoringAwardModel,
+        @InjectModel(MentoringPairLogModel)
+        private readonly pairLogModel: typeof MentoringPairLogModel,
         @InjectModel(MentorPreferenceModel)
         private readonly preferenceModel: typeof MentorPreferenceModel,
         @InjectModel(MentorPreferenceItemModel)
@@ -691,9 +694,34 @@ export class MentoringFlowService {
     ) {
         const quarter = await this.getQuarterOrFail(code);
         this.assertCanPair(quarter);
-        return this.sequelize.transaction((t) =>
-            this.createPairInTransaction(quarter, dto, user, source, null, t),
-        );
+        return this.sequelize.transaction(async (t) => {
+            const result = await this.createPairInTransaction(
+                quarter,
+                dto,
+                user,
+                source,
+                null,
+                t,
+            );
+            await this.pairLogModel.create(
+                {
+                    quarterCode: quarter.code,
+                    action: "CREATE",
+                    pairCode: result.pair.code,
+                    mentorCode: dto.mentorCode.toUpperCase(),
+                    menteeCode: dto.menteeCode.toUpperCase(),
+                    fromMonth: Number(dto.month),
+                    detail: {
+                        affectedMonths: result.syncedMonths,
+                        existingMonths: result.existingMonths,
+                        lockedMonths: result.lockedMonths,
+                    },
+                    actorUserId: user._id,
+                },
+                { transaction: t },
+            );
+            return result;
+        });
     }
 
     /** Import: không giới hạn cửa sổ ghép cặp (cho phép nhập dữ liệu cũ), chỉ cần quý chưa khóa */
@@ -776,6 +804,20 @@ export class MentoringFlowService {
             raw: true,
         });
         const syncedMonths: number[] = [];
+        /** Tháng sau đã có buổi của cặp này (ghép tay trước đó): không tạo trùng */
+        const existingMonths: number[] = [];
+        /** Tháng đã chốt bảng phụ cấp: không tự thêm cặp */
+        const lockedMonths: number[] = [];
+        const periodRows = new Map(
+            (
+                await this.periodModel.findAll({
+                    where: { _id: [...periods.values()] },
+                    raw: true,
+                    transaction: t,
+                })
+            ).map((item) => [item._id, item]),
+        );
+        // Chỉ các tháng từ tháng được chọn tới cuối quý (không tạo ngược về tháng trước)
         for (const month of months.filter(
             (value) => value >= Number(dto.month),
         )) {
@@ -789,6 +831,20 @@ export class MentoringFlowService {
                         { where: { _id: session._id }, transaction: t },
                     );
                 }
+                existingMonths.push(month);
+                continue;
+            }
+            if (
+                !importedStatus &&
+                ["LOCKED", "EXPORTED", "PAID"].includes(
+                    periodRows.get(periodId)?.status,
+                )
+            ) {
+                if (month === Number(dto.month))
+                    throw ApiError.Conflict("error-pair-month-locked", {
+                        month: `${pad2(month)}/${quarter.year}`,
+                    });
+                lockedMonths.push(month);
                 continue;
             }
             await this.sessionModel.create(
@@ -808,7 +864,13 @@ export class MentoringFlowService {
             );
             syncedMonths.push(month);
         }
-        return { pair, syncedMonths, created: syncedMonths.length > 0 };
+        return {
+            pair,
+            syncedMonths,
+            existingMonths,
+            lockedMonths,
+            created: syncedMonths.length > 0,
+        };
     }
 
     private async getSessionContext(
@@ -972,111 +1034,235 @@ export class MentoringFlowService {
     }
 
     /** Xóa buổi này và các tháng sau của cùng cặp (kèm recap, lịch sử lịch, giải, điểm liên quan) */
+    /** Kế hoạch xóa cặp từ tháng của buổi này tới cuối quý: tháng nào xóa, tháng nào giữ (đã chốt), bao nhiêu dữ liệu */
+    private async deletePlan(sessionId: string, t?: Transaction) {
+        const { session, pair, quarter } = await this.getSessionContext(
+            sessionId,
+            t,
+        );
+        const pairSessions = await this.sessionModel.findAll({
+            where: { pairId: pair._id },
+            raw: true,
+            transaction: t,
+        });
+        const periods = new Map(
+            (
+                await this.periodModel.findAll({
+                    where: { _id: pairSessions.map((item) => item.periodId) },
+                    raw: true,
+                    transaction: t,
+                })
+            ).map((item) => [item._id, item]),
+        );
+        const fromMonth = periods.get(session.periodId).month;
+        const later = pairSessions.filter(
+            (item) => periods.get(item.periodId).month >= fromMonth,
+        );
+        const isLocked = (item: { periodId: string }) =>
+            ["LOCKED", "EXPORTED", "PAID"].includes(
+                periods.get(item.periodId)?.status,
+            );
+        const targets = later.filter((item) => !isLocked(item));
+        const skipped = later.filter(isLocked);
+        const ids = targets.map((item) => item._id);
+        const recaps = ids.length
+            ? await this.recapModel.findAll({
+                  where: { sessionId: ids },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const awards = ids.length
+            ? await this.awardModel.findAll({
+                  where: { sessionId: ids },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const attachments = recaps.length
+            ? await this.attachmentModel.count({
+                  where: {
+                      ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                      ownerId: recaps.map((item) => item._id),
+                  },
+                  transaction: t,
+              })
+            : 0;
+        const sourceIds = [
+            ...recaps.map((item) => item._id),
+            ...awards.map((item) => item._id),
+        ];
+        const pointEntries = sourceIds.length
+            ? await this.pointEntryModel.findAll({
+                  where: {
+                      sourceType: [
+                          PointSourceType.MENTORING_RECAP,
+                          PointSourceType.MENTORING_AWARD,
+                      ],
+                      sourceId: sourceIds,
+                  },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const monthOf = (item: { periodId: string }) =>
+            periods.get(item.periodId).month;
+        return {
+            session,
+            pair,
+            quarter,
+            fromMonth,
+            targets,
+            recaps,
+            awards,
+            pointEntries,
+            remaining: pairSessions.length - targets.length,
+            preview: {
+                pairCode: pair.code,
+                fromMonth,
+                deleteMonths: targets.map(monthOf).sort((a, b) => a - b),
+                /** Tháng đã chốt / đã chi: giữ nguyên, xử lý bằng bù chênh lệch nếu cần */
+                keptLockedMonths: skipped.map(monthOf).sort((a, b) => a - b),
+                counts: {
+                    sessions: targets.length,
+                    schedules: targets.filter((item) => item.scheduledStartAt)
+                        .length,
+                    recaps: recaps.length,
+                    scoredRecaps: recaps.filter(
+                        (item) =>
+                            item.score !== null && item.score !== undefined,
+                    ).length,
+                    attachments,
+                    awards: awards.length,
+                    pointEntries: pointEntries.filter(
+                        (item) => item.status === PointEntryStatus.ACTIVE,
+                    ).length,
+                },
+                willDeletePair: pairSessions.length - targets.length === 0,
+            },
+        };
+    }
+
+    /** Xem trước khi xóa cặp (màn hình xác nhận nêu rõ số lượng dữ liệu sẽ bị xóa) */
+    async deletePreview(sessionId: string) {
+        return (await this.deletePlan(sessionId)).preview;
+    }
+
+    /**
+     * Xóa cặp từ tháng của buổi này tới cuối quý: xóa sạch lịch, recap, điểm chấm, ảnh, giải và điểm phụ cấp
+     * phát sinh từ cặp ở các tháng chưa chốt. Tháng đã chốt / đã chi giữ nguyên. Ghi nhật ký.
+     */
     async deleteSessionsFrom(sessionId: string, user: User) {
-        const { session, pair, quarter } =
-            await this.getSessionContext(sessionId);
+        const { quarter } = await this.getSessionContext(sessionId);
         this.assertCanPair(quarter);
-        return this.sequelize.transaction(async (t) => {
-            const pairSessions = await this.sessionModel.findAll({
-                where: { pairId: pair._id },
-                raw: true,
-                transaction: t,
-            });
-            const periods = await this.periodModel.findAll({
-                where: { _id: pairSessions.map((item) => item.periodId) },
-                raw: true,
-                transaction: t,
-            });
-            const monthOf = new Map(
-                periods.map((period) => [period._id, period.month]),
-            );
-            const fromMonth = monthOf.get(session.periodId);
-            const targets = pairSessions.filter(
-                (item) => monthOf.get(item.periodId) >= fromMonth,
-            );
-            const targetIds = targets.map((item) => item._id);
-            const recaps = await this.recapModel.findAll({
-                where: { sessionId: targetIds },
-                raw: true,
-                transaction: t,
-            });
-            const awards = await this.awardModel.findAll({
-                where: { sessionId: targetIds },
-                raw: true,
-                transaction: t,
-            });
-            const sourceIds = [
-                ...recaps.map((item) => item._id),
-                ...awards.map((item) => item._id),
-            ];
-            const [voided] = sourceIds.length
-                ? await this.pointEntryModel.update(
-                      {
-                          status: PointEntryStatus.VOID,
-                          voidReason: "Xóa cặp mentoring",
-                          voidedAt: this.now(),
-                          voidedBy: user._id,
-                      },
-                      {
-                          where: {
-                              status: PointEntryStatus.ACTIVE,
-                              sourceType: [
-                                  PointSourceType.MENTORING_RECAP,
-                                  PointSourceType.MENTORING_AWARD,
-                              ],
-                              sourceId: sourceIds,
-                          },
-                          transaction: t,
-                      },
-                  )
-                : [0];
-            const deletedAttachments = recaps.length
-                ? await this.attachmentModel.destroy({
-                      where: {
-                          ownerType: AttachmentOwnerType.MENTORING_RECAP,
-                          ownerId: recaps.map((item) => item._id),
-                      },
-                      transaction: t,
-                  })
-                : 0;
-            const deletedRecaps = await this.recapModel.destroy({
-                where: { sessionId: targetIds },
-                transaction: t,
-            });
-            const deletedAwards = await this.awardModel.destroy({
-                where: { sessionId: targetIds },
-                transaction: t,
-            });
-            const deletedLogs = await this.scheduleLogModel.destroy({
-                where: { sessionId: targetIds },
-                transaction: t,
-            });
-            const deletedSessions = await this.sessionModel.destroy({
-                where: { _id: targetIds },
-                transaction: t,
-            });
-            const remaining = pairSessions.length - targets.length;
-            if (!remaining) {
-                await this.pairModel.destroy({
-                    where: { _id: pair._id },
+        const result = await this.sequelize.transaction(async (t) => {
+            const plan = await this.deletePlan(sessionId, t);
+            const ids = plan.targets.map((item) => item._id);
+            if (plan.pointEntries.length)
+                await this.pointEntryModel.destroy({
+                    where: { _id: plan.pointEntries.map((item) => item._id) },
+                    transaction: t,
+                });
+            if (plan.recaps.length) {
+                await this.attachmentModel.destroy({
+                    where: {
+                        ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                        ownerId: plan.recaps.map((item) => item._id),
+                    },
                     transaction: t,
                 });
             }
-            return {
-                deletedMonths: targets
-                    .map((item) => monthOf.get(item.periodId))
-                    .sort((a, b) => a - b),
-                deleted: {
-                    sessions: deletedSessions,
-                    recaps: deletedRecaps,
-                    attachments: deletedAttachments,
-                    scheduleLogs: deletedLogs,
-                    awards: deletedAwards,
-                    pair: remaining ? 0 : 1,
+            if (ids.length) {
+                await this.recapModel.destroy({
+                    where: { sessionId: ids },
+                    transaction: t,
+                });
+                await this.awardModel.destroy({
+                    where: { sessionId: ids },
+                    transaction: t,
+                });
+                // Nhật ký lịch được giữ lại để đối soát
+                await this.sessionModel.destroy({
+                    where: { _id: ids },
+                    transaction: t,
+                });
+            }
+            if (!plan.remaining)
+                await this.pairModel.destroy({
+                    where: { _id: plan.pair._id },
+                    transaction: t,
+                });
+            const mentor = await this.memberModel.findByPk(plan.pair.mentorId, {
+                raw: true,
+                transaction: t,
+            });
+            const mentee = await this.memberModel.findByPk(plan.pair.menteeId, {
+                raw: true,
+                transaction: t,
+            });
+            await this.pairLogModel.create(
+                {
+                    quarterCode: plan.quarter.code,
+                    action: "DELETE",
+                    pairCode: plan.pair.code,
+                    mentorCode: mentor?.memberCode ?? null,
+                    menteeCode: mentee?.memberCode ?? null,
+                    fromMonth: plan.fromMonth,
+                    detail: {
+                        affectedMonths: plan.preview.deleteMonths,
+                        keptLockedMonths: plan.preview.keptLockedMonths,
+                        counts: plan.preview.counts,
+                    },
+                    actorUserId: user._id,
                 },
-                voidedPointEntries: voided,
+                { transaction: t },
+            );
+            return {
+                plan,
+                periodIds: [
+                    ...new Set(plan.targets.map((item) => item.periodId)),
+                ],
             };
         });
+        // Điểm của các tháng chưa chốt được tính lại sau khi xóa
+        await this.recalculatePoints(result.periodIds);
+        const preview = result.plan.preview;
+        return {
+            deletedMonths: preview.deleteMonths,
+            keptLockedMonths: preview.keptLockedMonths,
+            deleted: {
+                ...preview.counts,
+                pair: preview.willDeletePair ? 1 : 0,
+            },
+            voidedPointEntries: preview.counts.pointEntries,
+        };
+    }
+
+    /** Nhật ký ghép / xóa cặp của quý */
+    async listPairLogs(quarter: string) {
+        const rows = await this.pairLogModel.findAll({
+            where: { quarterCode: quarter.toUpperCase() },
+            order: [["createdAt", "DESC"]],
+            limit: 500,
+            raw: true,
+        });
+        const userIds = [
+            ...new Set(rows.map((row) => row.actorUserId).filter(Boolean)),
+        ];
+        const users = new Map(
+            (userIds.length
+                ? await UserModel.findAll({
+                      where: { _id: userIds },
+                      attributes: ["_id", "username", "fullname"],
+                      raw: true,
+                  })
+                : []
+            ).map((row) => [row._id, row.fullname || row.username]),
+        );
+        return rows.map((row) => ({
+            ...row,
+            actor: users.get(row.actorUserId) ?? null,
+        }));
     }
 
     // ------------------------------------------------------------------

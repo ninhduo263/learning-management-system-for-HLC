@@ -88,4 +88,6 @@ export class AllowanceSummary implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Thời điểm chi trả" })
     paidAt?: Date;
+
+    adjustmentAmount?: number;
 }

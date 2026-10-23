@@ -5,7 +5,10 @@ import { AttachmentOwnerType } from "@module/attachment/common/constant";
 import { MemberStatus, MemberType } from "@module/member/common/constant";
 import { Member } from "@module/member/entities/member.entity";
 import { MemberModel } from "@module/member/models/member.model";
-import { GroupKind } from "@module/organization/common/constant";
+import {
+    GroupKind,
+    RolePermission,
+} from "@module/organization/common/constant";
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import { Period } from "@module/period/entities/period.entity";
 import { PeriodFlowService } from "@module/period/flow/period-flow.service";
@@ -395,7 +398,16 @@ export class FundFlowService {
             view: new Set(leading.map((item) => item._id)),
             review: new Set(
                 leading
-                    .filter((item) => item.canReview)
+                    .filter((item) =>
+                        item.permissions.includes(RolePermission.REVIEW_FUND),
+                    )
+                    .map((item) => item._id),
+            ),
+            proxy: new Set(
+                leading
+                    .filter((item) =>
+                        item.permissions.includes(RolePermission.PROXY_FUND),
+                    )
                     .map((item) => item._id),
             ),
         };
@@ -405,19 +417,22 @@ export class FundFlowService {
     async assertCanReview(
         user: User,
         rows: Pick<FundContribution, "memberId" | "contributorId">[],
+        mode: "review" | "proxy" = "review",
     ) {
         const managed = await this.managedGroups(user).catch(() => {
             throw ApiError.Forbidden("error-forbidden");
         });
         if (!managed) return;
-        const memberships = await this.groupAccess.currentMemberships([
-            ...managed.review,
-        ]);
+        const allowedGroups = [
+            ...(mode === "proxy" ? managed.proxy : managed.review),
+        ];
+        const memberships =
+            await this.groupAccess.currentMemberships(allowedGroups);
         const memberIds = new Set(memberships.map((row) => row.memberId));
         const contributorIds = new Set(
             (
                 await this.contributorModel.findAll({
-                    where: { groupId: [...managed.review] },
+                    where: { groupId: allowedGroups },
                     attributes: ["_id"],
                     raw: true,
                 })
@@ -614,6 +629,7 @@ export class FundFlowService {
                     leader: brief(leaderMembers.get(roles?.leaderId)) ?? null,
                     deputy: brief(leaderMembers.get(roles?.deputyId)) ?? null,
                     canReview: !managed || managed.review.has(group._id),
+                    canProxy: !managed || managed.proxy.has(group._id),
                     pending: rows.filter(
                         (row) =>
                             payerIds.has(row.memberId ?? row.contributorId) &&
@@ -648,9 +664,11 @@ export class FundFlowService {
         ) {
             throw ApiError.NotFound("error-record-not-found");
         }
-        await this.assertCanReview(user, [
-            { memberId: input.memberId, contributorId: input.contributorId },
-        ]);
+        await this.assertCanReview(
+            user,
+            [{ memberId: input.memberId, contributorId: input.contributorId }],
+            "proxy",
+        );
         await this.attachments.loadFiles(input.fileIds, { requireImage: true });
         const id = await this.sequelize.transaction(async (t) => {
             const period = await this.periodFlow.ensurePeriod(year, month, t);
@@ -719,7 +737,14 @@ export class FundFlowService {
                 throw ApiError.BadRequest("error-group-not-found");
         }
         // Leader nhóm Fund chỉ thêm/sửa thầy cô trong nhóm mình
-        if (managed && (!dto.groupId || !managed.review.has(dto.groupId)))
+        if (
+            managed &&
+            (!dto.groupId ||
+                !(
+                    managed.review.has(dto.groupId) ||
+                    managed.proxy.has(dto.groupId)
+                ))
+        )
             throw ApiError.Forbidden("error-forbidden");
         const values = {
             fullName: dto.fullName.trim(),
@@ -732,7 +757,13 @@ export class FundFlowService {
         if (id) {
             const row = await this.contributorModel.findByPk(id);
             if (!row) throw ApiError.NotFound("error-record-not-found");
-            if (managed && !managed.review.has(row.groupId))
+            if (
+                managed &&
+                !(
+                    managed.review.has(row.groupId) ||
+                    managed.proxy.has(row.groupId)
+                )
+            )
                 throw ApiError.Forbidden("error-forbidden");
             await row.update(values);
             return row.get({ plain: true });

@@ -858,6 +858,61 @@ Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi 
   - Trùng tên và tác giả (không phân biệt dấu, hoa thường) hoặc trùng link sẽ được cảnh báo và bỏ qua.
   - Dòng lỗi bị bỏ qua, dòng hợp lệ vẫn được thêm.
 
+### 11.14 Cập nhật vòng 3 (vai trò, phụ cấp tháng, ghép/xóa cặp)
+
+**Vai trò = chức vụ + quyền hạn + điểm** (thay cho phân quyền và gán chức vụ tách rời)
+- `GET /roles`, `POST /roles`, `PUT /roles/{id}` (Admin tổng). Body gồm:
+  - `{ code, name, appliesTo, permissions?, allowancePoints?, bonusPoints?, adminScope?, description?, isActive? }`;
+  - `appliesTo` **bắt buộc**: `MENTEE` (nhóm MTE), `FUND` (nhóm HLC Fund của MTO và thầy cô) hoặc `BAN` (chức vụ ban, không gắn nhóm);
+  - `permissions`: `VIEW_PROGRESS`, `SCORE_RECAP` (chỉ nhóm MTE), `REVIEW_FUND`, `PROXY_FUND`;
+  - `adminScope` (chỉ vai trò `BAN`): `FUND` | `MENTORING` | `POINT`. Ai giữ vai trò này thì có quyền quản trị tương ứng; `/access/me` có `scopes` tính cả nguồn này.
+- Vai trò mặc định:
+
+  | Mã | Áp dụng cho | Phụ cấp | Thưởng |
+  |---|---|---|---|
+  | `LEADER`, `PHO_LEADER` | Nhóm MTE | 2 / 1 điểm | +1 |
+  | `FUND_LEADER`, `FUND_PHO_LEADER` | Nhóm HLC Fund | 2 / 1 điểm | +1 |
+  | `ADMIN_HLC_FUND`, `ADMIN_MENTORING` | Ban | — | — |
+
+- `GET` / `PUT /roles/thresholds/all` với `{ MENTEE: 90, FUND: 90 }`: ngưỡng % **theo loại nhóm**. Điểm thưởng được cộng khi tỷ lệ hoàn thành **vượt** ngưỡng.
+- Gán vai trò trong nhóm (có thời gian hiệu lực):
+  - `POST /groups/{id}/assignments` với `{ memberId, positionId, startDate?, endDate?, note? }`. Vai trò khác loại nhóm nhận `400 error-role-kind-mismatch`. Người đang giữ vai trò đó được kết thúc từ ngày bàn giao.
+  - `PUT /groups/assignments/{assignmentId}/end` với `{ endDate? }`.
+  - `GET /groups` trả thêm `roles[]` (vai trò, người giữ, `startDate`, `endDate`).
+- Điểm phụ cấp chức vụ và điểm thưởng tính theo cấu hình vai trò, qua rule `POSITION_ALLOWANCE` / `POSITION_COMPLETION_BONUS`; các rule `POSITION_*` cũ đã tắt.
+  - Dòng điểm ghi rõ nguồn, ví dụ "Phụ cấp chức vụ: Leader nhóm MTE - Nhóm 1" hoặc "Thưởng đạt tỷ lệ: … hoàn thành 9/10 (90%) vượt ngưỡng 85%".
+  - Leader và Phó nhóm HLC Fund không phải thành viên, nên không nằm trong mẫu số.
+
+**Phụ cấp tháng**
+- Mã bảng là `PC-YYYY-MM` (`sheetCode` trong kỳ). Dùng cho màn hình, tên file Excel/CSV và báo cáo PDF.
+- Hệ thống tự tạo kỳ của tháng mới (khi khởi động và lúc 01:00 hằng ngày).
+- Mỗi dòng điểm thuộc đúng 1 kỳ.
+- Trạng thái kỳ: `LOCKED` / `EXPORTED` = **Đang chờ chi**, `PAID` = **Đã chi**.
+- `PUT /points/periods/{code}/settings` với `{ pointRate?, baseAllowance?, payoutDate?, reason? }`:
+  - nhận cả số dạng chuỗi;
+  - dữ liệu sai trả `400 error-validation-failed` kèm thông báo tiếng Việt, ví dụ "Đơn giá không được âm";
+  - mỗi thay đổi được ghi nhật ký;
+  - kỳ đã chốt nhận `409`.
+  - Đơn giá lưu riêng theo kỳ. Kỳ trả về `pointRate`, `baseAllowance` dạng số.
+- `POST /points/periods/{code}/unlock` **bắt buộc** `{ reason }` và ghi nhật ký. Kỳ đã chi không mở khóa được.
+- `GET /points/periods/{code}/logs`: nhật ký `{ action: SETTINGS | LOCK | UNLOCK | PAID | EXPORT | CARRY_OVER, field, oldValue, newValue, reason, changedByName, createdAt }`.
+- `GET /points/periods/{code}/export.xlsx` (hoặc `.csv`) xuất **bảng cơ bản** giống màn hình: tên, các cột điểm, tổng điểm, đơn giá, phụ cấp cơ bản, bù chênh lệch, thành tiền, tài khoản.
+  - Xuất được cả khi chưa chốt; khi đó tên file có hậu tố `-tam-tinh`.
+  - Tên file là `PC-YYYY-MM.xlsx`.
+- **Bù chênh lệch** cho kỳ đã chốt hoặc đã chi: `POST /points/periods/{code}/carry-over` với `{ memberId, amount? | points?, reason }`.
+  - Bảng cũ không bị sửa. Hệ thống ghi một dòng điều chỉnh (`kind: CARRY_OVER`) ở kỳ kế tiếp, kèm tháng gốc, lý do và người duyệt.
+  - Bù bằng tiền thì cộng vào `adjustmentAmount` của bảng tháng sau; bù bằng điểm thì tính theo đơn giá tháng sau.
+  - Kỳ gốc chưa chốt nhận `409 error-carry-over-source-open`.
+
+**Ghép / xóa cặp lan trong quý**
+- Ghép ở tháng x thì tự sinh các tháng sau x trong cùng quý, không tạo ngược về trước. Kết quả trả về `{ syncedMonths, existingMonths, lockedMonths }`:
+  - `existingMonths`: tháng đã có cặp này, nên không tạo trùng;
+  - `lockedMonths`: tháng đã chốt phụ cấp, nên không tự thêm.
+  - Ghép thẳng vào một tháng đã chốt nhận `409 error-pair-month-locked`.
+- `GET /mentoring/sessions/{id}/delete-preview` trả `{ deleteMonths, keptLockedMonths, counts: { sessions, schedules, recaps, scoredRecaps, attachments, awards, pointEntries }, willDeletePair }` để hiện màn hình xác nhận.
+- `DELETE /mentoring/sessions/{id}` xóa sạch cặp ở tháng này và các tháng sau **chưa chốt**: lịch, recap, điểm chấm, ảnh, giải và dòng điểm phụ cấp phát sinh. Tháng đã chốt hoặc đã chi được giữ nguyên (xử lý bằng bù chênh lệch). Điểm các tháng bị tác động được tính lại; nhật ký lịch được giữ lại.
+- `GET /mentoring/pair-logs?quarter=2026Q4`: nhật ký ghép và xóa gồm ai, cặp nào, từ tháng nào, các tháng bị tác động và số bản ghi.
+
 ---
 
 ## 12. Danh mục resource

@@ -156,6 +156,18 @@ export class MentoringAdminController {
         res.send(buffer);
     }
 
+    /** Xem trước khi xóa cặp từ tháng này tới cuối quý: số lượng dữ liệu sẽ bị xóa, tháng đã chốt được giữ */
+    @Get("sessions/:id/delete-preview")
+    deletePreview(@Param("id") id: string) {
+        return this.flowService.deletePreview(id);
+    }
+
+    /** Nhật ký ghép / xóa cặp: ?quarter=2026Q4 */
+    @Get("pair-logs")
+    pairLogs(@Query("quarter") quarter: string) {
+        return this.flowService.listPairLogs(quarter);
+    }
+
     /** Mẫu chuẩn dữ liệu mentoring quý cũ (kèm dữ liệu đã có): ?quarter=2023Q1 */
     @Get("history/export.xlsx")
     async exportHistory(

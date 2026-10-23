@@ -12,6 +12,9 @@ import { MemberProfileLogModel } from "@module/member/models/member-profile-log.
 import { FundContributorModel } from "@module/fund/models/fund-contributor.model";
 import { FundExpenseModel } from "@module/fund/models/fund-expense.model";
 import { MentoringImportBatchModel } from "@module/mentoring/models/mentoring-import-batch.model";
+import { PeriodLogModel } from "@module/period/models/period-log.model";
+import { GroupKindConfigModel } from "@module/organization/models/group-kind-config.model";
+import { MentoringPairLogModel } from "@module/mentoring/models/mentoring-pair-log.model";
 import { PeriodModel } from "@module/period/models/period.model";
 import { AttachmentModel } from "@module/attachment/models/attachment.model";
 import { MentoringQuarterModel } from "@module/mentoring/models/mentoring-quarter.model";
@@ -105,4 +108,7 @@ export const SequelizeModel: ModelCtor<Model>[] = [
     FundContributorModel,
     FundExpenseModel,
     MentoringImportBatchModel,
+    PeriodLogModel,
+    GroupKindConfigModel,
+    MentoringPairLogModel,
 ];

@@ -56,3 +56,6 @@ export const MEMBER_PROFILE_LOG = "MemberProfileLog";
 export const FUND_CONTRIBUTOR = "FundContributor";
 export const FUND_EXPENSE = "FundExpense";
 export const MENTORING_IMPORT_BATCH = "MentoringImportBatch";
+export const PERIOD_LOG = "PeriodLog";
+export const GROUP_KIND_CONFIG = "GroupKindConfig";
+export const MENTORING_PAIR_LOG = "MentoringPairLog";

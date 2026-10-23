@@ -72,4 +72,12 @@ export class AllowanceSummaryModel extends Model implements AllowanceSummary {
 
     @Column({ type: DataType.DATE, allowNull: true })
     paidAt?: Date;
+
+    /** Tổng tiền bù chênh lệch từ tháng trước (đ) */
+    @NumberColumn({
+        type: DataType.DECIMAL(14, 2),
+        allowNull: false,
+        defaultValue: 0,
+    })
+    adjustmentAmount?: number;
 }

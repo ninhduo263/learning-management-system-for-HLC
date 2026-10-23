@@ -45,7 +45,7 @@ export default function LeaderPage() {
         const mentees = group.members.filter((row) => row.member.memberType === 'MENTEE');
         const done = mentees.filter((row) => row.mentoring.some((item) => item.pairStatus === 'DONE')).length;
         return (
-          <Card key={group._id} size="small" title={<span>{group.name} <Tag color="purple">{ROLE_LABEL[group.myRole]}</Tag></span>} extra={<span className="text-xs text-gray-500">Leader: {group.leader?.fullName ?? '—'} · Phó: {group.deputy?.fullName ?? '—'}</span>}>
+          <Card key={group._id} size="small" title={<span>{group.name} <Tag color="purple">{ROLE_LABEL[group.myRole as keyof typeof ROLE_LABEL] ?? group.myRole}</Tag></span>} extra={<span className="text-xs text-gray-500">Leader: {group.leader?.fullName ?? '—'} · Phó: {group.deputy?.fullName ?? '—'}</span>}>
             <div className="mb-3 flex flex-wrap gap-2">
               <Tag>{group.members.length} thành viên</Tag>
               <Tag color="green">Mentee đã xong mentoring: {done}/{mentees.length}</Tag>
@@ -53,7 +53,7 @@ export default function LeaderPage() {
               {(() => {
                 const item = completion.find((row) => row._id === group._id);
                 if (!item) return null;
-                return <Tag color={item.passed ? 'green' : 'orange'}>{GROUP_KIND_LABEL[item.groupKind]} · hoàn tất {item.total ? `${item.done}/${item.total} (${item.rate}%)` : 'chưa có dữ liệu'}{item.passed ? ' · Leader/Phó +1 điểm' : ' · cần trên 90% để thưởng +1'}</Tag>;
+                return <Tag color={item.passed ? 'green' : 'orange'}>{GROUP_KIND_LABEL[item.groupKind]} · hoàn tất {item.total ? `${item.done}/${item.total} (${item.rate}%)` : 'chưa có dữ liệu'}{item.passed ? ` · vượt ngưỡng ${item.threshold}%: có thưởng` : ` · cần trên ${item.threshold}% để có thưởng`}</Tag>;
               })()}
             </div>
             <Table<MemberRow>

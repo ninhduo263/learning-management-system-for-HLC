@@ -100,4 +100,10 @@ export type ErrorCode =
     | "error-group-member-type"
     | "error-import-batch-reverted"
     | "error-recap-exists"
+    | "error-validation-failed"
+    | "error-carry-over-target-locked"
+    | "error-carry-over-source-open"
+    | "error-carry-over-value-required"
+    | "error-role-kind-mismatch"
+    | "error-pair-month-locked"
     | FileErrorCode;

@@ -162,8 +162,9 @@ export default function AdminFundPage() {
         <Tabs items={[
           { key: 'list', label: date ? `Minh chứng ngày ${formatDate(date)}` : 'Minh chứng', children: listTab },
           { key: 'stats', label: 'Thống kê tháng', children: statsTab },
-          { key: 'groups', label: 'Theo nhóm / tuần', children: <FundGroupReport showKindFilter /> },
-          { key: 'ledger', label: 'Sổ thu chi', children: <FundLedgerPanel /> }
+          { key: 'fund-groups', label: 'Nhóm MTO & thầy cô', children: <FundGroupReport fixedKind="FUND" /> },
+          { key: 'mte-groups', label: 'Nhóm MTE', children: <FundGroupReport fixedKind="MENTEE" /> },
+          { key: 'ledger', label: 'Sổ thu chi (tổng hợp chung)', children: <FundLedgerPanel /> }
         ]} />
       </Card>
       <Modal title={`Từ chối ${rejecting?.length ?? 0} minh chứng`} open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Từ chối" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden>

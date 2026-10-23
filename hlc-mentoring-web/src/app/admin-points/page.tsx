@@ -10,7 +10,7 @@ import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
   PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, POINT_CATEGORY_LABEL, SOURCE_TYPE_LABEL,
-  GROUP_KIND_LABEL, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
+  GROUP_KIND_LABEL, PERIOD_FIELD_LABEL, PERIOD_LOG_LABEL, type PeriodLog, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
   type AdjustmentView, type Member, type MemberBreakdown, type PeriodExportView, type PeriodSummary, type PointRule, type PointType, type SummaryRow
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
@@ -32,6 +32,10 @@ export default function AdminPointsPage() {
   const [detail, setDetail] = useState<MemberBreakdown | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockReason, setUnlockReason] = useState('');
+  const [carryOpen, setCarryOpen] = useState(false);
+  const [carryForm] = Form.useForm();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [review, setReview] = useState<AdjustmentView | null>(null);
   const [search, setSearch] = useState('');
@@ -140,6 +144,7 @@ export default function AdminPointsPage() {
             }
           })),
           { title: 'Tổng điểm', width: 100, align: 'right' as const, sorter: (a: SummaryRow, b: SummaryRow) => a.totalPoints - b.totalPoints, render: (_: unknown, row: SummaryRow) => <strong>{points(row.totalPoints)}</strong> },
+          { title: 'Bù chênh lệch', width: 120, align: 'right' as const, render: (_: unknown, row: SummaryRow) => Number(row.adjustmentAmount ?? 0) ? money(row.adjustmentAmount) : '' },
           { title: 'Thành tiền', width: 130, align: 'right' as const, sorter: (a: SummaryRow, b: SummaryRow) => a.amount - b.amount, render: (_: unknown, row: SummaryRow) => money(row.amount) },
           { title: 'Tài khoản', width: 190, render: (_: unknown, row: SummaryRow) => row.member?.bankAccount ? `${row.member.bankAccount} · ${row.member.bankName ?? ''}` : <Tag>Chưa có STK</Tag> }
         ]}
@@ -179,10 +184,11 @@ export default function AdminPointsPage() {
 
   const exportTab = (
     <div className="space-y-3">
-      {!locked && <Alert type="info" showIcon title="Chốt kỳ trước khi xuất file chi trả. Sau khi chốt, tên và số tài khoản được lưu cố định cho kỳ này." />}
+      <Alert type="info" showIcon title={locked ? `Xuất bảng ${period?.sheetCode} để gửi bộ phận chi trả.` : `Kỳ chưa chốt: file xuất là bản tạm tính (${period?.sheetCode}-tam-tinh). Chốt kỳ để lưu cố định tên và số tài khoản.`} />
       <Space wrap>
-        <Button icon={<DownloadOutlined />} disabled={!locked} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx'), 'Đã xuất file Excel')}>Xuất Excel</Button>
-        <Button icon={<DownloadOutlined />} disabled={!locked} loading={busy === 'csv'} onClick={() => run('csv', () => pointApi.exportFile(code, 'csv'), 'Đã xuất file CSV')}>Xuất CSV</Button>
+        <Button type="primary" icon={<DownloadOutlined />} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx', locked), 'Đã xuất file Excel')}>Xuất Excel</Button>
+        <Button icon={<DownloadOutlined />} loading={busy === 'csv'} onClick={() => run('csv', () => pointApi.exportFile(code, 'csv', locked), 'Đã xuất file CSV')}>Xuất CSV</Button>
+        {locked && <Button onClick={() => { carryForm.resetFields(); setCarryOpen(true); }}>Bù chênh lệch sang tháng sau</Button>}
         <Button icon={<PrinterOutlined />} onClick={() => window.open(`/admin-points/report?period=${code}`, '_blank')}>Báo cáo PDF mùng 10</Button>
       </Space>
       <Table<PeriodExportView>
@@ -206,13 +212,14 @@ export default function AdminPointsPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Typography.Title level={3} className="!mb-0">Điểm phụ cấp</Typography.Title>
           <MonthPicker value={code} onChange={setCode} />
+          <Tag color="geekblue" className="!text-sm">Bảng {period?.sheetCode ?? `PC-${code}`}</Tag>
           {period && <Tag color={PERIOD_STATUS_COLOR[period.status]}>{PERIOD_STATUS_LABEL[period.status]}</Tag>}
         </div>
         <Space wrap>
-          <Button icon={<SettingOutlined />} disabled={locked} onClick={() => { settingsForm.setFieldsValue({ pointRate: period?.pointRate, baseAllowance: period?.baseAllowance, payoutDate: period?.payoutDate }); setSettingsOpen(true); }}>Đơn giá</Button>
+          <Button icon={<SettingOutlined />} disabled={locked} onClick={() => { settingsForm.setFieldsValue({ pointRate: Number(period?.pointRate ?? 0), baseAllowance: Number(period?.baseAllowance ?? 0), payoutDate: period?.payoutDate ?? '', reason: '' }); setSettingsOpen(true); }}>Đơn giá</Button>
           <Button type="primary" icon={<CalculatorOutlined />} disabled={locked} loading={busy === 'recalc'} onClick={recalc}>Tính lại</Button>
           {!locked && <Popconfirm title={`Chốt ${periodLabel(code)}?`} description="Sau khi chốt không thể tính lại hay điều chỉnh điểm." onConfirm={() => run('lock', () => pointApi.lock(code), 'Đã chốt kỳ')}><Button icon={<LockOutlined />} loading={busy === 'lock'}>Chốt kỳ</Button></Popconfirm>}
-          {locked && period?.status !== 'PAID' && <Button icon={<UnlockOutlined />} loading={busy === 'unlock'} onClick={() => run('unlock', () => pointApi.unlock(code), 'Đã mở lại kỳ')}>Mở lại</Button>}
+          {locked && period?.status !== 'PAID' && <Button icon={<UnlockOutlined />} loading={busy === 'unlock'} onClick={() => { setUnlockReason(''); setUnlockOpen(true); }}>Mở khóa</Button>}
           {locked && period?.status !== 'PAID' && <Popconfirm title="Xác nhận đã chi trả kỳ này?" onConfirm={() => run('paid', () => pointApi.paid(code), 'Đã đánh dấu chi trả')}><Button icon={<CheckCircleOutlined />}>Đã chi trả</Button></Popconfirm>}
         </Space>
       </div>
@@ -236,6 +243,7 @@ export default function AdminPointsPage() {
           { key: 'completion', label: 'Leader / Phó nhóm', children: <CompletionPanel code={code} /> },
           { key: 'adjust', label: `Điều chỉnh & khiếu nại${pending.length ? ` (${pending.length})` : ''}`, children: adjustmentTab },
           { key: 'export', label: 'Xuất file chi trả', children: exportTab },
+          { key: 'logs', label: 'Nhật ký kỳ', children: <PeriodLogPanel code={code} /> },
           { key: 'config', label: 'Cấu hình loại điểm & quy tắc', children: <PointConfig /> }
         ]} />
       </Card>
@@ -277,11 +285,43 @@ export default function AdminPointsPage() {
         </Form>
       </Modal>
 
+      <Modal title={`Mở khóa ${period?.sheetCode ?? ''}`} open={unlockOpen} onCancel={() => setUnlockOpen(false)} okText="Mở khóa" okButtonProps={{ disabled: !unlockReason.trim() }} confirmLoading={busy === 'unlock'}
+        onOk={() => run('unlock', async () => { await pointApi.unlock(code, unlockReason); setUnlockOpen(false); }, 'Đã mở khóa kỳ (đã ghi nhật ký)')} destroyOnHidden>
+        <Typography.Paragraph type="secondary">Mở khóa để sửa bảng đang chờ chi. Thao tác được ghi nhật ký. Kỳ đã chi không mở khóa được: dùng “Bù chênh lệch” sang tháng sau.</Typography.Paragraph>
+        <Input.TextArea rows={3} placeholder="Lý do mở khóa (bắt buộc)" value={unlockReason} onChange={(event) => setUnlockReason(event.target.value)} />
+      </Modal>
+
+      <Modal title={`Bù chênh lệch từ ${period?.sheetCode ?? ''} sang tháng sau`} open={carryOpen} onCancel={() => setCarryOpen(false)} onOk={() => carryForm.submit()} okText="Ghi dòng bù" confirmLoading={busy === 'carry'} destroyOnHidden>
+        <Form form={carryForm} layout="vertical" onFinish={(values) => run('carry', async () => {
+          const result = await pointApi.carryOver(code, { memberId: values.memberId, reason: values.reason, ...(values.mode === 'points' ? { points: Number(values.value) } : { amount: Number(values.value) }) });
+          setCarryOpen(false);
+          message.info(`Đã ghi dòng bù vào ${result.targetSheet}`);
+        }, 'Đã ghi bù chênh lệch')}>
+          <Typography.Paragraph type="secondary">Bảng đã chốt/đã chi không sửa trực tiếp. Khoản chênh lệch được ghi thành một dòng điều chỉnh ở bảng tháng kế tiếp, kèm lý do, tháng gốc và người duyệt.</Typography.Paragraph>
+          <Form.Item name="memberId" label="Thành viên" rules={[{ required: true, message: 'Chọn thành viên' }]}>
+            <Select showSearch={{ optionFilterProp: 'label' }} options={members.map((member) => ({ value: member._id, label: `${member.memberCode} – ${member.fullName}` }))} />
+          </Form.Item>
+          <Form.Item name="mode" label="Bù theo" initialValue="amount"><Select options={[{ value: 'amount', label: 'Số tiền (đ)' }, { value: 'points', label: 'Số điểm (theo đơn giá tháng sau)' }]} /></Form.Item>
+          <Form.Item name="value" label="Chênh lệch (âm = thu hồi)" rules={[{ required: true, message: 'Nhập giá trị' }]}><InputNumber<number> className="w-full" /></Form.Item>
+          <Form.Item name="reason" label="Lý do" rules={[{ required: true, message: 'Nhập lý do' }]}><Input.TextArea rows={2} /></Form.Item>
+        </Form>
+      </Modal>
+
       <Modal title="Đơn giá kỳ" open={settingsOpen} onCancel={() => setSettingsOpen(false)} onOk={() => settingsForm.submit()} confirmLoading={busy === 'settings'} destroyOnHidden>
-        <Form form={settingsForm} layout="vertical" onFinish={(values) => run('settings', async () => { await pointApi.settings(code, values); setSettingsOpen(false); }, 'Đã lưu đơn giá')}>
-          <Form.Item name="pointRate" label="Số tiền cho 1 điểm (đ)" rules={[{ required: true }]}><InputNumber className="w-full" min={0} step={1000} /></Form.Item>
-          <Form.Item name="baseAllowance" label="Phụ cấp cơ bản mỗi người (đ)" rules={[{ required: true }]}><InputNumber className="w-full" min={0} step={1000} /></Form.Item>
-          <Form.Item name="payoutDate" label="Ngày chi trả (YYYY-MM-DD)" rules={[{ pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'Dạng YYYY-MM-DD' }]}><Input placeholder="2026-11-10" /></Form.Item>
+        <Form form={settingsForm} layout="vertical" onFinish={(values) => run('settings', async () => {
+          await pointApi.settings(code, {
+            pointRate: Number(values.pointRate),
+            baseAllowance: Number(values.baseAllowance),
+            payoutDate: values.payoutDate ? String(values.payoutDate) : undefined,
+            reason: values.reason
+          });
+          setSettingsOpen(false);
+        }, 'Đã lưu đơn giá, thành tiền đã tính lại')}>
+          <Typography.Paragraph type="secondary">Đơn giá lưu riêng cho {period?.sheetCode}; đổi đơn giá tháng này không làm đổi tiền của tháng đã chốt. Mỗi lần sửa được ghi nhật ký.</Typography.Paragraph>
+          <Form.Item name="pointRate" label="Số tiền cho 1 điểm (đ)" rules={[{ required: true, message: 'Nhập đơn giá' }, { type: 'number', min: 0, message: 'Đơn giá không được âm' }]}><InputNumber<number> className="w-full" min={0} step={1000} /></Form.Item>
+          <Form.Item name="baseAllowance" label="Phụ cấp cơ bản mỗi người (đ)" rules={[{ required: true, message: 'Nhập phụ cấp cơ bản (có thể là 0)' }, { type: 'number', min: 0, message: 'Không được âm' }]}><InputNumber<number> className="w-full" min={0} step={1000} /></Form.Item>
+          <Form.Item name="payoutDate" label="Ngày chi trả (YYYY-MM-DD)" rules={[{ pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'Dạng YYYY-MM-DD, ví dụ 2026-11-10' }]}><Input placeholder="2026-11-10" /></Form.Item>
+          <Form.Item name="reason" label="Lý do sửa (ghi nhật ký)"><Input /></Form.Item>
         </Form>
       </Modal>
 
@@ -458,15 +498,36 @@ function CompletionPanel({ code }: { code: string }) {
   }, [code, message]);
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Leader 2 điểm, Phó nhóm 1 điểm mỗi tháng (người giữ chức vào ngày cuối tháng, tính theo từng nhóm). Thêm +1 khi tỷ lệ thành viên hoàn tất trên 90%." description="Nhóm MTE: hoàn tất = buổi mentoring tháng “Đã xong” (recap MTE đã duyệt) và đủ số bài tối thiểu các module học tập. Nhóm HLC Fund: mọi tuần của tháng có khoản đóng được duyệt (MTO và thầy cô). Sửa điểm ở tab Cấu hình (quy tắc POSITION_LEADER, POSITION_PHO_LEADER, *_BONUS)." />
+      <Alert type="info" showIcon title="Điểm phụ cấp và điểm thưởng lấy theo cấu hình vai trò (Tổ chức & phân quyền → Vai trò & điểm). Thưởng khi tỷ lệ hoàn thành VƯỢT ngưỡng % của loại nhóm." description="Nhóm MTE: hoàn thành = buổi mentoring tháng “Đã xong” (recap MTE đã duyệt) và đủ số bài tối thiểu các module học tập. Nhóm HLC Fund: mọi tuần của tháng có khoản đóng được duyệt (MTO và thầy cô; Leader/Phó không tính vào mẫu số)." />
       <Table<GroupCompletion> rowKey="_id" size="small" pagination={false} dataSource={rows} columns={[
         { title: 'Nhóm', dataIndex: 'name' },
         { title: 'Loại', dataIndex: 'groupKind', render: (value: GroupCompletion['groupKind']) => GROUP_KIND_LABEL[value] },
         { title: 'Leader', dataIndex: 'leader', render: (value: string | null) => value ?? '—' },
         { title: 'Phó nhóm', dataIndex: 'deputy', render: (value: string | null) => value ?? '—' },
         { title: 'Hoàn tất', render: (_: unknown, row: GroupCompletion) => row.total ? <Progress size="small" className="!m-0 min-w-40" percent={row.rate ?? 0} format={() => `${row.done}/${row.total}`} status={row.passed ? 'success' : 'normal'} /> : 'Chưa có dữ liệu' },
-        { title: 'Thưởng +1', render: (_: unknown, row: GroupCompletion) => row.passed ? <Tag color="green">Đạt</Tag> : <Tag>Chưa đạt</Tag> }
+        { title: 'Ngưỡng', dataIndex: 'threshold', render: (value: number) => `> ${value}%` },
+        { title: 'Thưởng', render: (_: unknown, row: GroupCompletion) => row.passed ? <Tag color="green">Đạt</Tag> : <Tag>Chưa đạt</Tag> }
       ]} />
     </div>
+  );
+}
+
+/** Nhật ký kỳ: ai sửa đơn giá, chốt, mở khóa, chi trả, bù chênh lệch; từ bao nhiêu thành bao nhiêu */
+function PeriodLogPanel({ code }: { code: string }) {
+  const { message } = App.useApp();
+  const [rows, setRows] = useState<PeriodLog[]>([]);
+  useEffect(() => {
+    let active = true;
+    pointApi.logs(code).then((result) => { if (active) setRows(result); }).catch((error) => message.error(errorMessage(error)));
+    return () => { active = false; };
+  }, [code, message]);
+  return (
+    <Table<PeriodLog> rowKey="_id" size="small" dataSource={rows} pagination={{ pageSize: 15 }} scroll={{ x: 'max-content' }} locale={{ emptyText: 'Chưa có thay đổi' }} columns={[
+      { title: 'Thời gian', render: (_: unknown, row: PeriodLog) => formatDateTime(row.createdAt) },
+      { title: 'Thao tác', dataIndex: 'action', render: (value: string) => <Tag>{PERIOD_LOG_LABEL[value] ?? value}</Tag> },
+      { title: 'Nội dung', render: (_: unknown, row: PeriodLog) => row.field ? `${PERIOD_FIELD_LABEL[row.field] ?? row.field}: ${row.oldValue ?? '—'} → ${row.newValue ?? '—'}` : (row.newValue ?? '') },
+      { title: 'Lý do', dataIndex: 'reason', render: (value: string | null) => value ?? '—' },
+      { title: 'Người thực hiện', dataIndex: 'changedByName' }
+    ]} />
   );
 }

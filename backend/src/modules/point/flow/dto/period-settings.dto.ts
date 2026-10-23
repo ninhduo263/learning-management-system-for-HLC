@@ -1,19 +1,37 @@
-import { IsNumber, IsOptional, Matches, Min } from "class-validator";
+import { Type } from "class-transformer";
+import {
+    IsNumber,
+    IsOptional,
+    IsString,
+    Matches,
+    Max,
+    Min,
+} from "class-validator";
 
 export class PeriodSettingsDto {
-    /** Số tiền cho 1 điểm */
-    @IsNumber()
-    @Min(0)
+    /** Số tiền cho 1 điểm (nhận cả số dạng chuỗi "10000") */
+    @Type(() => Number)
+    @IsNumber({}, { message: "Đơn giá phải là một số" })
+    @Min(0, { message: "Đơn giá không được âm" })
+    @Max(100000000, { message: "Đơn giá quá lớn" })
     @IsOptional()
     pointRate?: number;
 
-    @IsNumber()
-    @Min(0)
+    @Type(() => Number)
+    @IsNumber({}, { message: "Phụ cấp cơ bản phải là một số" })
+    @Min(0, { message: "Phụ cấp cơ bản không được âm" })
     @IsOptional()
     baseAllowance?: number;
 
     /** YYYY-MM-DD */
-    @Matches(/^\d{4}-\d{2}-\d{2}$/)
+    @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+        message: "Ngày chi trả phải có dạng YYYY-MM-DD",
+    })
     @IsOptional()
     payoutDate?: string;
+
+    /** Lý do sửa (ghi nhật ký) */
+    @IsString()
+    @IsOptional()
+    reason?: string;
 }

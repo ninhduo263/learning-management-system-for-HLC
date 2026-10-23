@@ -6,7 +6,10 @@ import { LearningModuleModel } from "@module/learning/models/learning-module.mod
 import { ModuleCriterionModel } from "@module/learning/models/module-criterion.model";
 import { MemberModel } from "@module/member/models/member.model";
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
-import { GroupKind } from "@module/organization/common/constant";
+import {
+    GroupKind,
+    RolePermission,
+} from "@module/organization/common/constant";
 import { PeriodFlowService } from "@module/period/flow/period-flow.service";
 import { AdminScope } from "@module/permission/common/constant";
 import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
@@ -141,7 +144,7 @@ export class RecapScoreService {
         }
         // Leader/Phó: chỉ nhóm MTE của mình
         const scope = await this.groupAccess.reviewerScope(user, {
-            requireReview: true,
+            permission: RolePermission.SCORE_RECAP,
             groupId,
             kind: GroupKind.MENTEE,
         });
@@ -345,7 +348,7 @@ export class RecapScoreService {
             throw ApiError.Forbidden("error-recap-mentor-admin-only");
         if (!(await this.isGlobalReviewer(user, rubric.module._id))) {
             const scope = await this.groupAccess.reviewerScope(user, {
-                requireReview: true,
+                permission: RolePermission.SCORE_RECAP,
                 kind: GroupKind.MENTEE,
             });
             if (!scope.memberIds.has(pair.menteeId))

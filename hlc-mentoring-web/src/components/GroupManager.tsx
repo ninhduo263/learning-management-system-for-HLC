@@ -1,38 +1,63 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, App, Button, Card, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
-import { HistoryOutlined, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Card, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { CrownOutlined, HistoryOutlined, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
+import type { Dayjs } from 'dayjs';
 import { errorMessage } from '@/lib/api';
-import { GROUP_KIND_LABEL, formatDate, groupApi, memberCrudApi, type GroupHistory, type GroupKind, type GroupMember, type GroupView, type Member } from '@/services/hlcApi';
+import {
+  GROUP_KIND_LABEL, formatDate, fundApi, groupApi, memberCrudApi, roleApi,
+  type FundContributor, type GroupHistory, type GroupKind, type GroupMember, type GroupRoleAssignment, type GroupView, type Member, type RoleView
+} from '@/services/hlcApi';
 
-const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'green'}>{type === 'MENTOR' ? 'Mentor' : 'Mentee'}</Tag>;
+const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'green'}>{type === 'MENTOR' ? 'MTO' : 'MTE'}</Tag>;
 
-/** Admin chia nhóm: mỗi nhóm 1 Leader + 1 Phó nhóm (mentee); mentor và mentee đều thuộc nhóm */
-export default function GroupManager() {
+/**
+ * Quản lý 1 loại nhóm (danh sách và màn hình riêng, không lẫn thành viên):
+ * - Nhóm MTE: thành viên là mentee.
+ * - Nhóm HLC Fund: thành viên là MTO và thầy cô ngoài HLC; Leader/Phó (MTE) chỉ quản lý, không là thành viên.
+ * Gán vai trò = gán chức vụ kèm quyền hạn và điểm theo cấu hình vai trò, có thời gian hiệu lực.
+ */
+export default function GroupManager({ kind }: { kind: GroupKind }) {
   const { message } = App.useApp();
   const [groups, setGroups] = useState<GroupView[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [unassigned, setUnassigned] = useState<GroupMember[]>([]);
+  const [roles, setRoles] = useState<RoleView[]>([]);
+  const [contributors, setContributors] = useState<FundContributor[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<GroupView | 'new' | null>(null);
   const [adding, setAdding] = useState<GroupView | null>(null);
   const [addIds, setAddIds] = useState<string[]>([]);
+  const [assigning, setAssigning] = useState<GroupView | null>(null);
+  const [contributor, setContributor] = useState<{ group: GroupView; item?: FundContributor } | null>(null);
   const [history, setHistory] = useState<{ group: GroupView; data: GroupHistory } | null>(null);
   const [form] = Form.useForm();
+  const [assignForm] = Form.useForm<{ memberId: string; positionId: string; startDate?: Dayjs; endDate?: Dayjs; note?: string }>();
+  const [contributorForm] = Form.useForm();
+  const isFund = kind === 'FUND';
+  const memberType = isFund ? 'MENTOR' : 'MENTEE';
 
   const load = useCallback(async () => {
     try {
-      const [list, all, free] = await Promise.all([groupApi.list(), memberCrudApi.many({ status: 'ACTIVE' }, { memberCode: 1 }), groupApi.unassigned()]);
-      setGroups(list);
+      const [list, all, free, roleList, contributorList] = await Promise.all([
+        groupApi.list(),
+        memberCrudApi.many({ status: 'ACTIVE' }, { memberCode: 1 }),
+        groupApi.unassigned(),
+        roleApi.list(),
+        isFund ? fundApi.contributors() : Promise.resolve([] as FundContributor[])
+      ]);
+      setGroups(list.filter((group) => group.groupKind === kind));
       setMembers(all);
-      setUnassigned(free);
+      setUnassigned(free.filter((item) => item.memberType === memberType));
+      setRoles(roleList.filter((role) => role.appliesTo === kind && role.isActive));
+      setContributors(contributorList);
     } catch (error) {
       message.error(errorMessage(error, 'Không tải được danh sách nhóm'));
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [message, kind, isFund, memberType]);
 
   useEffect(() => {
     let active = true;
@@ -52,123 +77,166 @@ export default function GroupManager() {
     }
   };
 
-  const [kindFilter, setKindFilter] = useState<GroupKind | 'ALL'>('ALL');
-  /** Nhóm hiện tại của thành viên trong cùng loại nhóm */
-  const groupOf = (memberId: string, kind?: GroupKind) => groups.find((group) => (!kind || group.groupKind === kind) && group.members.some((item) => item._id === memberId));
-  const memberTypeFor = (group: GroupView) => (group.groupKind === 'FUND' ? 'MENTOR' : 'MENTEE');
-  const menteeOptions = members.filter((member) => member.memberType === 'MENTEE').map((member) => ({ value: member._id, label: `${member.memberCode} – ${member.fullName}${groupOf(member._id, 'MENTEE') ? ` (${groupOf(member._id, 'MENTEE')?.name})` : ''}` }));
+  const groupOf = (memberId: string) => groups.find((group) => group.members.some((item) => item._id === memberId));
+  const menteeOptions = members.filter((member) => member.memberType === 'MENTEE').map((member) => ({ value: member._id, label: `${member.memberCode} – ${member.fullName}` }));
+  const roleColumns = (group: GroupView) => [
+    { title: 'Vai trò', render: (_: unknown, row: GroupRoleAssignment) => <Tag color="gold">{row.roleName}</Tag> },
+    { title: 'Người giữ', render: (_: unknown, row: GroupRoleAssignment) => <span>{row.fullName} <span className="text-xs text-gray-400">{row.memberCode}</span></span> },
+    { title: 'Hiệu lực', render: (_: unknown, row: GroupRoleAssignment) => <span>{formatDate(row.startDate)} → {row.endDate ? formatDate(row.endDate) : 'nay'}{!row.isActive && <Tag className="ml-1">Sắp hiệu lực</Tag>}</span> },
+    {
+      title: '', render: (_: unknown, row: GroupRoleAssignment) => !row.endDate ? (
+        <Popconfirm title="Kết thúc vai trò hôm nay?" onConfirm={() => run(() => groupApi.endAssignment(row.assignmentId), `Đã kết thúc vai trò ở ${group.name}`)}><Button size="small" type="link" danger>Kết thúc</Button></Popconfirm>
+      ) : null
+    }
+  ];
 
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Có 2 loại nhóm, mỗi nhóm có 1 Leader và 1 Phó nhóm (là MTE)" description="Nhóm MTE gồm các mentee: Leader/Phó chấm recap MTE, theo dõi học tập và duyệt quỹ của nhóm. Nhóm HLC Fund gồm các MTO (và thầy cô ngoài danh sách): Leader/Phó quan sát, duyệt và nộp hộ minh chứng, nhưng không phải thành viên đóng quỹ. Leader 2 điểm, Phó 1 điểm mỗi tháng, +1 khi thành viên hoàn tất trên 90%. Chuyển nhóm hay đổi Leader đều được lưu lịch sử." />
+      <Alert
+        type="info"
+        showIcon
+        title={isFund ? 'Nhóm HLC Fund của MTO và thầy cô ngoài HLC' : 'Nhóm MTE (mentoring, học tập, HLC Fund của mentee)'}
+        description={isFund
+          ? 'Thành viên đóng quỹ là MTO và thầy cô. Leader / Phó nhóm là MTE giữ vai trò quản lý: duyệt và nộp hộ minh chứng, không nằm trong danh sách thành viên và không tính vào tỷ lệ hoàn thành.'
+          : 'Thành viên là mentee. Leader / Phó nhóm chấm recap MTE, theo dõi tiến độ và duyệt quỹ của nhóm.'}
+      />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Space wrap>
-          <Select className="w-52" value={kindFilter} onChange={setKindFilter} options={[{ value: 'ALL', label: 'Tất cả loại nhóm' }, { value: 'MENTEE', label: GROUP_KIND_LABEL.MENTEE }, { value: 'FUND', label: GROUP_KIND_LABEL.FUND }]} />
-          <Typography.Text type="secondary">{groups.length} nhóm · {unassigned.length} thành viên chưa có nhóm</Typography.Text>
-        </Space>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ deputyCanReview: true, groupKind: 'MENTEE' }); setEditing('new'); }}>Tạo nhóm</Button>
+        <Typography.Text type="secondary">{groups.length} nhóm · {unassigned.length} {isFund ? 'MTO' : 'MTE'} chưa có nhóm</Typography.Text>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ deputyCanReview: true }); setEditing('new'); }}>Tạo nhóm mới</Button>
       </div>
-      {unassigned.length > 0 && (
-        <Alert type="warning" showIcon title={`Chưa có nhóm: ${unassigned.slice(0, 12).map((item) => item.fullName).join(', ')}${unassigned.length > 12 ? '…' : ''}`} />
-      )}
+      {unassigned.length > 0 && <Alert type="warning" showIcon title={`Chưa có nhóm: ${unassigned.slice(0, 12).map((item) => item.fullName).join(', ')}${unassigned.length > 12 ? '…' : ''}`} />}
       {!loading && !groups.length && <Empty description="Chưa có nhóm nào" />}
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-        {groups.filter((group) => kindFilter === 'ALL' || group.groupKind === kindFilter).map((group) => (
-          <Card
-            key={group._id}
-            size="small"
-            title={<span>{group.name} <Tag color={group.groupKind === 'FUND' ? 'gold' : 'purple'} className="ml-1">{GROUP_KIND_LABEL[group.groupKind]}</Tag><span className="text-xs font-normal text-gray-400">{group.code}</span>{!group.isActive && <Tag className="ml-2">Ngừng</Tag>}</span>}
-            extra={(
-              <Space size="small">
-                <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
-                <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, deputyCanReview: group.deputyCanReview, isActive: group.isActive }); setEditing(group); }}>Sửa</Button>
-              </Space>
-            )}
-          >
-            <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {(['LEADER', 'DEPUTY'] as const).map((role) => {
-                const current = role === 'LEADER' ? group.leader : group.deputy;
-                return (
-                  <div key={role}>
-                    <div className="text-xs text-gray-500">{role === 'LEADER' ? 'Leader' : `Phó nhóm${group.deputyCanReview ? '' : ' (chỉ xem)'}`}</div>
-                    <Select
-                      className="w-full"
-                      size="small"
-                      allowClear
-                      showSearch={{ optionFilterProp: 'label' }}
-                      placeholder="Chọn mentee"
-                      value={current?._id}
-                      options={menteeOptions}
-                      onChange={(value?: string) => void run(() => groupApi.setRole(group._id, role, value), value ? `Đã đặt ${role === 'LEADER' ? 'Leader' : 'Phó nhóm'}` : 'Đã gỡ vai trò')}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm">{group.groupKind === 'FUND' ? `${group.counts.mentors} MTO đóng quỹ (Leader/Phó không đóng quỹ trong nhóm)` : `${group.counts.mentees} MTE`}</span>
-              <Button size="small" icon={<UserAddOutlined />} onClick={() => { setAddIds([]); setAdding(group); }}>Thêm thành viên</Button>
-            </div>
-            <Table<GroupMember>
-              rowKey="_id"
+        {groups.map((group) => {
+          const groupContributors = contributors.filter((item) => item.groupId === group._id);
+          return (
+            <Card
+              key={group._id}
               size="small"
-              pagination={false}
-              dataSource={group.members}
-              scroll={{ x: 'max-content', y: 260 }}
-              columns={[
-                { title: 'Thành viên', render: (_: unknown, row: GroupMember) => <span>{row.fullName} <span className="text-xs text-gray-400">{row.memberCode}</span>{row._id === group.leader?._id && <Tag color="gold" className="ml-1">Leader</Tag>}{row._id === group.deputy?._id && <Tag color="orange" className="ml-1">Phó</Tag>}</span> },
-                { title: 'Vai trò', render: (_: unknown, row: GroupMember) => typeTag(row.memberType) },
-                { title: 'Vào nhóm', dataIndex: 'joinedGroupAt', render: (value: string) => formatDate(value) },
-                { title: '', render: (_: unknown, row: GroupMember) => <Popconfirm title="Đưa khỏi nhóm?" onConfirm={() => run(() => groupApi.removeMember(group._id, row._id), 'Đã đưa khỏi nhóm')}><Button size="small" type="link" danger>Rời nhóm</Button></Popconfirm> }
-              ]}
-            />
-          </Card>
-        ))}
+              title={<span>{group.name} <span className="text-xs font-normal text-gray-400">{group.code}</span>{!group.isActive && <Tag className="ml-2">Ngừng</Tag>}</span>}
+              extra={(
+                <Space size="small">
+                  <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
+                  <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, isActive: group.isActive }); setEditing(group); }}>Sửa</Button>
+                </Space>
+              )}
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <Typography.Text strong>Vai trò trong nhóm</Typography.Text>
+                <Button size="small" icon={<CrownOutlined />} onClick={() => { assignForm.resetFields(); setAssigning(group); }}>Gán vai trò</Button>
+              </div>
+              <Table<GroupRoleAssignment> rowKey="assignmentId" size="small" pagination={false} dataSource={group.roles} columns={roleColumns(group)} locale={{ emptyText: 'Chưa gán Leader / Phó nhóm' }} />
+              <div className="mb-2 mt-3 flex items-center justify-between">
+                <Typography.Text strong>{isFund ? `${group.counts.mentors} MTO đóng quỹ` : `${group.counts.mentees} MTE`}</Typography.Text>
+                <Button size="small" icon={<UserAddOutlined />} onClick={() => { setAddIds([]); setAdding(group); }}>Thêm {isFund ? 'MTO' : 'MTE'}</Button>
+              </div>
+              <Table<GroupMember>
+                rowKey="_id"
+                size="small"
+                pagination={false}
+                dataSource={group.members}
+                scroll={{ x: 'max-content', y: 240 }}
+                columns={[
+                  { title: 'Thành viên', render: (_: unknown, row: GroupMember) => <span>{row.fullName} <span className="text-xs text-gray-400">{row.memberCode}</span></span> },
+                  { title: 'Loại', render: (_: unknown, row: GroupMember) => typeTag(row.memberType) },
+                  { title: 'Vào nhóm', dataIndex: 'joinedGroupAt', render: (value: string) => formatDate(value) },
+                  { title: '', render: (_: unknown, row: GroupMember) => <Popconfirm title="Đưa khỏi nhóm?" onConfirm={() => run(() => groupApi.removeMember(group._id, row._id), 'Đã đưa khỏi nhóm')}><Button size="small" type="link" danger>Rời nhóm</Button></Popconfirm> }
+                ]}
+              />
+              {isFund && (
+                <>
+                  <div className="mb-2 mt-3 flex items-center justify-between">
+                    <Typography.Text strong>{groupContributors.length} thầy cô ngoài HLC</Typography.Text>
+                    <Button size="small" icon={<UserAddOutlined />} onClick={() => { contributorForm.resetFields(); contributorForm.setFieldsValue({ isActive: true }); setContributor({ group }); }}>Thêm thầy cô</Button>
+                  </div>
+                  <Table<FundContributor> rowKey="_id" size="small" pagination={false} dataSource={groupContributors} locale={{ emptyText: 'Chưa có' }} columns={[
+                    { title: 'Họ tên', dataIndex: 'fullName' },
+                    { title: 'Đơn vị', dataIndex: 'organization', render: (value: string | null) => value ?? '—' },
+                    { title: 'Liên hệ', dataIndex: 'contact', render: (value: string | null) => value ?? '—' },
+                    { title: '', render: (_: unknown, row: FundContributor) => <Space>{!row.isActive && <Tag>Ngừng</Tag>}<Button size="small" type="link" onClick={() => { contributorForm.setFieldsValue(row); setContributor({ group, item: row }); }}>Sửa</Button></Space> }
+                  ]} />
+                </>
+              )}
+            </Card>
+          );
+        })}
       </div>
 
-      <Modal title={editing && editing !== 'new' ? 'Sửa nhóm' : 'Tạo nhóm'} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => form.submit()} destroyOnHidden>
+      <Modal title={editing && editing !== 'new' ? 'Sửa nhóm' : `Tạo ${GROUP_KIND_LABEL[kind]}`} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => form.submit()} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={async (values) => {
-          const ok = await run(() => (editing && editing !== 'new' ? groupApi.update(editing._id, values) : groupApi.create(values)), 'Đã lưu nhóm');
+          const ok = await run(() => (editing && editing !== 'new' ? groupApi.update(editing._id, values) : groupApi.create({ ...values, groupKind: kind })), 'Đã lưu nhóm');
           if (ok) setEditing(null);
         }}>
-          <Form.Item name="name" label="Tên nhóm" rules={[{ required: true, message: 'Nhập tên nhóm' }]}><Input placeholder="VD: Nhóm 1 - Mentor Nguyễn A" /></Form.Item>
-          <Form.Item name="deputyCanReview" label="Phó nhóm được chấm recap / duyệt quỹ độc lập" valuePropName="checked" extra="Tắt: Phó nhóm chỉ xem tiến độ, Leader và admin thực hiện chấm/duyệt."><Switch /></Form.Item>
-          {editing === 'new' && (
-            <Form.Item name="groupKind" label="Loại nhóm" rules={[{ required: true }]}>
-              <Select options={[{ value: 'MENTEE', label: 'Nhóm MTE (mentee: mentoring, học tập, quỹ)' }, { value: 'FUND', label: 'Nhóm HLC Fund của MTO' }]} />
-            </Form.Item>
-          )}
+          <Form.Item name="name" label="Tên nhóm" rules={[{ required: true, message: 'Nhập tên nhóm' }]}><Input placeholder={isFund ? 'VD: Quỹ MTO nhóm 1' : 'VD: Nhóm MTE 1'} /></Form.Item>
           {editing && editing !== 'new' && <Form.Item name="isActive" label="Đang hoạt động" valuePropName="checked"><Switch /></Form.Item>}
         </Form>
       </Modal>
 
-      <Modal title={adding ? `Thêm thành viên vào ${adding.name}` : ''} open={Boolean(adding)} onCancel={() => setAdding(null)} okText="Thêm" okButtonProps={{ disabled: !addIds.length }} destroyOnHidden
+      <Modal title={assigning ? `Gán vai trò · ${assigning.name}` : ''} open={Boolean(assigning)} onCancel={() => setAssigning(null)} onOk={() => assignForm.submit()} destroyOnHidden>
+        <Form form={assignForm} layout="vertical" onFinish={async (values) => {
+          if (!assigning) return;
+          const ok = await run(() => groupApi.assign(assigning._id, {
+            memberId: values.memberId,
+            positionId: values.positionId,
+            startDate: values.startDate?.format('YYYY-MM-DD'),
+            endDate: values.endDate?.format('YYYY-MM-DD'),
+            note: values.note
+          }), 'Đã gán vai trò');
+          if (ok) setAssigning(null);
+        }}>
+          <Typography.Paragraph type="secondary">Người giữ vai trò có ngay quyền hạn và điểm phụ cấp theo cấu hình vai trò. Người đang giữ vai trò này sẽ được kết thúc trước ngày bắt đầu mới.</Typography.Paragraph>
+          <Form.Item name="positionId" label="Vai trò" rules={[{ required: true, message: 'Chọn vai trò' }]}>
+            <Select options={roles.map((role) => ({ value: role._id, label: `${role.name} · ${role.allowancePoints} điểm${role.bonusPoints ? ` (+${role.bonusPoints} thưởng)` : ''}` }))} />
+          </Form.Item>
+          <Form.Item name="memberId" label="Thành viên (MTE)" rules={[{ required: true, message: 'Chọn thành viên' }]}>
+            <Select showSearch={{ optionFilterProp: 'label' }} options={menteeOptions} />
+          </Form.Item>
+          <div className="grid grid-cols-2 gap-3">
+            <Form.Item name="startDate" label="Từ ngày (trống = hôm nay)"><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
+            <Form.Item name="endDate" label="Đến ngày (trống = chưa hết hạn)"><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
+          </div>
+          <Form.Item name="note" label="Ghi chú"><Input /></Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={adding ? `Thêm ${isFund ? 'MTO' : 'MTE'} vào ${adding.name}` : ''} open={Boolean(adding)} onCancel={() => setAdding(null)} okText="Thêm" okButtonProps={{ disabled: !addIds.length }} destroyOnHidden
         onOk={async () => { if (adding && await run(() => groupApi.addMembers(adding._id, addIds), 'Đã thêm vào nhóm')) setAdding(null); }}>
-        <Typography.Paragraph type="secondary">
-          {adding?.groupKind === 'FUND' ? 'Nhóm HLC Fund chỉ nhận MTO.' : 'Nhóm MTE chỉ nhận mentee.'} Thành viên đang ở nhóm khác cùng loại sẽ được chuyển sang nhóm này (lịch sử nhóm cũ vẫn giữ).
-        </Typography.Paragraph>
+        <Typography.Paragraph type="secondary">Người đang ở {GROUP_KIND_LABEL[kind].toLowerCase()} khác sẽ được chuyển sang nhóm này (lịch sử nhóm cũ vẫn giữ).</Typography.Paragraph>
         <Select
           mode="multiple"
           className="w-full"
           showSearch={{ optionFilterProp: 'label' }}
           value={addIds}
           onChange={setAddIds}
-          placeholder="Chọn mentor / mentee"
           options={[
-            { label: 'Chưa có nhóm', options: unassigned.filter((item) => adding && item.memberType === memberTypeFor(adding)).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName}` })) },
-            { label: 'Đang ở nhóm khác', options: members.filter((item) => adding && item.memberType === memberTypeFor(adding) && groupOf(item._id, adding.groupKind) && groupOf(item._id, adding.groupKind)?._id !== adding._id).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName} (${groupOf(item._id, adding?.groupKind)?.name})` })) }
+            { label: 'Chưa có nhóm', options: unassigned.map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName}` })) },
+            { label: 'Đang ở nhóm khác', options: members.filter((item) => item.memberType === memberType && groupOf(item._id) && groupOf(item._id)?._id !== adding?._id).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName} (${groupOf(item._id)?.name})` })) }
           ]}
         />
+      </Modal>
+
+      <Modal title={contributor?.item ? 'Sửa thầy cô' : `Thêm thầy cô vào ${contributor?.group.name ?? ''}`} open={Boolean(contributor)} onCancel={() => setContributor(null)} onOk={() => contributorForm.submit()} destroyOnHidden>
+        <Form form={contributorForm} layout="vertical" onFinish={async (values) => {
+          if (!contributor) return;
+          const ok = await run(() => fundApi.saveContributor({ ...values, groupId: values.groupId ?? contributor.group._id }, contributor.item?._id), 'Đã lưu thầy cô');
+          if (ok) setContributor(null);
+        }}>
+          <Form.Item name="fullName" label="Họ tên" rules={[{ required: true, message: 'Nhập họ tên' }]}><Input /></Form.Item>
+          <Form.Item name="organization" label="Đơn vị"><Input /></Form.Item>
+          <Form.Item name="contact" label="Liên hệ"><Input /></Form.Item>
+          {contributor?.item && <Form.Item name="groupId" label="Nhóm"><Select options={groups.map((group) => ({ value: group._id, label: group.name }))} /></Form.Item>}
+          {contributor?.item && <Form.Item name="isActive" label="Đang đóng quỹ" valuePropName="checked"><Switch /></Form.Item>}
+        </Form>
       </Modal>
 
       <Modal title={history ? `Lịch sử ${history.group.name}` : ''} open={Boolean(history)} onCancel={() => setHistory(null)} footer={null} width={760}>
         {history && (
           <Tabs items={[
             {
-              key: 'roles', label: 'Leader / Phó nhóm', children: (
+              key: 'roles', label: 'Vai trò', children: (
                 <Table rowKey="_id" size="small" pagination={false} dataSource={history.data.roles} columns={[
-                  { title: 'Vai trò', dataIndex: 'role', render: (value: string) => <Tag color={value === 'LEADER' ? 'gold' : 'orange'}>{value === 'LEADER' ? 'Leader' : 'Phó nhóm'}</Tag> },
-                  { title: 'Thành viên', render: (_: unknown, row: GroupHistory['roles'][number]) => row.member?.fullName },
+                  { title: 'Vai trò', render: (_: unknown, row: GroupHistory['roles'][number]) => <Tag color="gold">{row.roleName || row.role}</Tag> },
+                  { title: 'Người giữ', render: (_: unknown, row: GroupHistory['roles'][number]) => row.member?.fullName },
                   { title: 'Từ', dataIndex: 'startDate', render: (value: string) => formatDate(value) },
                   { title: 'Đến', dataIndex: 'endDate', render: (value: string | null) => value ? formatDate(value) : <Tag color="green">Hiện tại</Tag> },
                   { title: 'Ghi chú', dataIndex: 'note' }

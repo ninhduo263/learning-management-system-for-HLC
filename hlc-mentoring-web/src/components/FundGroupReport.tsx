@@ -23,10 +23,10 @@ const payerTag = (type?: string) => type === 'EXTERNAL' ? <Tag color="gold">Th�
 interface ProxyValues { payer: string; contributionDate: Dayjs; amount: number; cycleType: FundCycle; coverUntil?: Dayjs; note?: string; images: UploadedImage[] }
 
 /** Báo cáo quỹ theo nhóm và tuần. Leader/Phó: quan sát, duyệt, nộp hộ nhóm mình; Admin HLC Fund: toàn bộ */
-export default function FundGroupReport({ showKindFilter = false }: { showKindFilter?: boolean }) {
+export default function FundGroupReport({ showKindFilter = false, fixedKind }: { showKindFilter?: boolean; fixedKind?: GroupKind }) {
   const { message } = App.useApp();
   const [code, setCode] = useState(() => currentPeriodCode(getCurrentTime()));
-  const [kind, setKind] = useState<GroupKind | 'ALL'>('ALL');
+  const [kind, setKind] = useState<GroupKind | 'ALL'>(fixedKind ?? 'ALL');
   const [groupId, setGroupId] = useState<string>('');
   const [data, setData] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
@@ -155,12 +155,12 @@ export default function FundGroupReport({ showKindFilter = false }: { showKindFi
             extra={(
               <Space wrap>
                 {group.pending ? <Tag color="gold">{group.pending} chờ duyệt</Tag> : <Tag color="green">Không còn mục chờ</Tag>}
-                {group.canReview && !locked && <Button size="small" icon={<PlusOutlined />} onClick={() => { proxyForm.resetFields(); proxyForm.setFieldsValue({ contributionDate: dayjs(getCurrentTime()), cycleType: 'WEEKLY', images: [] }); setProxyGroup(group); }}>Nộp hộ</Button>}
-                {group.canReview && group.groupKind === 'FUND' && <Button size="small" icon={<UserAddOutlined />} onClick={() => { contributorForm.resetFields(); setContributorGroup(group); }}>Thêm thầy cô</Button>}
+                {(group.canProxy ?? group.canReview) && !locked && <Button size="small" icon={<PlusOutlined />} onClick={() => { proxyForm.resetFields(); proxyForm.setFieldsValue({ contributionDate: dayjs(getCurrentTime()), cycleType: 'WEEKLY', images: [] }); setProxyGroup(group); }}>Nộp hộ</Button>}
+                {(group.canProxy || group.canReview) && group.groupKind === 'FUND' && <Button size="small" icon={<UserAddOutlined />} onClick={() => { contributorForm.resetFields(); setContributorGroup(group); }}>Thêm thầy cô</Button>}
               </Space>
             )}
           >
-            {!group.canReview && <Alert className="mb-2" type="info" showIcon title="Bạn chỉ được xem nhóm này (Phó nhóm chưa được bật quyền duyệt)." />}
+            {!group.canReview && <Alert className="mb-2" type="info" showIcon title="Vai trò của bạn trong nhóm này chỉ được xem (chưa có quyền duyệt minh chứng)." />}
             <Table<Row>
               rowKey={(row) => row.member._id}
               size="small"

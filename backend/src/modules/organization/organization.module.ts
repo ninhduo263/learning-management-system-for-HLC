@@ -6,6 +6,8 @@ import { Global, Module } from "@nestjs/common";
 import { GroupAccessService } from "./flow/group-access.service";
 import { GroupController } from "./flow/group.controller";
 import { GroupFlowService } from "./flow/group-flow.service";
+import { RoleController } from "./flow/role.controller";
+import { RoleService } from "./flow/role.service";
 import { GroupMembershipModel } from "./models/group-membership.model";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { DepartmentController } from "./controllers/department.controller";
@@ -33,6 +35,7 @@ import { MemberPositionService } from "./services/member-position.service";
     ],
     controllers: [
         GroupController,
+        RoleController,
         DepartmentController,
         PositionController,
         MemberPositionController,
@@ -40,6 +43,7 @@ import { MemberPositionService } from "./services/member-position.service";
     providers: [
         GroupAccessService,
         GroupFlowService,
+        RoleService,
         DepartmentService,
         PositionService,
         MemberPositionService,
@@ -55,6 +59,7 @@ import { MemberPositionService } from "./services/member-position.service";
         MemberPositionService,
         GroupAccessService,
         GroupFlowService,
+        RoleService,
     ],
 })
 export class OrganizationModule {}

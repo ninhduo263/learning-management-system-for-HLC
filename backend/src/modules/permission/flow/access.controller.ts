@@ -49,13 +49,24 @@ export class AccessController {
             isSuperAdmin,
             scopes: isSuperAdmin
                 ? Object.values(AdminScope)
-                : [...new Set(rows.map((row) => row.scope))],
+                : [
+                      ...new Set([
+                          ...rows.map((row) => row.scope),
+                          ...(await this.roleScopesOf(user)),
+                      ]),
+                  ],
             moduleIds: rows
                 .filter((row) => row.scope === AdminScope.LEARNING_MODULE)
                 .map((row) => row.moduleId),
             /** Nhóm đang làm Leader / Phó nhóm: menu "Nhóm của tôi" */
             leaderGroups: await this.leaderGroupsOf(user),
         };
+    }
+
+    /** Quyền quản trị có từ vai trò đang giữ (ví dụ vai trò "Admin HLC Fund") */
+    private async roleScopesOf(user: User) {
+        const member = await this.groupAccess.memberOfUser(user);
+        return member ? this.groupAccess.adminScopesOf(member._id) : [];
     }
 
     private async leaderGroupsOf(user: User) {

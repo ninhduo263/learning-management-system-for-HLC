@@ -165,6 +165,27 @@ export interface ScheduleImportResult {
   changes: { row: number; sessionCode: string; mentor: string; mentee: string; oldStartAt: string | null; startAt: string; endAt: string; reason: string }[];
 }
 
+export interface PairDeletePreview {
+  pairCode: string;
+  fromMonth: number;
+  deleteMonths: number[];
+  keptLockedMonths: number[];
+  counts: { sessions: number; schedules: number; recaps: number; scoredRecaps: number; attachments: number; awards: number; pointEntries: number };
+  willDeletePair: boolean;
+}
+
+export interface PairLogView {
+  _id: string;
+  action: 'CREATE' | 'DELETE' | 'CHANGE';
+  pairCode: string | null;
+  mentorCode: string | null;
+  menteeCode: string | null;
+  fromMonth: number;
+  detail: { affectedMonths?: number[]; existingMonths?: number[]; lockedMonths?: number[]; keptLockedMonths?: number[]; counts?: Record<string, number> };
+  actor: string | null;
+  createdAt: string;
+}
+
 export const mentoringApi = {
   // admin
   ensureQuarter: (code: string) => apiJson<QuarterView>('/mentoring/quarters/ensure', { method: 'POST', json: { code } }),
@@ -172,7 +193,7 @@ export const mentoringApi = {
   setLock: (code: string, isLocked: boolean) =>
     apiJson<QuarterView>(`/mentoring/quarters/${encodeURIComponent(code)}/lock`, { method: 'PUT', json: { isLocked } }),
   createPair: (code: string, body: { mentorCode: string; menteeCode: string; month: number }) =>
-    apiJson<{ syncedMonths: number[] }>(`/mentoring/quarters/${encodeURIComponent(code)}/pairs`, { method: 'POST', json: body }),
+    apiJson<{ syncedMonths: number[]; existingMonths: number[]; lockedMonths: number[] }>(`/mentoring/quarters/${encodeURIComponent(code)}/pairs`, { method: 'POST', json: body }),
   importPairs: (code: string, file: File) => {
     const form = new FormData();
     form.append('file', file);
@@ -184,7 +205,10 @@ export const mentoringApi = {
   updatePair: (sessionId: string, body: { mentorCode: string; menteeCode: string }) =>
     apiJson<{ changed: boolean; movedSessions: number }>(`/mentoring/sessions/${sessionId}/pair`, { method: 'PUT', json: body }),
   deleteFrom: (sessionId: string) =>
-    apiJson<{ deletedMonths: number[]; deleted: Record<string, number>; voidedPointEntries: number }>(`/mentoring/sessions/${sessionId}`, { method: 'DELETE' }),
+    apiJson<{ deletedMonths: number[]; keptLockedMonths: number[]; deleted: Record<string, number>; voidedPointEntries: number }>(`/mentoring/sessions/${sessionId}`, { method: 'DELETE' }),
+  deletePreview: (sessionId: string) =>
+    apiJson<PairDeletePreview>(`/mentoring/sessions/${sessionId}/delete-preview`),
+  pairLogs: (quarter: string) => apiJson<PairLogView[]>(`/mentoring/pair-logs?quarter=${encodeURIComponent(quarter)}`),
   overrideSchedule: (sessionId: string, body: ScheduleInput) =>
     apiJson<SessionView>(`/mentoring/sessions/${sessionId}/schedule/override`, { method: 'PUT', json: body }),
   reviewRecap: (recapId: string, status: 'APPROVED' | 'REJECTED', note?: string) =>

@@ -10,6 +10,7 @@ import { DepartmentType, GroupKind } from "../common/constant";
 import { DepartmentModel } from "../models/department.model";
 import { GroupMembershipModel } from "../models/group-membership.model";
 import { MemberPositionModel } from "../models/member-position.model";
+import { PositionModel } from "../models/position.model";
 import { GroupDto } from "./dto/group.dto";
 import { GroupAccessService } from "./group-access.service";
 
@@ -44,6 +45,8 @@ export class GroupFlowService {
         private readonly departmentModel: typeof DepartmentModel,
         @InjectModel(MemberPositionModel)
         private readonly memberPositionModel: typeof MemberPositionModel,
+        @InjectModel(PositionModel)
+        private readonly positionModel: typeof PositionModel,
         @InjectModel(GroupMembershipModel)
         private readonly membershipModel: typeof GroupMembershipModel,
         @InjectModel(MemberModel)
@@ -81,6 +84,42 @@ export class GroupFlowService {
                 })
             ).map((member) => [member._id, member]),
         );
+        // Vai trò đang / sắp có hiệu lực của từng nhóm (kèm thời hạn)
+        const today = this.access.today();
+        const assignments = ids.length
+            ? await this.memberPositionModel.findAll({
+                  where: {
+                      departmentId: ids,
+                      [Op.or]: [
+                          { endDate: null },
+                          { endDate: { [Op.gte]: today } },
+                      ],
+                  },
+                  order: [["startDate", "ASC"]],
+                  raw: true,
+              })
+            : [];
+        const positions = new Map(
+            (await this.positionModel.findAll({ raw: true })).map((item) => [
+                item._id,
+                item,
+            ]),
+        );
+        const assignees = new Map(
+            (assignments.length
+                ? await this.memberModel.findAll({
+                      where: {
+                          _id: [
+                              ...new Set(
+                                  assignments.map((row) => row.memberId),
+                              ),
+                          ],
+                      },
+                      raw: true,
+                  })
+                : []
+            ).map((member) => [member._id, member]),
+        );
         return groups.map((group) => {
             const roles = leaders.get(group._id);
             const list = memberships
@@ -93,6 +132,21 @@ export class GroupFlowService {
                 .sort((a, b) => a.memberCode.localeCompare(b.memberCode));
             return {
                 ...group,
+                roles: assignments
+                    .filter((row) => row.departmentId === group._id)
+                    .map((row) => ({
+                        assignmentId: row._id,
+                        memberId: row.memberId,
+                        fullName: assignees.get(row.memberId)?.fullName ?? "",
+                        memberCode:
+                            assignees.get(row.memberId)?.memberCode ?? "",
+                        positionId: row.positionId,
+                        roleCode: positions.get(row.positionId)?.code ?? "",
+                        roleName: positions.get(row.positionId)?.name ?? "",
+                        startDate: row.startDate,
+                        endDate: row.endDate ?? null,
+                        isActive: row.startDate <= today,
+                    })),
                 leader: memberBrief(members.get(roles?.leaderId)),
                 deputy: memberBrief(members.get(roles?.deputyId)),
                 members: list,
@@ -237,12 +291,11 @@ export class GroupFlowService {
         if (current?.groupId === groupId) return false;
         if (current) {
             await current.update({ endDate: today }, { transaction: t });
-            const ids = await this.access.positionIds();
+            // Rời nhóm cũ: kết thúc mọi vai trò đang giữ ở nhóm đó
             const roles = await this.memberPositionModel.findAll({
                 where: {
                     memberId,
                     departmentId: current.groupId,
-                    positionId: [ids.leader, ids.deputy].filter(Boolean),
                     endDate: null,
                 },
                 transaction: t,
@@ -311,14 +364,12 @@ export class GroupFlowService {
             });
             if (!current) throw ApiError.NotFound("error-record-not-found");
             await current.update({ endDate: today }, { transaction: t });
-            const ids = await this.access.positionIds();
             await this.memberPositionModel.update(
                 { endDate: today, note: "Rời nhóm" },
                 {
                     where: {
                         memberId,
                         departmentId: groupId,
-                        positionId: [ids.leader, ids.deputy].filter(Boolean),
                         endDate: null,
                     },
                     transaction: t,
@@ -335,8 +386,10 @@ export class GroupFlowService {
         memberId: string | undefined,
         user: User,
     ) {
-        await this.getGroup(groupId);
-        const ids = await this.access.positionIds();
+        const target = await this.getGroup(groupId);
+        const ids = await this.access.positionIds(
+            target.groupKind ?? GroupKind.MENTEE,
+        );
         const positionId = role === "LEADER" ? ids.leader : ids.deputy;
         const otherId = role === "LEADER" ? ids.deputy : ids.leader;
         if (!positionId) throw ApiError.NotFound("error-record-not-found");
@@ -400,20 +453,124 @@ export class GroupFlowService {
         return (await this.list()).find((group) => group._id === groupId);
     }
 
+    /**
+     * Gán vai trò (Leader, Phó nhóm hoặc vai trò khác cùng loại nhóm) cho thành viên trong 1 nhóm,
+     * có thời gian hiệu lực. Người đang giữ vai trò đó được kết thúc từ ngày bàn giao.
+     */
+    async assignRole(
+        groupId: string,
+        dto: {
+            memberId: string;
+            positionId: string;
+            startDate?: string;
+            endDate?: string;
+            note?: string;
+        },
+        user: User,
+    ) {
+        const group = await this.getGroup(groupId);
+        const kind = group.groupKind ?? GroupKind.MENTEE;
+        const position = await this.positionModel.findByPk(dto.positionId, {
+            raw: true,
+        });
+        if (!position || position.isActive === false)
+            throw ApiError.NotFound("error-record-not-found");
+        if (position.groupKind !== kind)
+            throw ApiError.BadRequest("error-role-kind-mismatch", {
+                role: position.name,
+            });
+        const member = await this.memberModel.findByPk(dto.memberId, {
+            raw: true,
+        });
+        if (!member) throw ApiError.NotFound("error-record-not-found");
+        if (member.memberType !== MemberType.MENTEE)
+            throw ApiError.BadRequest("error-group-leader-mentee-only");
+        const startDate = dto.startDate || this.access.today();
+        if (dto.endDate && dto.endDate < startDate)
+            throw ApiError.BadRequest("error-member-position-invalid");
+        await this.sequelize.transaction(async (t) => {
+            // Bàn giao: người đang giữ vai trò này kết thúc trước ngày bắt đầu mới
+            const previous = await this.memberPositionModel.findAll({
+                where: {
+                    departmentId: groupId,
+                    positionId: position._id,
+                    [Op.or]: [
+                        { endDate: null },
+                        { endDate: { [Op.gte]: startDate } },
+                    ],
+                },
+                transaction: t,
+            });
+            for (const row of previous) {
+                const dayBefore = new Date(
+                    new Date(`${startDate}T00:00:00Z`).getTime() - 86400000,
+                )
+                    .toISOString()
+                    .slice(0, 10);
+                await row.update(
+                    {
+                        endDate:
+                            row.startDate > dayBefore ? startDate : dayBefore,
+                        note: [row.note, "Bàn giao vai trò"]
+                            .filter(Boolean)
+                            .join(" · "),
+                    },
+                    { transaction: t },
+                );
+            }
+            // Nhóm MTE: người giữ vai trò cũng là thành viên nhóm; nhóm HLC Fund: chỉ quản lý
+            if (kind !== GroupKind.FUND)
+                await this.moveMember(
+                    groupId,
+                    member._id,
+                    user,
+                    t,
+                    `Giữ vai trò ${position.name}`,
+                );
+            await this.memberPositionModel.create(
+                {
+                    memberId: member._id,
+                    departmentId: groupId,
+                    positionId: position._id,
+                    startDate,
+                    endDate: dto.endDate || null,
+                    note:
+                        dto.note?.trim() ||
+                        `Giao bởi ${user.username ?? user._id}`,
+                },
+                { transaction: t },
+            );
+        });
+        return (await this.list()).find((item) => item._id === groupId);
+    }
+
+    /** Kết thúc / sửa thời hạn một lần giữ vai trò */
+    async endAssignment(assignmentId: string, endDate?: string) {
+        const row = await this.memberPositionModel.findByPk(assignmentId);
+        if (!row) throw ApiError.NotFound("error-record-not-found");
+        const value = endDate || this.access.today();
+        if (value < row.startDate)
+            throw ApiError.BadRequest("error-member-position-invalid");
+        await row.update({ endDate: value });
+        return row.get({ plain: true });
+    }
+
     /** Lịch sử thành viên và Leader/Phó của nhóm */
     async history(groupId: string) {
         await this.getGroup(groupId);
-        const ids = await this.access.positionIds();
+        const positions = new Map(
+            (await this.positionModel.findAll({ raw: true })).map((item) => [
+                item._id,
+                item,
+            ]),
+        );
         const memberships = await this.membershipModel.findAll({
             where: { groupId },
             order: [["createdAt", "DESC"]],
             raw: true,
         });
         const roles = await this.memberPositionModel.findAll({
-            where: {
-                departmentId: groupId,
-                positionId: [ids.leader, ids.deputy].filter(Boolean),
-            },
+            where: { departmentId: groupId },
             order: [["createdAt", "DESC"]],
             raw: true,
         });
@@ -437,7 +594,8 @@ export class GroupFlowService {
             })),
             roles: roles.map((row) => ({
                 ...row,
-                role: row.positionId === ids.leader ? "LEADER" : "DEPUTY",
+                role: positions.get(row.positionId)?.code ?? "",
+                roleName: positions.get(row.positionId)?.name ?? "",
                 member: memberBrief(members.get(row.memberId)),
             })),
         };

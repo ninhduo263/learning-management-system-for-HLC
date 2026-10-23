@@ -11,6 +11,13 @@ import { TargetMemberType } from "@module/member/common/constant";
 import { DepartmentType } from "@module/organization/common/constant";
 import { DepartmentModel } from "@module/organization/models/department.model";
 import { PositionModel } from "@module/organization/models/position.model";
+import { MemberPositionModel } from "@module/organization/models/member-position.model";
+import { GroupKindConfigModel } from "@module/organization/models/group-kind-config.model";
+import {
+    GroupKind,
+    RolePermission as GROUP_PERMS,
+} from "@module/organization/common/constant";
+import { Op } from "sequelize";
 import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { createHash } from "crypto";
@@ -110,8 +117,6 @@ const rule = (
     priority,
     isActive,
 });
-/** Phụ cấp mặc định theo chức vụ nhóm: Leader 2 điểm, Phó nhóm 1 điểm */
-const GROUP_ROLE_POINTS: Record<string, number> = { LEADER: 2, PHO_LEADER: 1 };
 const RULES = [
     rule(
         "MENTORING_EARLY_D1_7",
@@ -189,34 +194,35 @@ const RULES = [
         "FUND_MONTHLY",
         1,
     ),
-    ...POSITIONS.map((position) =>
-        rule(
-            `POSITION_${position.code}`,
-            `Phụ cấp ${position.name.toLowerCase()}`,
+    // Phụ cấp chức vụ và thưởng đạt tỷ lệ: điểm lấy theo cấu hình vai trò (Position) và ngưỡng % theo loại nhóm
+    {
+        ...rule(
+            "POSITION_ALLOWANCE",
+            "Phụ cấp chức vụ (theo cấu hình vai trò)",
             "POSITION",
             PointRuleKind.POSITION,
             PointSourceType.MEMBER_POSITION,
-            { positionCode: position.code },
-            GROUP_ROLE_POINTS[position.code] ?? 0,
-            null,
-            0,
-            position.code in GROUP_ROLE_POINTS,
-        ),
-    ),
-    // Thưởng cuối tháng khi thành viên nhóm hoàn tất trên 90%
-    ...Object.keys(GROUP_ROLE_POINTS).map((code) =>
-        rule(
-            `POSITION_${code}_BONUS`,
-            `Thưởng ${code === "LEADER" ? "Leader" : "Phó nhóm"}: nhóm hoàn tất trên 90%`,
-            "POSITION",
-            PointRuleKind.AUTO,
-            PointSourceType.GROUP_COMPLETION,
-            { positionCode: code, minCompletionRate: 0.9 },
+            { fromRoleConfig: true },
             1,
             null,
             0,
         ),
-    ),
+        targetMemberType: TargetMemberType.ALL,
+    },
+    {
+        ...rule(
+            "POSITION_COMPLETION_BONUS",
+            "Thưởng đạt tỷ lệ hoàn thành của nhóm (theo cấu hình vai trò)",
+            "POSITION",
+            PointRuleKind.AUTO,
+            PointSourceType.GROUP_COMPLETION,
+            { fromRoleConfig: true },
+            1,
+            null,
+            0,
+        ),
+        targetMemberType: TargetMemberType.ALL,
+    },
 ];
 const MODULES = [
     {
@@ -375,25 +381,183 @@ export class CatalogSeedService implements OnApplicationBootstrap {
         private readonly fieldModel: typeof ModuleFieldModel,
         @InjectModel(ModuleCriterionModel)
         private readonly criterionModel: typeof ModuleCriterionModel,
+        @InjectModel(MemberPositionModel)
+        private readonly memberPositionModel: typeof MemberPositionModel,
+        @InjectModel(GroupKindConfigModel)
+        private readonly kindConfigModel: typeof GroupKindConfigModel,
     ) {}
 
-    /** DB cũ: rule Leader/Phó nhóm còn ở mặc định (0 điểm, tắt) thì bật theo barem mới */
-    private async upgradeGroupRoleRules() {
-        let updated = 0;
-        for (const [code, points] of Object.entries(GROUP_ROLE_POINTS)) {
-            const [count] = await this.pointRuleModel.update(
-                { points, isActive: true },
-                {
-                    where: {
-                        code: `POSITION_${code}`,
-                        points: 0,
-                        isActive: false,
+    /**
+     * Vai trò mặc định (chức vụ + quyền hạn + điểm). Lần đầu chuyển sang mô hình vai trò:
+     * - LEADER / PHO_LEADER thành vai trò nhóm MTE; tạo FUND_LEADER / FUND_PHO_LEADER cho nhóm HLC Fund
+     *   và chuyển các chức vụ đang gán ở nhóm Fund sang vai trò Fund;
+     * - tắt các quy tắc điểm chức vụ cũ (POSITION_*), điểm lấy từ cấu hình vai trò;
+     * - tạo ngưỡng % theo loại nhóm.
+     */
+    private async migrateRoles() {
+        let changed = 0;
+        const all = [
+            GROUP_PERMS.VIEW_PROGRESS,
+            GROUP_PERMS.SCORE_RECAP,
+            GROUP_PERMS.REVIEW_FUND,
+            GROUP_PERMS.PROXY_FUND,
+        ];
+        const fund = [
+            GROUP_PERMS.VIEW_PROGRESS,
+            GROUP_PERMS.REVIEW_FUND,
+            GROUP_PERMS.PROXY_FUND,
+        ];
+        const legacyPoints = async (code: string, fallback: number) => {
+            const legacy = await this.pointRuleModel.findOne({
+                where: { code },
+                raw: true,
+            });
+            return legacy && Number(legacy.points)
+                ? Number(legacy.points)
+                : fallback;
+        };
+        const roles = [
+            {
+                code: "LEADER",
+                name: "Leader nhóm MTE",
+                groupKind: GroupKind.MENTEE,
+                permissions: all,
+                allowancePoints: await legacyPoints("POSITION_LEADER", 2),
+                bonusPoints: await legacyPoints("POSITION_LEADER_BONUS", 1),
+                sortOrder: 3,
+            },
+            {
+                code: "PHO_LEADER",
+                name: "Phó nhóm MTE",
+                groupKind: GroupKind.MENTEE,
+                permissions: all,
+                allowancePoints: await legacyPoints("POSITION_PHO_LEADER", 1),
+                bonusPoints: await legacyPoints("POSITION_PHO_LEADER_BONUS", 1),
+                sortOrder: 4,
+            },
+            {
+                code: "FUND_LEADER",
+                name: "Leader nhóm HLC Fund",
+                groupKind: GroupKind.FUND,
+                permissions: fund,
+                allowancePoints: 2,
+                bonusPoints: 1,
+                sortOrder: 5,
+            },
+            {
+                code: "FUND_PHO_LEADER",
+                name: "Phó nhóm HLC Fund",
+                groupKind: GroupKind.FUND,
+                permissions: fund,
+                allowancePoints: 1,
+                bonusPoints: 1,
+                sortOrder: 6,
+            },
+            {
+                code: "ADMIN_HLC_FUND",
+                name: "Admin HLC Fund",
+                groupKind: null,
+                permissions: [],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                adminScope: "FUND",
+                sortOrder: 10,
+            },
+            {
+                code: "ADMIN_MENTORING",
+                name: "Admin Mentoring",
+                groupKind: null,
+                permissions: [],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                adminScope: "MENTORING",
+                sortOrder: 11,
+            },
+        ];
+        for (const role of roles) {
+            const existing = await this.positionModel.findOne({
+                where: { code: role.code },
+            });
+            if (!existing) {
+                await this.positionModel.create({
+                    _id: seedId(`POS:${role.code}`),
+                    ...role,
+                });
+                changed += 1;
+            } else if (
+                existing.permissions === null ||
+                existing.permissions === undefined
+            ) {
+                // Chưa cấu hình vai trò (DB cũ): áp cấu hình mặc định
+                await existing.update({
+                    name: role.name,
+                    groupKind: role.groupKind,
+                    permissions: role.permissions,
+                    allowancePoints: role.allowancePoints,
+                    bonusPoints: role.bonusPoints,
+                    adminScope: role.adminScope ?? null,
+                });
+                changed += 1;
+            }
+        }
+        // Chức vụ ở nhóm HLC Fund đang dùng vai trò nhóm MTE -> chuyển sang vai trò Fund
+        const fundGroups = await this.departmentModel.findAll({
+            where: { type: DepartmentType.GROUP, groupKind: GroupKind.FUND },
+            attributes: ["_id"],
+            raw: true,
+        });
+        if (fundGroups.length) {
+            for (const [from, to] of [
+                ["LEADER", "FUND_LEADER"],
+                ["PHO_LEADER", "FUND_PHO_LEADER"],
+            ]) {
+                const [fromRole, toRole] = await Promise.all([
+                    this.positionModel.findOne({
+                        where: { code: from },
+                        raw: true,
+                    }),
+                    this.positionModel.findOne({
+                        where: { code: to },
+                        raw: true,
+                    }),
+                ]);
+                const [count] = await this.memberPositionModel.update(
+                    { positionId: toRole._id },
+                    {
+                        where: {
+                            positionId: fromRole._id,
+                            departmentId: fundGroups.map((item) => item._id),
+                        },
+                    },
+                );
+                changed += count;
+            }
+        }
+        // Quy tắc điểm chức vụ cũ (theo mã chức vụ) -> tắt, dùng quy tắc chung theo vai trò
+        const [legacy] = await this.pointRuleModel.update(
+            { isActive: false },
+            {
+                where: {
+                    code: { [Op.like]: "POSITION_%" },
+                    isActive: true,
+                    [Op.not]: {
+                        code: [
+                            "POSITION_ALLOWANCE",
+                            "POSITION_COMPLETION_BONUS",
+                        ],
                     },
                 },
-            );
-            updated += count;
+            },
+        );
+        changed += legacy;
+        for (const kind of Object.values(GroupKind)) {
+            const [, created] = await this.kindConfigModel.findOrCreate({
+                where: { groupKind: kind },
+                defaults: { groupKind: kind, completionThreshold: 90 },
+            });
+            if (created) changed += 1;
         }
-        return updated;
+        return changed;
     }
 
     /** Module RECAP: tạo nếu thiếu; tiêu chí chỉ tạo khi module chưa có tiêu chí nào */
@@ -503,7 +667,7 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                     (row) => ({ moduleId: row.moduleId, key: row.key }),
                 )) +
                 (await this.seedRecapModule()) +
-                (await this.upgradeGroupRoleRules());
+                (await this.migrateRoles());
             if (created)
                 this.logger.log(`Đã tạo ${created} bản ghi danh mục mặc định`);
         } catch (error) {

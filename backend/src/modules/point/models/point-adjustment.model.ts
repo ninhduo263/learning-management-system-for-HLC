@@ -54,4 +54,12 @@ export class PointAdjustmentModel extends Model implements PointAdjustment {
 
     @Column({ type: DataType.TEXT, allowNull: true })
     reviewNote?: string;
+
+    /** Bù chênh lệch bằng tiền (đ), cộng thẳng vào thành tiền của tháng nhận bù */
+    @NumberColumn({ type: DataType.DECIMAL(14, 2), allowNull: true })
+    amount?: number;
+
+    /** Kỳ gốc bị sai (khi kind = CARRY_OVER) */
+    @Column({ type: DataType.STRING(24), allowNull: true })
+    sourcePeriodId?: string;
 }

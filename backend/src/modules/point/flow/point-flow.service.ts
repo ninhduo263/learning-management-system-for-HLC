@@ -9,7 +9,7 @@ import { PeriodFlowService } from "@module/period/flow/period-flow.service";
 import { PeriodModel } from "@module/period/models/period.model";
 import { TimeService } from "@module/time/time.service";
 import { User } from "@module/user/entities/user.entity";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { Cron } from "@nestjs/schedule";
 import { createHash } from "crypto";
@@ -31,12 +31,18 @@ import { PointAdjustmentModel } from "../models/point-adjustment.model";
 import { PointEntryModel } from "../models/point-entry.model";
 import { PointTypeModel } from "../models/point-type.model";
 import { PointCalculationService, stableId } from "./point-calculation.service";
+import { PeriodLogModel } from "@module/period/models/period-log.model";
+import { UserModel } from "@module/repository/sequelize/model/user.model";
+
+/** Mã bảng tổng hợp phụ cấp: PC-YYYY-MM */
+export const sheetCode = (periodCode: string) => `PC-${periodCode}`;
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
 
 export interface PeriodSettingsInput {
     pointRate?: number;
     baseAllowance?: number;
     payoutDate?: string;
+    reason?: string;
 }
 
 export interface AdjustmentInput {
@@ -50,7 +56,7 @@ export interface AdjustmentInput {
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
 @Injectable()
-export class PointFlowService {
+export class PointFlowService implements OnApplicationBootstrap {
     private readonly logger = new Logger(PointFlowService.name);
 
     constructor(
@@ -73,14 +79,94 @@ export class PointFlowService {
         private readonly exportModel: typeof PeriodExportModel,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
+        @InjectModel(PeriodLogModel)
+        private readonly periodLogModel: typeof PeriodLogModel,
     ) {}
+
+    /** Khởi động: tự tạo bảng của tháng hiện tại (bảng tháng mới cũng được tạo mỗi ngày lúc 01:00) */
+    async onApplicationBootstrap() {
+        try {
+            const now = vnParts(this.timeService.now());
+            await this.periodFlow.ensurePeriod(now.year, now.month);
+        } catch (error) {
+            this.logger.warn(`Không tạo được kỳ tháng hiện tại: ${error}`);
+        }
+    }
 
     // ------------------------------------------------------------------
     // Kỳ
     // ------------------------------------------------------------------
 
+    /** Kỳ trả về cho FE: số thập phân thành số, kèm mã bảng PC-YYYY-MM và trạng thái chi trả */
     private withLockFlag(period: Period) {
-        return { ...period, isLocked: this.periodFlow.isLocked(period) };
+        return {
+            ...period,
+            pointRate: Number(period.pointRate ?? 0),
+            baseAllowance: Number(period.baseAllowance ?? 0),
+            sheetCode: sheetCode(period.code),
+            isLocked: this.periodFlow.isLocked(period),
+        };
+    }
+
+    private async log(
+        periodId: string,
+        action: string,
+        user: Pick<User, "_id"> | null,
+        values: {
+            field?: string;
+            oldValue?: unknown;
+            newValue?: unknown;
+            reason?: string;
+        } = {},
+        t?: Transaction,
+    ) {
+        await this.periodLogModel.create(
+            {
+                periodId,
+                action,
+                field: values.field ?? null,
+                oldValue:
+                    values.oldValue === undefined || values.oldValue === null
+                        ? null
+                        : String(values.oldValue),
+                newValue:
+                    values.newValue === undefined || values.newValue === null
+                        ? null
+                        : String(values.newValue),
+                reason: values.reason?.trim() || null,
+                changedBy: user?._id ?? null,
+            },
+            { transaction: t },
+        );
+    }
+
+    /** Nhật ký của kỳ: ai sửa, lúc nào, từ bao nhiêu thành bao nhiêu */
+    async logs(code: string) {
+        const period = await this.periodFlow.getByCode(code);
+        const rows = await this.periodLogModel.findAll({
+            where: { periodId: period._id },
+            order: [["createdAt", "DESC"]],
+            raw: true,
+        });
+        const userIds = [
+            ...new Set(rows.map((row) => row.changedBy).filter(Boolean)),
+        ];
+        const users = new Map(
+            (userIds.length
+                ? await UserModel.findAll({
+                      where: { _id: userIds },
+                      attributes: ["_id", "username", "fullname"],
+                      raw: true,
+                  })
+                : []
+            ).map((user) => [user._id, user.fullname || user.username]),
+        );
+        return rows.map((row) => ({
+            ...row,
+            changedByName:
+                users.get(row.changedBy) ??
+                (row.changedBy ? row.changedBy : "Hệ thống"),
+        }));
     }
 
     async listPeriods() {
@@ -100,9 +186,38 @@ export class PointFlowService {
         );
     }
 
-    async updateSettings(code: string, input: PeriodSettingsInput) {
+    async updateSettings(
+        code: string,
+        input: PeriodSettingsInput,
+        user?: Pick<User, "_id">,
+    ) {
         const period = await this.periodFlow.getByCode(code);
         this.periodFlow.assertWritable(period);
+        const changes = (
+            ["pointRate", "baseAllowance", "payoutDate"] as const
+        ).filter((field) => {
+            if (input[field] === undefined) return false;
+            const before =
+                field === "payoutDate"
+                    ? (period.payoutDate ?? null)
+                    : Number(period[field] ?? 0);
+            const after =
+                field === "payoutDate"
+                    ? (input.payoutDate ?? null)
+                    : Number(input[field]);
+            return before !== after;
+        });
+        for (const field of changes) {
+            await this.log(period._id, "SETTINGS", user ?? null, {
+                field,
+                oldValue:
+                    field === "payoutDate"
+                        ? period.payoutDate
+                        : Number(period[field] ?? 0),
+                newValue: input[field],
+                reason: input.reason,
+            });
+        }
         await this.periodModel.update(
             {
                 ...(input.pointRate !== undefined && {
@@ -208,6 +323,7 @@ export class PointFlowService {
     /** Tỷ lệ hoàn tất của từng nhóm (căn cứ thưởng Leader/Phó nhóm) */
     async groupCompletion(code: string, groupIds?: string[]) {
         const period = await this.periodFlow.getByCode(code);
+        const thresholds = await this.calculation.thresholds();
         const stats = await this.sequelize.transaction((t) =>
             this.calculation.completionOf(period, t),
         );
@@ -241,7 +357,11 @@ export class PointFlowService {
                     rate: item.total
                         ? Math.round((item.done / item.total) * 1000) / 10
                         : null,
-                    passed: item.total > 0 && item.done / item.total > 0.9,
+                    threshold: thresholds[group.groupKind ?? "MENTEE"] ?? 90,
+                    passed:
+                        item.total > 0 &&
+                        (item.done / item.total) * 100 >
+                            (thresholds[group.groupKind ?? "MENTEE"] ?? 90),
                     leader: members.get(roles?.leaderId) ?? null,
                     deputy: members.get(roles?.deputyId) ?? null,
                 };
@@ -287,11 +407,19 @@ export class PointFlowService {
                 },
                 { where: { _id: period._id }, transaction: t },
             );
+            await this.log(
+                period._id,
+                "LOCK",
+                user,
+                { newValue: "Đang chờ chi" },
+                t,
+            );
             return this.withLockFlag(await this.periodFlow.getByCode(code, t));
         });
     }
 
-    async unlock(code: string) {
+    /** Mở khóa kỳ đã chốt (chưa chi): bắt buộc lý do, ghi nhật ký */
+    async unlock(code: string, user?: Pick<User, "_id">, reason?: string) {
         const period = await this.periodFlow.getByCode(code);
         if (
             period.status === PeriodStatus.PAID ||
@@ -317,11 +445,22 @@ export class PointFlowService {
                 },
                 { where: { _id: period._id }, transaction: t },
             );
+            await this.log(
+                period._id,
+                "UNLOCK",
+                user ?? null,
+                {
+                    oldValue: period.status,
+                    newValue: PeriodStatus.REVIEWING,
+                    reason,
+                },
+                t,
+            );
         });
         return this.withLockFlag(await this.periodFlow.getByCode(code));
     }
 
-    async markPaid(code: string) {
+    async markPaid(code: string, user?: Pick<User, "_id">) {
         const period = await this.periodFlow.getByCode(code);
         if (!this.periodFlow.isLocked(period))
             throw ApiError.Conflict("error-period-not-locked", { code });
@@ -334,6 +473,13 @@ export class PointFlowService {
             await this.periodModel.update(
                 { status: PeriodStatus.PAID },
                 { where: { _id: period._id }, transaction: t },
+            );
+            await this.log(
+                period._id,
+                "PAID",
+                user ?? null,
+                { oldValue: period.status, newValue: "Đã chi" },
+                t,
             );
         });
         return this.withLockFlag(await this.periodFlow.getByCode(code));
@@ -385,6 +531,23 @@ export class PointFlowService {
             bucket[key] = round2((bucket[key] ?? 0) + Number(entry.points));
             byMember.set(entry.memberId, bucket);
         }
+        // Bù chênh lệch bằng tiền (từ tháng đã chi trước đó)
+        const moneyAdjust = new Map<string, number>();
+        for (const row of await this.adjustmentModel.findAll({
+            where: {
+                periodId,
+                status: PointAdjustmentStatus.APPROVED,
+                amount: { [Op.ne]: null },
+            },
+            raw: true,
+            transaction: t,
+        })) {
+            moneyAdjust.set(
+                row.memberId,
+                (moneyAdjust.get(row.memberId) ?? 0) + Number(row.amount),
+            );
+            if (!byMember.has(row.memberId)) byMember.set(row.memberId, {});
+        }
         const now = this.timeService.now();
         const rate = Number(period.pointRate ?? 0);
         const base = Number(period.baseAllowance ?? 0);
@@ -403,12 +566,14 @@ export class PointFlowService {
                     0,
                 ),
             );
+            const adjustmentAmount = round2(moneyAdjust.get(memberId) ?? 0);
             const values = {
                 pointsByType,
                 totalPoints,
                 pointRate: rate,
                 baseAllowance: base,
-                amount: round2(base + totalPoints * rate),
+                adjustmentAmount,
+                amount: round2(base + totalPoints * rate + adjustmentAmount),
                 calculatedAt: now,
                 status: AllowanceSummaryStatus.DRAFT,
             };
@@ -462,6 +627,9 @@ export class PointFlowService {
                     ...row,
                     totalPoints: Number(row.totalPoints),
                     amount: Number(row.amount),
+                    pointRate: Number(row.pointRate ?? 0),
+                    baseAllowance: Number(row.baseAllowance ?? 0),
+                    adjustmentAmount: Number(row.adjustmentAmount ?? 0),
                     member: member && {
                         _id: member._id,
                         memberCode: member.memberCode,
@@ -773,9 +941,8 @@ export class PointFlowService {
     // ------------------------------------------------------------------
 
     async exportAllowance(code: string, format: "xlsx" | "csv", user: User) {
+        // Bảng cơ bản giống màn hình; xuất được cả khi chưa chốt (bản tạm tính)
         const summary = await this.getSummary(code);
-        if (!summary.period.isLocked)
-            throw ApiError.Conflict("error-period-not-locked", { code });
         const rows = summary.rows.map((row, index) => {
             const line: Record<string, string | number> = {
                 STT: index + 1,
@@ -788,6 +955,7 @@ export class PointFlowService {
             line["Tổng điểm"] = row.totalPoints;
             line["Đơn giá/điểm"] = Number(row.pointRate);
             line["Phụ cấp cơ bản"] = Number(row.baseAllowance);
+            line["Bù chênh lệch"] = Number(row.adjustmentAmount ?? 0);
             line["Thành tiền"] = row.amount;
             line["Số tài khoản"] = row.member?.bankAccount ?? "";
             line["Ngân hàng"] = row.member?.bankName ?? "";
@@ -802,13 +970,13 @@ export class PointFlowService {
                 wch: Math.max(10, key.length + 2),
             }));
             const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, sheet, `Phu cap ${code}`);
+            XLSX.utils.book_append_sheet(workbook, sheet, sheetCode(code));
             buffer = XLSX.write(workbook, {
                 type: "buffer",
                 bookType: "xlsx",
             }) as Buffer;
         }
-        const fileName = `hlc-phu-cap-${code}.${format}`;
+        const fileName = `${sheetCode(code)}${summary.period.isLocked ? "" : "-tam-tinh"}.${format}`;
         await this.exportModel.create({
             periodId: summary.period._id,
             exportType:
@@ -826,6 +994,9 @@ export class PointFlowService {
                 { status: PeriodStatus.EXPORTED },
                 { where: { _id: summary.period._id } },
             );
+            await this.log(summary.period._id, "EXPORT", user, {
+                newValue: fileName,
+            });
         }
         return {
             fileName,
@@ -834,6 +1005,99 @@ export class PointFlowService {
                 format === "csv"
                     ? "text/csv; charset=utf-8"
                     : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        };
+    }
+
+    /**
+     * Bù chênh lệch cho kỳ đã chốt / đã chi: không sửa bảng cũ, ghi 1 dòng điều chỉnh
+     * ở kỳ kế tiếp (chưa chốt) kèm lý do, kỳ gốc và người duyệt.
+     */
+    async carryOver(
+        code: string,
+        input: {
+            memberId: string;
+            amount?: number;
+            points?: number;
+            reason: string;
+        },
+        user: User,
+    ) {
+        const source = await this.periodFlow.getByCode(code);
+        if (!this.periodFlow.isLocked(source))
+            throw ApiError.Conflict("error-carry-over-source-open", { code });
+        if (!input.amount && !input.points)
+            throw ApiError.BadRequest("error-carry-over-value-required");
+        const next =
+            source.month === 12
+                ? { year: source.year + 1, month: 1 }
+                : { year: source.year, month: source.month + 1 };
+        const target = await this.periodFlow.ensurePeriod(
+            next.year,
+            next.month,
+        );
+        if (this.periodFlow.isLocked(target))
+            throw ApiError.Conflict("error-carry-over-target-locked", {
+                code: target.code,
+            });
+        const member = await this.memberModel.findByPk(input.memberId, {
+            raw: true,
+        });
+        if (!member) throw ApiError.NotFound("error-member-not-linked");
+        const reason = `Bù chênh lệch ${sheetCode(source.code)}: ${input.reason.trim()}`;
+        const result = await this.sequelize.transaction(async (t) => {
+            const adjustment = await this.adjustmentModel.create(
+                {
+                    periodId: target._id,
+                    memberId: member._id,
+                    pointTypeId: await this.defaultTypeId(
+                        (input.points ?? input.amount ?? 0) < 0 ? -1 : 1,
+                    ),
+                    kind: PointAdjustmentKind.CARRY_OVER,
+                    points: input.points ?? 0,
+                    amount: input.amount ?? null,
+                    sourcePeriodId: source._id,
+                    reason,
+                    status: PointAdjustmentStatus.APPROVED,
+                    requestedBy: user._id,
+                    reviewedBy: user._id,
+                    reviewedAt: this.timeService.now(),
+                },
+                { transaction: t },
+            );
+            if (input.points) await this.applyAdjustment(adjustment, user, t);
+            else await this.refreshSummaries(target._id, t);
+            await this.log(
+                source._id,
+                "CARRY_OVER",
+                user,
+                {
+                    field: member.memberCode,
+                    newValue: input.amount
+                        ? `${input.amount}đ`
+                        : `${input.points} điểm`,
+                    reason: `Ghi sang ${sheetCode(target.code)}: ${input.reason}`,
+                },
+                t,
+            );
+            await this.log(
+                target._id,
+                "CARRY_OVER",
+                user,
+                {
+                    field: member.memberCode,
+                    newValue: input.amount
+                        ? `${input.amount}đ`
+                        : `${input.points} điểm`,
+                    reason,
+                },
+                t,
+            );
+            return adjustment.get({ plain: true });
+        });
+        return {
+            ...result,
+            targetPeriod: target.code,
+            targetSheet: sheetCode(target.code),
         };
     }
 

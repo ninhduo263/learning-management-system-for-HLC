@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Card, Col, Descriptions, Form, Input, Modal, Popconfirm, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
+import { Alert, App, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
 import { CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
 import ProfileLink from '@/components/ProfileLink';
 import RecapCard from '@/components/RecapCard';
@@ -21,6 +21,7 @@ import {
   type MemberView,
   type QuarterBoard,
   type ScheduleImportResult,
+  type PairLogView,
   type ScheduleLogView,
   type SessionView
 } from '@/services/mentoringApi';
@@ -110,7 +111,7 @@ function memberLabel(member?: MemberView | null) {
 }
 
 function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'current' | 'next' }) {
-  const { message, notification } = App.useApp();
+  const { message, notification, modal: dialog } = App.useApp();
   const [createForm] = Form.useForm<PairFormValues>();
   const [editForm] = Form.useForm<PairFormValues>();
   const [overrideForm] = Form.useForm();
@@ -125,6 +126,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const [importErrors, setImportErrors] = useState<{ row: number; message: string }[]>([]);
   const [scheduleImport, setScheduleImport] = useState<{ file: File; result: ScheduleImportResult } | null>(null);
   const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [pairLogs, setPairLogs] = useState<PairLogView[] | null>(null);
   const [proxyTarget, setProxyTarget] = useState<{ sessionId: string; code: string; role: 'MENTOR' | 'MENTEE' } | null>(null);
   const [logs, setLogs] = useState<{ title: string; rows: ScheduleLogView[] } | null>(null);
   const quarter = board?.quarter;
@@ -238,9 +240,12 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const submitCreate = async (values: PairFormValues) => {
     try {
       const result = await mentoringApi.createPair(quarterCode, values);
-      message.success(result.syncedMonths.length
-        ? `Đã ghép cặp và tạo buổi mentoring tháng ${result.syncedMonths.join(', ')}`
-        : 'Cặp đã có đủ các tháng, không cần tạo thêm');
+      const notes = [
+        result.syncedMonths.length ? `tạo buổi tháng ${result.syncedMonths.join(', ')}` : '',
+        result.existingMonths?.length ? `tháng ${result.existingMonths.join(', ')} đã có cặp này, không tạo trùng` : '',
+        result.lockedMonths?.length ? `tháng ${result.lockedMonths.join(', ')} đã chốt phụ cấp nên không tự thêm` : ''
+      ].filter(Boolean);
+      (result.existingMonths?.length || result.lockedMonths?.length ? message.warning : message.success)(`Đã ghép cặp: ${notes.join('; ') || 'không có tháng mới'}`, 6);
       createForm.resetFields();
       setModal(null);
       await loadData();
@@ -257,6 +262,35 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
       'Không thể cập nhật cặp mentoring'
     );
     if (ok) setModal(null);
+  };
+
+  /** Xem trước số dữ liệu sẽ bị xóa rồi mới xác nhận (không thể hoàn tác) */
+  const confirmDelete = async (session: SessionView) => {
+    try {
+      const preview = await mentoringApi.deletePreview(session._id);
+      dialog.confirm({
+        title: `Xóa cặp ${preview.pairCode} từ tháng ${preview.fromMonth}?`,
+        width: 560,
+        okText: 'Xóa vĩnh viễn',
+        okButtonProps: { danger: true },
+        cancelText: 'Hủy',
+        content: (
+          <div className="space-y-2">
+            <p>Sẽ xóa sạch dữ liệu của cặp ở <b>tháng {preview.deleteMonths.join(', ') || '(không có)'}</b>. Các tháng trước được giữ nguyên. <b>Không thể hoàn tác.</b></p>
+            <ul className="ml-4 list-disc">
+              <li>{preview.counts.sessions} buổi mentoring, {preview.counts.schedules} lịch</li>
+              <li>{preview.counts.recaps} recap ({preview.counts.scoredRecaps} đã chấm điểm), {preview.counts.attachments} ảnh minh chứng</li>
+              <li>{preview.counts.awards} giải tháng, {preview.counts.pointEntries} dòng điểm phụ cấp phát sinh từ cặp</li>
+            </ul>
+            {preview.keptLockedMonths.length > 0 && <Alert type="warning" showIcon title={`Tháng ${preview.keptLockedMonths.join(', ')} đã chốt / đã chi phụ cấp nên được giữ nguyên. Nếu cần điều chỉnh tiền, dùng “Bù chênh lệch” ở trang Điểm phụ cấp.`} />}
+            {preview.willDeletePair && <p>Cặp không còn tháng nào nên sẽ bị xóa khỏi quý.</p>}
+          </div>
+        ),
+        onOk: () => deleteFrom(session)
+      });
+    } catch (error) {
+      message.error(errorMessage(error, 'Không xem trước được dữ liệu sẽ xóa'));
+    }
   };
 
   const deleteFrom = async (session: SessionView) => {
@@ -336,16 +370,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
         <Space>
           <Button type="text" icon={<EyeOutlined />} onClick={(event) => { event.stopPropagation(); setSelected(row); setModal('detail'); }} />
           <Button type="link" icon={<EditOutlined />} disabled={!canPair} onClick={(event) => { event.stopPropagation(); openEdit(row); }}>Chỉnh sửa</Button>
-          <Popconfirm
-            title="Xóa cặp mentoring?"
-            description="Xóa buổi của tháng này và các tháng sau trong cùng quý, kèm lịch, recap và điểm mentoring liên quan. Các tháng trước được giữ nguyên. Không thể hoàn tác."
-            okText="Xóa"
-            cancelText="Hủy"
-            onConfirm={() => deleteFrom(row)}
-            disabled={!canPair}
-          >
-            <Button type="link" danger icon={<DeleteOutlined />} disabled={!canPair} onClick={(event) => event.stopPropagation()}>Xóa</Button>
-          </Popconfirm>
+          <Button type="link" danger icon={<DeleteOutlined />} disabled={!canPair} onClick={(event) => { event.stopPropagation(); void confirmDelete(row); }}>Xóa</Button>
         </Space>
       )
     }
@@ -378,6 +403,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
                 <Button icon={<UploadOutlined />} loading={scheduleBusy} disabled={locked}>Nhập lịch .xlsx</Button>
               </Upload>
               <Button icon={<HistoryOutlined />} onClick={() => void openLogs(`Nhật ký thay đổi lịch quý ${quarterCode}`)}>Nhật ký lịch</Button>
+              <Button icon={<HistoryOutlined />} onClick={async () => { try { setPairLogs(await mentoringApi.pairLogs(quarterCode)); } catch (error) { message.error(errorMessage(error)); } }}>Nhật ký ghép / xóa cặp</Button>
               <Button icon={locked ? <UnlockOutlined /> : <LockOutlined />} onClick={() => run(() => mentoringApi.setLock(quarterCode, !locked), locked ? 'Đã mở khóa quý' : 'Đã khóa quý', 'Không thể đổi trạng thái khóa quý')}>
                 {locked ? 'Mở khóa quý' : 'Khóa quý'}
               </Button>
@@ -548,6 +574,23 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
             )}
           </div>
         )}
+      </Modal>
+      <Modal title={`Nhật ký ghép / xóa cặp quý ${quarterCode}`} open={Boolean(pairLogs)} onCancel={() => setPairLogs(null)} footer={null} width="min(1000px, calc(100vw - 24px))">
+        <Table<PairLogView> rowKey="_id" size="small" dataSource={pairLogs ?? []} pagination={{ pageSize: 15 }} scroll={{ x: 'max-content' }} columns={[
+          { title: 'Thời điểm', render: (_: unknown, row: PairLogView) => formatDateTime(row.createdAt) },
+          { title: 'Thao tác', dataIndex: 'action', render: (value: string) => <Tag color={value === 'DELETE' ? 'red' : 'green'}>{value === 'DELETE' ? 'Xóa cặp' : 'Ghép cặp'}</Tag> },
+          { title: 'Cặp', render: (_: unknown, row: PairLogView) => <span><code className="text-xs">{row.pairCode}</code><div className="text-xs text-gray-500">{row.mentorCode} – {row.menteeCode}</div></span> },
+          { title: 'Từ tháng', dataIndex: 'fromMonth' },
+          { title: 'Tháng bị tác động', render: (_: unknown, row: PairLogView) => (
+            <div className="text-xs">
+              {row.detail.affectedMonths?.length ? `${row.action === 'DELETE' ? 'Xóa' : 'Tạo'}: ${row.detail.affectedMonths.join(', ')}` : '—'}
+              {row.detail.existingMonths?.length ? <div>Đã có (không tạo trùng): {row.detail.existingMonths.join(', ')}</div> : null}
+              {row.detail.lockedMonths?.length || row.detail.keptLockedMonths?.length ? <div>Đã chốt (giữ nguyên): {(row.detail.lockedMonths ?? row.detail.keptLockedMonths ?? []).join(', ')}</div> : null}
+            </div>
+          ) },
+          { title: 'Số bản ghi', render: (_: unknown, row: PairLogView) => row.detail.counts ? `${row.detail.counts.sessions} buổi, ${row.detail.counts.recaps} recap, ${row.detail.counts.pointEntries} dòng điểm` : '—' },
+          { title: 'Người thực hiện', dataIndex: 'actor' }
+        ]} />
       </Modal>
       <ProxyRecapModal target={proxyTarget} onClose={() => setProxyTarget(null)} onSaved={() => void loadData()} />
       <Modal title={logs?.title} open={Boolean(logs)} onCancel={() => setLogs(null)} footer={null} width="min(1000px, calc(100vw - 24px))">

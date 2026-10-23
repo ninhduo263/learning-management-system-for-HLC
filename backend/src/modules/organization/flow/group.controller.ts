@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags } from "@nestjs/swagger";
 import { GroupMembersDto } from "./dto/group-members.dto";
+import { AssignRoleDto } from "./dto/assign-role.dto";
 import { GroupRoleDto } from "./dto/group-role.dto";
 import { GroupDto } from "./dto/group.dto";
 import { GroupFlowService } from "./group-flow.service";
@@ -69,6 +70,24 @@ export class GroupController {
     @Delete(":id/members/:memberId")
     removeMember(@Param("id") id: string, @Param("memberId") memberId: string) {
         return this.flowService.removeMember(id, memberId);
+    }
+
+    /** Gán vai trò có thời gian hiệu lực (thay cho "phân quyền" + "gán chức vụ" tách rời) */
+    @Post(":id/assignments")
+    assignRole(
+        @ReqUser() user: User,
+        @Param("id") id: string,
+        @Body() dto: AssignRoleDto,
+    ) {
+        return this.flowService.assignRole(id, dto, user);
+    }
+
+    @Put("assignments/:assignmentId/end")
+    endAssignment(
+        @Param("assignmentId") assignmentId: string,
+        @Body("endDate") endDate?: string,
+    ) {
+        return this.flowService.endAssignment(assignmentId, endDate);
     }
 
     @Get(":id/history")

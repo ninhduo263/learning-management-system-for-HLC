@@ -24,6 +24,8 @@ import { PointAdjustmentStatus } from "../common/constant";
 import { AdjustmentDto } from "./dto/adjustment.dto";
 import { periodCode } from "./dto/period-code";
 import { PeriodSettingsDto } from "./dto/period-settings.dto";
+import { UnlockPeriodDto } from "./dto/unlock-period.dto";
+import { CarryOverDto } from "./dto/carry-over.dto";
 import { ReviewAdjustmentDto } from "./dto/review-adjustment.dto";
 import { PointFlowService } from "./point-flow.service";
 
@@ -48,10 +50,11 @@ export class PointAdminController {
 
     @Put("periods/:code/settings")
     updateSettings(
+        @ReqUser() user: User,
         @Param("code") code: string,
         @Body() dto: PeriodSettingsDto,
     ) {
-        return this.flowService.updateSettings(periodCode(code), dto);
+        return this.flowService.updateSettings(periodCode(code), dto, user);
     }
 
     @Post("periods/:code/recalculate")
@@ -65,16 +68,36 @@ export class PointAdminController {
     }
 
     @Post("periods/:code/unlock")
-    unlock(@Param("code") code: string) {
-        return this.flowService.unlock(periodCode(code));
+    unlock(
+        @ReqUser() user: User,
+        @Param("code") code: string,
+        @Body() dto: UnlockPeriodDto,
+    ) {
+        return this.flowService.unlock(periodCode(code), user, dto.reason);
     }
 
     @Post("periods/:code/paid")
-    markPaid(@Param("code") code: string) {
-        return this.flowService.markPaid(periodCode(code));
+    markPaid(@ReqUser() user: User, @Param("code") code: string) {
+        return this.flowService.markPaid(periodCode(code), user);
     }
 
     /** Dữ liệu báo cáo PDF mùng 10 (FE in ra PDF) */
+    /** Nhật ký kỳ: sửa đơn giá, chốt, mở khóa, chi trả, bù chênh lệch */
+    @Get("periods/:code/logs")
+    logs(@Param("code") code: string) {
+        return this.flowService.logs(periodCode(code));
+    }
+
+    /** Bù chênh lệch cho kỳ đã chốt/đã chi: ghi dòng điều chỉnh ở kỳ kế tiếp */
+    @Post("periods/:code/carry-over")
+    carryOver(
+        @ReqUser() user: User,
+        @Param("code") code: string,
+        @Body() dto: CarryOverDto,
+    ) {
+        return this.flowService.carryOver(periodCode(code), dto, user);
+    }
+
     @Get("periods/:code/report")
     report(@Param("code") code: string) {
         return this.flowService.report(periodCode(code));

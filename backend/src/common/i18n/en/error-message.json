@@ -76,5 +76,11 @@
     "error-recap-mentor-admin-only": "Only mentoring admins can review mentor recaps",
     "error-group-member-type": "{name} does not match the group type",
     "error-import-batch-reverted": "This import batch has already been reverted",
-    "error-recap-exists": "This session already has a {role} recap"
+    "error-recap-exists": "This session already has a {role} recap",
+    "error-validation-failed": "Invalid input",
+    "error-carry-over-target-locked": "Period {code} is locked",
+    "error-carry-over-source-open": "Period {code} is still open",
+    "error-carry-over-value-required": "Enter an amount or points",
+    "error-role-kind-mismatch": "Role {role} does not apply to this group type",
+    "error-pair-month-locked": "Month {month} is locked"
 }

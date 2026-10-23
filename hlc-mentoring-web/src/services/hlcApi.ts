@@ -36,15 +36,21 @@ export interface PeriodView {
   payoutDate: string | null;
   lockedAt: string | null;
   isLocked: boolean;
+  /** Mã bảng tổng hợp: PC-YYYY-MM */
+  sheetCode?: string;
 }
+
+export interface PeriodLog { _id: string; action: string; field: string | null; oldValue: string | null; newValue: string | null; reason: string | null; changedByName: string; createdAt: string }
+export const PERIOD_LOG_LABEL: Record<string, string> = { SETTINGS: 'Sửa cấu hình', LOCK: 'Chốt kỳ', UNLOCK: 'Mở khóa', PAID: 'Đã chi', EXPORT: 'Xuất file', CARRY_OVER: 'Bù chênh lệch' };
+export const PERIOD_FIELD_LABEL: Record<string, string> = { pointRate: 'Đơn giá/điểm', baseAllowance: 'Phụ cấp cơ bản', payoutDate: 'Ngày chi trả' };
 
 export const PERIOD_STATUS_LABEL: Record<PeriodStatus, string> = {
   OPEN: 'Đang mở',
   CALCULATING: 'Đang tính',
   REVIEWING: 'Đang rà soát',
-  LOCKED: 'Đã chốt',
-  EXPORTED: 'Đã xuất file',
-  PAID: 'Đã chi trả'
+  LOCKED: 'Đã chốt · đang chờ chi',
+  EXPORTED: 'Đã chốt · đang chờ chi',
+  PAID: 'Đã chi'
 };
 export const PERIOD_STATUS_COLOR: Record<PeriodStatus, string> = {
   OPEN: 'blue',
@@ -83,6 +89,7 @@ export interface SummaryRow {
   pointRate: number;
   baseAllowance: number;
   amount: number;
+  adjustmentAmount?: number;
   status: 'DRAFT' | 'LOCKED' | 'PAID';
   calculatedAt: string;
   member?: MemberBrief & { bankAccount?: string | null; bankName?: string | null; status?: string };
@@ -154,11 +161,14 @@ const period = (code: string) => `/points/periods/${encodeURIComponent(code)}`;
 export const pointApi = {
   periods: () => apiJson<PeriodView[]>('/points/periods'),
   ensure: (code: string) => apiJson<PeriodView>(`${period(code)}/ensure`, { method: 'POST' }),
-  settings: (code: string, body: { pointRate?: number; baseAllowance?: number; payoutDate?: string }) =>
+  settings: (code: string, body: { pointRate?: number; baseAllowance?: number; payoutDate?: string | null; reason?: string }) =>
     apiJson<PeriodView>(`${period(code)}/settings`, { method: 'PUT', json: body }),
   recalculate: (code: string) => apiJson<RecalcResult>(`${period(code)}/recalculate`, { method: 'POST' }),
   lock: (code: string) => apiJson<PeriodView>(`${period(code)}/lock`, { method: 'POST' }),
-  unlock: (code: string) => apiJson<PeriodView>(`${period(code)}/unlock`, { method: 'POST' }),
+  unlock: (code: string, reason: string) => apiJson<PeriodView>(`${period(code)}/unlock`, { method: 'POST', json: { reason } }),
+  logs: (code: string) => apiJson<PeriodLog[]>(`${period(code)}/logs`),
+  carryOver: (code: string, body: { memberId: string; amount?: number; points?: number; reason: string }) =>
+    apiJson<{ targetSheet: string }>(`${period(code)}/carry-over`, { method: 'POST', json: body }),
   paid: (code: string) => apiJson<PeriodView>(`${period(code)}/paid`, { method: 'POST' }),
   summary: (code: string) => apiJson<PeriodSummary>(`${period(code)}/summary`),
   breakdown: (code: string, memberId: string) => apiJson<MemberBreakdown>(`${period(code)}/members/${memberId}`),
@@ -169,7 +179,7 @@ export const pointApi = {
     apiJson<AdjustmentView>(`/points/adjustments/${id}/review`, { method: 'PUT', json: body }),
   cancelAdjustment: (id: string) => apiJson(`/points/adjustments/${id}`, { method: 'DELETE' }),
   exports: (code: string) => apiJson<PeriodExportView[]>(`${period(code)}/exports`),
-  exportFile: (code: string, format: 'xlsx' | 'csv') => downloadFile(`${period(code)}/export.${format}`, `hlc-phu-cap-${code}.${format}`),
+  exportFile: (code: string, format: 'xlsx' | 'csv', locked = true) => downloadFile(`${period(code)}/export.${format}`, `PC-${code}${locked ? '' : '-tam-tinh'}.${format}`),
   mine: (code?: string) => apiJson<MyPoints>(`/points/me${q({ period: code })}`),
   appeal: (code: string, body: { points: number; reason: string; relatedEntryId?: string }) =>
     apiJson<AdjustmentView>(`/points/me/periods/${encodeURIComponent(code)}/appeals`, { method: 'POST', json: body })
@@ -337,6 +347,7 @@ export interface FundGroupReport {
     leader: MemberBrief | null;
     deputy: MemberBrief | null;
     canReview: boolean;
+    canProxy?: boolean;
     pending: number;
     members: { member: MemberBrief; total: number; paidUntil: string | null; weeks: Record<string, { status: WeekStatus; amount: number; ids: string[] }> }[];
   }[];
@@ -550,7 +561,7 @@ export const SCOPE_LABEL: Record<AdminScope, string> = {
   LEARNING_MODULE: 'Quản lý module học tập'
 };
 
-export interface LeaderGroupAccess { _id: string; code: string; name: string; role: 'LEADER' | 'DEPUTY'; canReview: boolean }
+export interface LeaderGroupAccess { _id: string; code: string; name: string; role: string; roleName: string; groupKind: GroupKind; permissions: string[]; canReview: boolean }
 export interface MyAccess { systemRole: string; isSuperAdmin: boolean; scopes: AdminScope[]; moduleIds: string[]; leaderGroups: LeaderGroupAccess[] }
 export interface PermissionView {
   _id: string;
@@ -627,12 +638,45 @@ export interface GroupView {
   leader: GroupMember | null;
   deputy: GroupMember | null;
   members: GroupMember[];
+  roles: GroupRoleAssignment[];
   counts: { mentors: number; mentees: number };
 }
 export interface GroupHistory {
   memberships: { _id: string; memberId: string; startDate: string; endDate: string | null; note: string | null; member: GroupMember | null }[];
-  roles: { _id: string; role: 'LEADER' | 'DEPUTY'; startDate: string; endDate: string | null; note: string | null; member: GroupMember | null }[];
+  roles: { _id: string; role: string; roleName: string; startDate: string; endDate: string | null; note: string | null; member: GroupMember | null }[];
 }
+
+export interface GroupRoleAssignment { assignmentId: string; memberId: string; fullName: string; memberCode: string; positionId: string; roleCode: string; roleName: string; startDate: string; endDate: string | null; isActive: boolean }
+
+export type RoleAppliesTo = 'MENTEE' | 'FUND' | 'BAN';
+export const ROLE_PERMISSION_LABEL: Record<string, string> = {
+  VIEW_PROGRESS: 'Xem tiến độ nhóm',
+  SCORE_RECAP: 'Chấm recap MTE',
+  REVIEW_FUND: 'Duyệt minh chứng quỹ',
+  PROXY_FUND: 'Nộp hộ minh chứng quỹ'
+};
+export const ROLE_APPLIES_LABEL: Record<RoleAppliesTo, string> = { MENTEE: 'Nhóm MTE', FUND: 'Nhóm HLC Fund (MTO & thầy cô)', BAN: 'Chức vụ ban (không gắn nhóm)' };
+export const ADMIN_SCOPE_LABEL: Record<string, string> = { FUND: 'Admin HLC Fund', MENTORING: 'Admin Mentoring', POINT: 'Admin điểm phụ cấp' };
+export interface RoleView {
+  _id: string;
+  code: string;
+  name: string;
+  appliesTo: RoleAppliesTo;
+  permissions: string[];
+  allowancePoints: number;
+  bonusPoints: number;
+  adminScope: string | null;
+  description: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  assignmentCount: number;
+}
+export const roleApi = {
+  list: () => apiJson<RoleView[]>('/roles'),
+  save: (body: Partial<RoleView>, id?: string) => apiJson<RoleView>(id ? `/roles/${id}` : '/roles', { method: id ? 'PUT' : 'POST', json: body }),
+  thresholds: () => apiJson<Record<GroupKind, number>>('/roles/thresholds/all'),
+  saveThresholds: (body: Record<GroupKind, number>) => apiJson<Record<GroupKind, number>>('/roles/thresholds/all', { method: 'PUT', json: body })
+};
 
 export const groupApi = {
   list: () => apiJson<GroupView[]>('/groups'),
@@ -642,7 +686,10 @@ export const groupApi = {
   setRole: (id: string, role: 'LEADER' | 'DEPUTY', memberId?: string) => apiJson<GroupView>(`/groups/${id}/role`, { method: 'PUT', json: { role, memberId } }),
   addMembers: (id: string, memberIds: string[]) => apiJson<{ moved: number; group: GroupView }>(`/groups/${id}/members`, { method: 'POST', json: { memberIds } }),
   removeMember: (id: string, memberId: string) => apiJson<GroupView>(`/groups/${id}/members/${memberId}`, { method: 'DELETE' }),
-  history: (id: string) => apiJson<GroupHistory>(`/groups/${id}/history`)
+  history: (id: string) => apiJson<GroupHistory>(`/groups/${id}/history`),
+  assign: (id: string, body: { memberId: string; positionId: string; startDate?: string; endDate?: string; note?: string }) =>
+    apiJson<GroupView>(`/groups/${id}/assignments`, { method: 'POST', json: body }),
+  endAssignment: (assignmentId: string, endDate?: string) => apiJson(`/groups/assignments/${assignmentId}/end`, { method: 'PUT', json: { endDate } })
 };
 
 export interface RecapRubric {
@@ -680,7 +727,7 @@ export interface LeaderOverview {
     _id: string;
     code: string;
     name: string;
-    myRole: 'LEADER' | 'DEPUTY' | 'ADMIN';
+    myRole: string;
     canReview: boolean;
     leader: GroupMember | null;
     deputy: GroupMember | null;
@@ -718,7 +765,7 @@ export const profileApi = {
 
 // ---------- Tỷ lệ hoàn tất nhóm (thưởng Leader/Phó) ----------
 
-export interface GroupCompletion { _id: string; name: string; groupKind: GroupKind; done: number; total: number; rate: number | null; passed: boolean; leader: string | null; deputy: string | null }
+export interface GroupCompletion { _id: string; name: string; groupKind: GroupKind; done: number; total: number; rate: number | null; threshold: number; passed: boolean; leader: string | null; deputy: string | null }
 export interface AllowanceReport extends PeriodSummary {
   entriesByMember: Record<string, { pointType: string; description: string; points: number; sourceType: string }[]>;
   completion: GroupCompletion[];

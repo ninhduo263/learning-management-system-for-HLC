@@ -5,6 +5,7 @@ import {
 } from "@module/fund/flow/fund-weeks.util";
 import { FundContributorModel } from "@module/fund/models/fund-contributor.model";
 import { GroupMembershipModel } from "@module/organization/models/group-membership.model";
+import { GroupKindConfigModel } from "@module/organization/models/group-kind-config.model";
 import {
     DepartmentType,
     GroupKind,
@@ -111,6 +112,8 @@ export class PointCalculationService {
         private readonly membershipModel: typeof GroupMembershipModel,
         @InjectModel(FundContributorModel)
         private readonly contributorModel: typeof FundContributorModel,
+        @InjectModel(GroupKindConfigModel)
+        private readonly kindConfigModel: typeof GroupKindConfigModel,
     ) {}
 
     /** Rule đang bật và có hiệu lực ít nhất 1 ngày trong kỳ */
@@ -544,12 +547,23 @@ export class PointCalculationService {
         );
         const entries: DesiredEntry[] = [];
         for (const holder of holders) {
+            if (!this.roleMatchesGroup(holder)) continue;
             for (const rule of positionRules) {
+                const conditions = (rule.conditions ?? {}) as Record<
+                    string,
+                    unknown
+                >;
+                // Rule chung: điểm lấy từ cấu hình vai trò; rule cũ theo mã chức vụ vẫn được hỗ trợ
+                const fromRole = Boolean(conditions.fromRoleConfig);
                 if (
-                    (rule.conditions ?? {}).positionCode !==
-                    holder.position?.code
+                    !fromRole &&
+                    conditions.positionCode !== holder.position?.code
                 )
                     continue;
+                const points = fromRole
+                    ? Number(holder.position.allowancePoints ?? 0)
+                    : Number(rule.points);
+                if (!points) continue;
                 if (!this.targets(rule, members.get(holder.memberId))) continue;
                 entries.push({
                     _id: stableId(rule._id, holder._id, period._id),
@@ -557,10 +571,10 @@ export class PointCalculationService {
                     memberId: holder.memberId,
                     pointTypeId: rule.pointTypeId,
                     ruleId: rule._id,
-                    points: Number(rule.points),
+                    points,
                     sourceType: PointSourceType.MEMBER_POSITION,
                     sourceId: holder._id,
-                    description: `${rule.name}: ${holder.position.name} - ${holder.department?.name ?? ""}`,
+                    description: `Phụ cấp chức vụ: ${holder.position.name} - ${holder.department?.name ?? ""}`,
                 });
             }
         }
@@ -784,6 +798,7 @@ export class PointCalculationService {
             ReturnType<PointCalculationService["positionHolders"]>
         >,
         completion: Map<string, { done: number; total: number }>,
+        thresholds: Record<string, number>,
     ) {
         const bonusRules = rules.filter(
             (rule) => rule.sourceType === PointSourceType.GROUP_COMPLETION,
@@ -792,15 +807,29 @@ export class PointCalculationService {
         for (const holder of holders) {
             const stats = completion.get(holder.departmentId);
             if (!stats?.total) continue;
+            if (!this.roleMatchesGroup(holder)) continue;
             const rate = stats.done / stats.total;
+            const kind = holder.department?.groupKind ?? GroupKind.MENTEE;
             for (const rule of bonusRules) {
                 const conditions = (rule.conditions ?? {}) as Record<
                     string,
                     unknown
                 >;
-                if (conditions.positionCode !== holder.position?.code) continue;
-                if (rate <= Number(conditions.minCompletionRate ?? 0.9))
+                const fromRole = Boolean(conditions.fromRoleConfig);
+                if (
+                    !fromRole &&
+                    conditions.positionCode !== holder.position?.code
+                )
                     continue;
+                // Ngưỡng % theo loại nhóm (Admin cấu hình); thưởng khi VƯỢT ngưỡng
+                const threshold = fromRole
+                    ? (thresholds[kind] ?? 90) / 100
+                    : Number(conditions.minCompletionRate ?? 0.9);
+                if (rate <= threshold) continue;
+                const points = fromRole
+                    ? Number(holder.position.bonusPoints ?? 0)
+                    : Number(rule.points);
+                if (!points) continue;
                 if (!this.targets(rule, members.get(holder.memberId))) continue;
                 entries.push({
                     _id: stableId(
@@ -813,14 +842,45 @@ export class PointCalculationService {
                     memberId: holder.memberId,
                     pointTypeId: rule.pointTypeId,
                     ruleId: rule._id,
-                    points: Number(rule.points),
+                    points,
                     sourceType: PointSourceType.GROUP_COMPLETION,
                     sourceId: holder.departmentId,
-                    description: `${rule.name}: ${holder.position.name} - ${holder.department?.name ?? ""}, hoàn tất ${stats.done}/${stats.total} (${Math.round(rate * 100)}%)`,
+                    description: `Thưởng đạt tỷ lệ: ${holder.position.name} - ${holder.department?.name ?? ""}, hoàn thành ${stats.done}/${stats.total} (${Math.round(rate * 100)}%) vượt ngưỡng ${Math.round(threshold * 100)}%`,
                 });
             }
         }
         return entries;
+    }
+
+    /** Vai trò thuộc nhóm phải đúng loại nhóm (vai trò nhóm MTE không tính cho nhóm HLC Fund và ngược lại) */
+    private roleMatchesGroup(holder: {
+        position?: { groupKind?: string | null };
+        department?: { type?: string; groupKind?: string | null };
+    }) {
+        if (holder.department?.type !== DepartmentType.GROUP)
+            return !holder.position?.groupKind;
+        return (
+            !holder.position?.groupKind ||
+            holder.position.groupKind ===
+                (holder.department.groupKind ?? GroupKind.MENTEE)
+        );
+    }
+
+    /** Ngưỡng % hoàn thành theo loại nhóm */
+    async thresholds(t?: Transaction) {
+        const rows = await this.kindConfigModel.findAll({
+            raw: true,
+            transaction: t,
+        });
+        return Object.fromEntries(
+            Object.values(GroupKind).map((kind) => [
+                kind,
+                Number(
+                    rows.find((row) => row.groupKind === kind)
+                        ?.completionThreshold ?? 90,
+                ),
+            ]),
+        );
     }
 
     /** Tỷ lệ hoàn tất từng nhóm (dùng cho màn hình) */
@@ -933,6 +993,7 @@ export class PointCalculationService {
                     members,
                     holders,
                     await this.groupCompletion(period, mentoring, now, t),
+                    await this.thresholds(t),
                 ),
                 ...(await this.submissionEntries(period, rules, members, t)),
             ].filter(

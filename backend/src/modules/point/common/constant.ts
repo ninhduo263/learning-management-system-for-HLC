@@ -30,6 +30,8 @@ export enum PointSourceType {
 export enum PointAdjustmentKind {
     MANUAL = "MANUAL",
     APPEAL = "APPEAL",
+    /** Bù chênh lệch của tháng đã chi, ghi ở bảng tháng kế tiếp */
+    CARRY_OVER = "CARRY_OVER",
 }
 
 export enum PointAdjustmentStatus {

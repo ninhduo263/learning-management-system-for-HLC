@@ -83,5 +83,11 @@
     "error-recap-mentor-admin-only": "Chỉ Admin Mentoring hoặc Admin toàn cục được duyệt recap của MTO",
     "error-group-member-type": "{name} không đúng loại thành viên của nhóm (nhóm MTE gồm mentee, nhóm HLC Fund gồm MTO)",
     "error-import-batch-reverted": "Lô nhập này đã được hoàn tác",
-    "error-recap-exists": "Buổi này đã có recap của {role}"
+    "error-recap-exists": "Buổi này đã có recap của {role}",
+    "error-validation-failed": "Dữ liệu nhập chưa đúng",
+    "error-carry-over-target-locked": "Kỳ {code} đã chốt, không nhận được dòng bù chênh lệch",
+    "error-carry-over-source-open": "Kỳ {code} chưa chốt: hãy sửa trực tiếp trên bảng của kỳ đó",
+    "error-carry-over-value-required": "Nhập số tiền hoặc số điểm chênh lệch",
+    "error-role-kind-mismatch": "Vai trò {role} không dùng cho loại nhóm này",
+    "error-pair-month-locked": "Tháng {month} đã chốt bảng phụ cấp, không thay đổi cặp ở tháng này"
 }
