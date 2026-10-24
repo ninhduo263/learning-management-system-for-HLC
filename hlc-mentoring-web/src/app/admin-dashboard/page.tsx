@@ -1,16 +1,27 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Alert, App, Card, Empty, Progress, Spin, Statistic, Table, Tag, Typography } from 'antd';
+import { Alert, App, Card, Empty, Progress, Spin, Table, Tag } from 'antd';
+import {
+  CheckCircleOutlined,
+  DollarOutlined,
+  ReadOutlined,
+  ScheduleOutlined,
+  TeamOutlined,
+  WalletOutlined
+} from '@ant-design/icons';
 import { CategoryScale, Chart as ChartJS, Legend, LinearScale, LineElement, PointElement, BarElement, Tooltip } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
+import { Avatar, DashHeader, KpiCard, StatusBar, deltaOf } from '@/components/dashboard/DashParts';
+import { CHART_COLORS, applyChartTheme } from '@/lib/chartTheme';
 import { errorMessage } from '@/lib/api';
-import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL, formatDateTime, type PairRecapStatus } from '@/services/mentoringApi';
+import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL, formatDateTime } from '@/services/mentoringApi';
 import { PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, dashboardApi, money, periodLabel, points, type AdminDashboard, type DashboardPair } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend);
+applyChartTheme();
 
 const RANK = ['', '🥇 Nhất', '🥈 Nhì', '🥉 Ba'];
 
@@ -31,115 +42,148 @@ export default function AdminDashboardPage() {
   }, [code, message]);
 
   const pairColumns = [
-    { title: 'Mã', dataIndex: 'code', render: (value: string, row: DashboardPair) => <div>{row.rank ? <Tag color="gold">{RANK[row.rank]}</Tag> : null}<code className="text-xs">{value}</code></div> },
-    { title: 'Mentor', render: (_: unknown, row: DashboardPair) => row.mentor?.fullName },
-    { title: 'Mentee', render: (_: unknown, row: DashboardPair) => row.mentee?.fullName },
+    {
+      title: 'Cặp',
+      dataIndex: 'code',
+      render: (value: string, row: DashboardPair) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {row.rank ? <Tag color="gold" className="!m-0">{RANK[row.rank]}</Tag> : null}
+          <code className="text-xs">{value}</code>
+        </div>
+      )
+    },
+    {
+      title: 'Mentor · Mentee',
+      render: (_: unknown, row: DashboardPair) => (
+        <div className="leading-snug">
+          <div><span className="text-gray-500">Mentor:</span> <strong>{row.mentor?.fullName}</strong></div>
+          <div><span className="text-gray-500">Mentee:</span> <strong>{row.mentee?.fullName}</strong></div>
+        </div>
+      )
+    },
     { title: 'Lịch', render: (_: unknown, row: DashboardPair) => formatDateTime(row.scheduledStartAt) },
     { title: 'Trạng thái', render: (_: unknown, row: DashboardPair) => <Tag color={PAIR_STATUS_COLOR[row.status]}>{PAIR_STATUS_LABEL[row.status]}</Tag> }
   ];
 
+  // Kỳ liền trước (theo mã YYYY-MM) trong dữ liệu xu hướng, dùng để tính mức tăng giảm
+  const previous = data?.trend.filter((item) => item.period < code).sort((a, b) => a.period.localeCompare(b.period)).at(-1);
+  const sessions = data?.mentoring.sessions ?? 0;
+  const prevDoneRate = previous && previous.mentoringSessions ? (previous.mentoringDone / previous.mentoringSessions) * 100 : undefined;
+  const submissionsTotal = data?.learning.reduce((sum, item) => sum + item.submissions, 0) ?? 0;
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Typography.Title level={3} className="!mb-0">Dashboard tháng</Typography.Title>
+    <div className="dash">
+      <DashHeader title="Dashboard tháng" subtitle={data ? `Tổng quan hoạt động ${periodLabel(data.period.code).toLowerCase()}` : 'Tổng quan hoạt động trong tháng'}>
         <MonthPicker value={code} onChange={setCode} />
-        {data && <Tag color={PERIOD_STATUS_COLOR[data.period.status]}>{PERIOD_STATUS_LABEL[data.period.status]}</Tag>}
-      </div>
+        {data && <Tag color={PERIOD_STATUS_COLOR[data.period.status]} className="!m-0 !px-3 !py-1 !text-sm">{PERIOD_STATUS_LABEL[data.period.status]}</Tag>}
+      </DashHeader>
+
       {loading && !data ? <Card className="flex justify-center py-12"><Spin size="large" /></Card> : data && (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <Card size="small"><Statistic title="Thành viên hoạt động" value={data.members.total} suffix={<span className="text-xs text-gray-500">{data.members.mentees} mentee · {data.members.mentors} mentor</span>} /></Card>
-            <Card size="small"><Statistic title="Buổi mentoring" value={data.mentoring.sessions} /></Card>
-            <Card size="small"><Statistic title="Tỉ lệ cặp đã xong" value={data.mentoring.doneRate} suffix="%" /></Card>
-            <Card size="small"><Statistic title="Bài nộp học tập" value={data.learning.reduce((sum, item) => sum + item.submissions, 0)} /></Card>
-            <Card size="small"><Statistic title="Quỹ đã duyệt" value={money(data.fund.totals.approvedAmount)} /></Card>
-            <Card size="small"><Statistic title="Tổng chi phụ cấp" value={money(data.points.totals.amount)} /></Card>
+          <div className="kpi-grid kpi-3">
+            <KpiCard tone="purple" icon={<TeamOutlined />} label="Thành viên hoạt động" value={data.members.total} hint={`${data.members.mentees} mentee · ${data.members.mentors} mentor`} />
+            <KpiCard tone="blue" icon={<ScheduleOutlined />} label="Buổi mentoring" value={sessions} delta={deltaOf(sessions, previous?.mentoringSessions)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="green" icon={<CheckCircleOutlined />} label="Tỉ lệ cặp đã xong" value={data.mentoring.doneRate} unit="%" delta={deltaOf(data.mentoring.doneRate, prevDoneRate, true)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="orange" icon={<ReadOutlined />} label="Bài nộp học tập" value={submissionsTotal} delta={deltaOf(submissionsTotal, previous?.submissions)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="teal" icon={<WalletOutlined />} label="Quỹ đã duyệt" value={money(data.fund.totals.approvedAmount)} delta={deltaOf(data.fund.totals.approvedAmount, previous?.fundAmount)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="rose" icon={<DollarOutlined />} label="Tổng chi phụ cấp" value={money(data.points.totals.amount)} delta={deltaOf(data.points.totals.amount, previous?.totalAmount)} hint="Chưa có dữ liệu tháng trước" />
           </div>
+
           {data.points.totals.pendingAdjustments > 0 && <Alert type="warning" showIcon title={`Có ${data.points.totals.pendingAdjustments} khiếu nại điểm đang chờ xử lý.`} />}
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <Card title="Mentoring">
-              <div className="mb-3 flex flex-wrap gap-2">
-                {(Object.keys(PAIR_STATUS_LABEL) as PairRecapStatus[]).filter((key) => data.mentoring.statusCount[key]).map((key) => (
-                  <Tag key={key} color={PAIR_STATUS_COLOR[key]}>{PAIR_STATUS_LABEL[key]}: {data.mentoring.statusCount[key]}</Tag>
-                ))}
-                {!data.mentoring.sessions && <Typography.Text type="secondary">Chưa có buổi mentoring trong tháng.</Typography.Text>}
-              </div>
-              <Typography.Title level={5}>Cặp xuất sắc</Typography.Title>
-              <Table rowKey="sessionId" size="small" pagination={false} dataSource={data.mentoring.bestPairs} columns={pairColumns} locale={{ emptyText: 'Chưa xếp giải (bấm “Tính lại” ở trang Điểm)' }} scroll={{ x: 'max-content' }} />
-              <Typography.Title level={5} className="!mt-4">Cặp chưa hoạt động / chưa xong</Typography.Title>
-              <Table rowKey="sessionId" size="small" pagination={{ pageSize: 5 }} dataSource={data.mentoring.inactivePairs} columns={pairColumns} locale={{ emptyText: 'Không có' }} scroll={{ x: 'max-content' }} />
+          <div className="dash-grid cols-21">
+            <Card title="Mentoring trong tháng">
+              {sessions ? <StatusBar counts={data.mentoring.statusCount} /> : <p className="dash-note">Chưa có buổi mentoring trong tháng.</p>}
+              <h3 className="dash-subtitle">Cặp xuất sắc</h3>
+              <Table rowKey="sessionId" pagination={false} dataSource={data.mentoring.bestPairs} columns={pairColumns} locale={{ emptyText: 'Chưa xếp giải (bấm “Tính lại” ở trang Điểm)' }} scroll={{ x: 'max-content' }} />
+              <h3 className="dash-subtitle">Cặp chưa hoạt động / chưa xong</h3>
+              <Table rowKey="sessionId" pagination={{ pageSize: 5, hideOnSinglePage: true }} dataSource={data.mentoring.inactivePairs} columns={pairColumns} locale={{ emptyText: 'Không có' }} scroll={{ x: 'max-content' }} />
             </Card>
 
-            <Card title="Điểm phụ cấp">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
-                  <Typography.Title level={5}>Top thành viên</Typography.Title>
-                  {data.points.topMembers.length ? data.points.topMembers.map((row, index) => (
-                    <div key={row.member._id} className="flex items-center justify-between border-b border-gray-100 py-1">
-                      <span>{index + 1}. {row.member.fullName}</span><strong>{points(row.totalPoints)} điểm</strong>
-                    </div>
-                  )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
-                </div>
-                <div>
-                  <Typography.Title level={5}>Cần cải thiện</Typography.Title>
-                  {data.points.needImprovement.length ? data.points.needImprovement.map((row) => (
-                    <div key={row.member._id} className="flex items-center justify-between border-b border-gray-100 py-1">
-                      <span>{row.member.fullName}</span><span className="text-red-500">{points(row.totalPoints)} điểm</span>
-                    </div>
-                  )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
-                </div>
-              </div>
-            </Card>
+            <div className="flex flex-col gap-5">
+              <Card title="Top thành viên">
+                {data.points.topMembers.length ? (
+                  <ol className="rank-list">
+                    {data.points.topMembers.map((row, index) => (
+                      <li key={row.member._id} className="rank-item">
+                        <span className="rank-no">{index + 1}</span>
+                        <Avatar name={row.member.fullName} />
+                        <span className="rank-name">{row.member.fullName}</span>
+                        <span className="rank-score">{points(row.totalPoints)} <span className="font-normal text-gray-500">điểm</span></span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+              </Card>
+              <Card title="Cần cải thiện">
+                {data.points.needImprovement.length ? (
+                  <ol className="rank-list">
+                    {data.points.needImprovement.map((row) => (
+                      <li key={row.member._id} className="rank-item">
+                        <Avatar name={row.member.fullName} />
+                        <span className="rank-name">{row.member.fullName}</span>
+                        <span className="rank-score bad">{points(row.totalPoints)} <span className="font-normal text-gray-500">điểm</span></span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+              </Card>
+            </div>
+          </div>
 
+          <div className="dash-grid cols-32">
             <Card title="Học tập">
-              <Table rowKey={(row) => row.module._id} size="small" pagination={false} dataSource={data.learning} scroll={{ x: 'max-content' }} columns={[
-                { title: 'Module', render: (_: unknown, row: AdminDashboard['learning'][number]) => row.module.name },
-                { title: 'Bài nộp', dataIndex: 'submissions' },
-                { title: 'Người nộp', dataIndex: 'submitters' },
-                { title: 'Chờ duyệt', dataIndex: 'pending', render: (value: number) => value ? <Tag color="gold">{value}</Tag> : 0 },
-                { title: 'Điểm TB', dataIndex: 'averageScore', render: (value: number | null) => value === null ? '—' : points(value) }
+              <Table rowKey={(row) => row.module._id} pagination={false} dataSource={data.learning} locale={{ emptyText: 'Chưa có module' }} columns={[
+                { title: 'Module', render: (_: unknown, row: AdminDashboard['learning'][number]) => <div className="leading-snug"><strong>{row.module.name}</strong><div className="text-xs text-gray-500">{row.submitters} người nộp</div></div> },
+                { title: 'Bài nộp', dataIndex: 'submissions', align: 'right' as const },
+                { title: 'Đã duyệt', render: (_: unknown, row: AdminDashboard['learning'][number]) => <Progress percent={row.submissions ? Math.round((row.approved / row.submissions) * 100) : 0} size={[70, 8]} /> },
+                { title: 'Chờ duyệt', dataIndex: 'pending', align: 'right' as const, render: (value: number) => value ? <Tag color="gold" className="!m-0">{value}</Tag> : 0 },
+                { title: 'Điểm TB', dataIndex: 'averageScore', align: 'right' as const, render: (value: number | null) => value === null ? '—' : points(value) }
               ]} />
             </Card>
 
             <Card title={`HLC Fund · mức ${money(data.fund.target.minApprovedAmount)}`}>
-              <div className="flex flex-wrap items-center gap-6">
-                <Progress type="dashboard" percent={data.fund.totals.mentees ? Math.round((data.fund.totals.reached / data.fund.totals.mentees) * 100) : 0} />
-                <div className="space-y-1">
-                  <div>Mentee đạt mức: <strong>{data.fund.totals.reached}/{data.fund.totals.mentees}</strong></div>
-                  <div>Chưa đóng: <strong>{data.fund.totals.notContributed}</strong></div>
-                  <div>Minh chứng chờ duyệt: <strong>{data.fund.totals.pending}</strong></div>
+              <div className="fund-box">
+                <Progress type="dashboard" size={150} percent={data.fund.totals.mentees ? Math.round((data.fund.totals.reached / data.fund.totals.mentees) * 100) : 0} />
+                <div className="fund-stats">
+                  <div><span className="dash-note">Mentee đạt mức</span><strong>{data.fund.totals.reached}/{data.fund.totals.mentees}</strong></div>
+                  <div><span className="dash-note">Chưa đóng</span><strong>{data.fund.totals.notContributed}</strong></div>
+                  <div><span className="dash-note">Minh chứng chờ duyệt</span><strong>{data.fund.totals.pending}</strong></div>
                 </div>
               </div>
             </Card>
           </div>
 
           {data.trend.length > 1 && (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="dash-grid cols-2">
               <Card title="Xu hướng điểm & chi phụ cấp">
-                <Line
-                  data={{
-                    labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
-                    datasets: [
-                      { label: 'Tổng điểm', data: data.trend.map((item) => item.totalPoints), borderColor: '#6d5dfc', backgroundColor: '#6d5dfc', yAxisID: 'y' },
-                      { label: 'Chi phụ cấp (nghìn đ)', data: data.trend.map((item) => Math.round(item.totalAmount / 1000)), borderColor: '#0e9f91', backgroundColor: '#0e9f91', yAxisID: 'y1' }
-                    ]
-                  }}
-                  options={{ responsive: true, scales: { y: { position: 'left' }, y1: { position: 'right', grid: { drawOnChartArea: false } } } }}
-                />
+                <div className="chart-box">
+                  <Line
+                    data={{
+                      labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
+                      datasets: [
+                        { label: 'Tổng điểm', data: data.trend.map((item) => item.totalPoints), borderColor: CHART_COLORS.purple, backgroundColor: CHART_COLORS.purple, yAxisID: 'y', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 },
+                        { label: 'Chi phụ cấp (nghìn đ)', data: data.trend.map((item) => Math.round(item.totalAmount / 1000)), borderColor: CHART_COLORS.teal, backgroundColor: CHART_COLORS.teal, yAxisID: 'y1', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 }
+                      ]
+                    }}
+                    options={{ interaction: { mode: 'index', intersect: false }, scales: { y: { position: 'left', beginAtZero: true }, y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }, x: { grid: { display: false } } } }}
+                  />
+                </div>
               </Card>
               <Card title="Hoạt động theo tháng">
-                <Bar
-                  data={{
-                    labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
-                    datasets: [
-                      { label: 'Buổi mentoring', data: data.trend.map((item) => item.mentoringSessions), backgroundColor: '#c7c0ff' },
-                      { label: 'Cặp đã xong', data: data.trend.map((item) => item.mentoringDone), backgroundColor: '#6d5dfc' },
-                      { label: 'Bài nộp học tập', data: data.trend.map((item) => item.submissions), backgroundColor: '#ec9a50' }
-                    ]
-                  }}
-                  options={{ responsive: true }}
-                />
+                <div className="chart-box">
+                  <Bar
+                    data={{
+                      labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
+                      datasets: [
+                        { label: 'Buổi mentoring', data: data.trend.map((item) => item.mentoringSessions), backgroundColor: CHART_COLORS.purpleSoft, borderRadius: 6, maxBarThickness: 30 },
+                        { label: 'Cặp đã xong', data: data.trend.map((item) => item.mentoringDone), backgroundColor: CHART_COLORS.purple, borderRadius: 6, maxBarThickness: 30 },
+                        { label: 'Bài nộp học tập', data: data.trend.map((item) => item.submissions), backgroundColor: CHART_COLORS.orange, borderRadius: 6, maxBarThickness: 30 }
+                      ]
+                    }}
+                    options={{ interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } }}
+                  />
+                </div>
               </Card>
             </div>
           )}
