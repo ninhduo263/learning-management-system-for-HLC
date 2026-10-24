@@ -60,6 +60,11 @@ export class Position implements BaseEntity {
 
     @IsString()
     @IsOptional()
+    @EntityDefinition.field({ label: "Module quản lý" })
+    moduleId?: string;
+
+    @IsString()
+    @IsOptional()
     @EntityDefinition.field({ label: "Mô tả" })
     description?: string;
 

@@ -199,7 +199,8 @@ Admin tổng cấp thêm quyền cho một tài khoản bất kỳ, kể cả me
 | `FUND` | `/fund/contributions…`, `/fund/stats` (mục 11.4), CRUD `fund-contribution` | Duyệt minh chứng quỹ |
 | `MENTORING` | `mentoring-quarter`, `mentor-preference`, `mentor-preference-item`, `mentoring-pair`, `mentoring-session`, `mentoring-schedule-log`, `mentoring-recap`, `mentoring-award` | |
 | `POINT` | `/points/periods…`, `/points/adjustments…` (mục 11.2), CRUD `point-type`, `point-rule`, `point-adjustment`, `point-entry`, `allowance-summary`, `period-export` | |
-| `LEARNING_MODULE` | API quản lý `/learning/modules…`, `/learning/submissions/{id}/review`, thư viện (mục 11.5) | Chỉ với module ghi trong `moduleId` |
+| `LEARNING_MODULE` | API quản lý `/learning/modules…`, `/learning/submissions/{id}/review`, thư viện (mục 11.5) | Chỉ với module ghi trong `moduleId`. Từ vòng 6 không cấp riêng nữa: Admin module nhỏ có quyền này qua **chức vụ** (mục 11.17) |
+| `MENTORING_VIEW` | Các API mentoring chỉ **đọc** (`GET /mentoring/quarters`, `/board`, `/reports/quarters`, `/pair-logs`, `/schedule-logs`, `/members`) | Không cấp trực tiếp; được bao hàm bởi `MENTORING`, `LEARNING`, `MENTEE` (mục 11.17) |
 
 ### 4.3 Bảng quyền hiện tại
 
@@ -946,7 +947,7 @@ Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi 
   - Cần `LOCK_PERIOD`: chốt kỳ, đánh dấu đã chi.
   - Mở khóa kỳ: chỉ Admin toàn cục (`403 error-super-admin-only`).
   - Người chỉ có `VIEW_PAYOUT` chỉ xuất được kỳ đã chốt.
-- Chỉ Admin toàn cục được: xóa nhóm, xóa vai trò, mở khóa kỳ, nhập và hoàn tác dữ liệu quý cũ, sửa cấu hình hệ thống.
+- Chỉ Admin toàn cục được: xóa nhóm, xóa vai trò, mở khóa kỳ, sửa cấu hình hệ thống. (Từ vòng 6, nhập và hoàn tác dữ liệu quý cũ mở cho cả Trưởng ban Mentoring, mục 11.17.)
 - **Không tự chấm, tự duyệt cho mình** (`403 error-self-review` hoặc `error-recap-score-conflict`): recap của cặp mình tham gia, khoản quỹ của mình, bài học tập của mình, cộng/trừ điểm cho mình. Áp dụng cả với người có quyền toàn cục là thành viên.
 
 **Ủy quyền tạm thời**
@@ -1064,6 +1065,78 @@ Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi 
   - Gửi lại giá trị đã che thì máy chủ bỏ qua, không ghi đè dữ liệu thật.
   - File xuất thành viên chỉ có cột CCCD khi người xuất là Admin toàn cục.
 - Danh bạ rút gọn (mọi tài khoản đăng nhập, không có dữ liệu nhạy cảm): `GET /member-directory?type=` và `GET /member-directory/groups`.
+
+### 11.17 Cập nhật vòng 6 (quản trị theo chức vụ, đề xuất giữa các chức vụ, ủy quyền recap MTO, điểm học tập trung bình)
+
+**Quản trị chia theo tên chức vụ.** Chức năng "quyền module" riêng đã bỏ khỏi giao diện. Chức vụ nào có sẵn bộ quyền của chức vụ đó; gán chức vụ cho ai thì người đó có quyền ngay (`GET /access/me` phản ánh `scopes`, `actions`, `moduleIds`).
+
+| Chức vụ (mã vai trò) | Quyền |
+|---|---|
+| Admin toàn cục | Toàn bộ hệ thống |
+| Trưởng ban Mentoring (`ADMIN_MENTORING`, scope `MENTORING`) | Toàn bộ mentoring: ghép / đổi cặp, lịch, duyệt và nộp hộ recap, cấp ủy quyền recap, duyệt đề xuất đổi cặp / điều chỉnh dữ liệu mentoring. Không có quyền ở điểm, quỹ |
+| Trưởng ban HLC Fund (`ADMIN_HLC_FUND`, scope `FUND`) | Toàn quyền thu chi: duyệt minh chứng, sửa đơn giá, dòng điều chỉnh bù, **chốt kỳ** (`LOCK_PERIOD`), **xác nhận đã chi** (`CONFIRM_PAYOUT`), xem bảng chi trả, dashboard thu chi, duyệt đề xuất điểm (`EDIT_POINTS`). Không tự có quyền mentoring / học tập |
+| Trưởng ban Học tập (`TRUONG_BAN_HOC_TAP`, scope `LEARNING`) | Toàn bộ module học tập, tạo module, chỉ định Admin module, dashboard điểm học tập trung bình. Mentoring **chỉ xem** (`MENTORING_VIEW`); điều chỉnh thì gửi đề xuất |
+| Admin module nhỏ (chức vụ `ADMIN_MODULE_<mã module>`, tên "Admin module <tên module>") | Chỉ module của mình; chỉ xem dashboard điểm của module mình |
+| Trưởng ban MTE (`TRUONG_BAN_MTE`, scope `MENTEE`) | Quản lý mọi nhóm MTE, duyệt / nộp hộ trong phạm vi MTE, xem điểm phụ cấp (`VIEW_PAYOUT`), xem mentoring. **Không còn** `LOCK_PERIOD`, `EDIT_POINTS`: sửa điểm và đổi cặp phải gửi đề xuất |
+| Leader / Phó nhóm | Như vòng 4 (xem tiến độ, duyệt, chấm trong nhóm mình) |
+
+- Migration khi khởi động: `TRUONG_BAN_MTE` đang ở cấu hình mặc định cũ (`LOCK_PERIOD`, `EDIT_POINTS`, `VIEW_PAYOUT`) tự đổi thành `VIEW_PAYOUT`; đã chỉnh tay thì giữ nguyên.
+- `AdminScope` có thêm `MENTORING_VIEW` (bao hàm bởi `MENTORING`, `LEARNING`, `MENTEE`).
+- Chức vụ có `moduleId` (Admin module) không sửa / xóa ở `PUT|DELETE /roles/{id}` (`400 error-role-managed-by-module`); `GET /roles` trả thêm `isModuleAdmin`, `moduleId`.
+- Tên chức vụ mặc định là "Trưởng ban HLC Fund" và "Trưởng ban Mentoring" ngay từ lần khởi tạo đầu.
+
+- **Nhập dữ liệu quý cũ**: `POST /mentoring/history/import` và `POST /mentoring/history/batches/{id}/revert` mở cho Trưởng ban Mentoring (phạm vi `MENTORING`) như Admin toàn cục.
+
+**Tạo module học tập: đối tượng và Admin module**
+- `POST /learning/modules` nhận thêm (chỉ khi tạo):
+  - `audience: { mode: "ALL" | "SELECTED", memberIds?, groupIds? }`: chọn MTE hoặc MTO riêng lẻ, hoặc theo nhóm. Module `targetMemberType = ALL` chọn được cả MTO lẫn MTE trong cùng một module.
+  - `adminMemberIds: string[]`: người giữ chức vụ "Admin module <tên>" (hệ thống tạo chức vụ gắn `moduleId` và gán người trong Ban học tập).
+- `GET /learning/modules` và `GET /learning/modules/{id}` trả thêm `adminMembers[]`.
+- `GET /learning/modules/{id}/admins`: người giữ chức vụ (Admin module xem được module mình).
+- `PUT /learning/modules/{id}/admins` với `{ memberIds }` (đặt lại toàn bộ): chỉ Admin toàn cục và Trưởng ban Học tập; Admin module nhỏ không tự đổi. Bỏ ai ra thì chức vụ kết thúc từ hôm qua (giữ lịch sử), mất quyền ngay.
+- Đổi tên module thì đổi tên chức vụ theo. Mọi thay đổi ghi nhật ký `MODULE_ADMIN`, `MODULE_AUDIENCE` (module `LEARNING`).
+- Đối tượng sửa sau bằng `PUT /learning/modules/{id}/audience` (như vòng 4); bài đã nộp giữ nguyên.
+
+**Đề xuất giữa các chức vụ (`/proposals`)**
+
+| Loại (`type`) | Người gửi | Người duyệt | Khi duyệt |
+|---|---|---|---|
+| `PAIR_CHANGE` | Trưởng ban MTE | Trưởng ban Mentoring (hoặc Admin) | Đổi cặp thật (`updateSessionPair`) |
+| `POINT_ADJUST` | Trưởng ban MTE | Trưởng ban HLC Fund (có `EDIT_POINTS`) | Ghi dòng điều chỉnh điểm của kỳ |
+| `MENTORING_POINT` | Trưởng ban Mentoring | Trưởng ban HLC Fund | Ghi dòng điều chỉnh; bắt buộc liên kết dữ liệu mentoring gốc |
+| `MENTORING_DATA` | Trưởng ban Học tập (và Trưởng ban MTE) | Trưởng ban Mentoring | Ghi nhận (Trưởng ban Mentoring tự điều chỉnh dữ liệu theo quyền của mình) |
+
+- `GET /proposals/summary` → `{ canPropose[], canDecide[], pendingInbox }`.
+- `GET /proposals?box=mine|inbox|all&status=&type=`: `mine` (đã gửi), `inbox` (được quyền duyệt), `all` (chỉ Admin toàn cục). Mỗi dòng có `canDecide`, `canCancel`.
+- `POST /proposals` với `{ type, reason, targetId, targetType?, payload? }`. `reason` bắt buộc. Admin toàn cục không gửi đề xuất (thao tác trực tiếp). Sai chức vụ → `403 error-proposal-forbidden`.
+  - `PAIR_CHANGE`: `targetId` = id buổi; `payload { mentorCode, menteeCode }`.
+  - `POINT_ADJUST`, `MENTORING_POINT`: `targetId` = id thành viên; `payload { periodCode: "YYYY-MM", points (≠ 0, |x| ≤ 100), pointTypeCode? }`. `MENTORING_POINT` thêm `sourceType` (`SESSION | RECAP | MEMBER_SCORE | AWARD`) và `sourceId`.
+  - `MENTORING_DATA`: `targetType` (`SESSION | RECAP | MEMBER_SCORE | AWARD`), `targetId` = id dữ liệu gốc.
+- `PUT /proposals/{id}/decide` với `{ status: APPROVED | REJECTED, note? }`: từ chối bắt buộc `note`; duyệt thì áp dụng ngay (lỗi áp dụng thì đề xuất vẫn `PENDING`). Xử lý lần 2 → `409 error-proposal-decided`. Kết quả lưu `deciderName`, `decisionNote`, `decidedAt`, `resultRef` (id bản ghi sinh ra).
+- `PUT /proposals/{id}/cancel`: người gửi rút khi chưa xử lý.
+- Mọi đề xuất giữ làm lịch sử và ghi nhật ký module `PROPOSAL` (`PROPOSAL_CREATE`, `PROPOSAL_APPROVE`, `PROPOSAL_REJECT`, `PROPOSAL_CANCEL`).
+
+**Recap MTO: xem mặc định, duyệt / nộp hộ cần ủy quyền**
+- **Xem**: MTE trong cặp và Leader nhóm xem recap MTO mặc định (`GET /leader/recaps` trả cả recap MTO, `mode: APPROVE`, `canScore: false` nếu chưa được ủy quyền).
+- **Duyệt / không duyệt** (`PUT /mentoring/recaps/{id}/review`, `PUT /leader/recaps/{id}/score`) và **nộp hộ recap MTO** (`POST /mentoring/sessions/{id}/recap/proxy`, `role: MENTOR`): Admin toàn cục, Trưởng ban Mentoring, hoặc người được ủy quyền. Chưa được ủy quyền → `403 error-recap-action-forbidden`.
+- **Nộp hộ recap MTE**: chỉ Admin toàn cục và Trưởng ban Mentoring (không có ủy quyền).
+- Ủy quyền do Trưởng ban Mentoring / Admin cấp (`/mentoring/recap-delegations`):
+  - `POST` với `{ toMemberId, scopeType: PAIR | GROUP, scopeId, actions: [REVIEW, PROXY], startDate, endDate, reason }`.
+  - Người nhận phải đúng quan hệ: `PAIR` = MTE của chính cặp đó; `GROUP` = Leader / Phó nhóm của nhóm MTE đó hoặc Trưởng ban MTE. Sai → `400 error-recap-delegation-invalid`; hạn đã qua cũng không hợp lệ; thiếu lý do bị chặn.
+  - `GET` (danh sách, có `status`: `ACTIVE | UPCOMING | EXPIRED | REVOKED`), `GET /eligible?scopeType=&scopeId=` (người đủ điều kiện), `PUT /{id}/revoke` (thu hồi, có hiệu lực ngay).
+  - `GET /mentoring/me/recap-delegations`: ủy quyền đang dành cho tôi.
+  - Hết hạn tự mất hiệu lực; quan hệ được kiểm tra lại lúc dùng (ra khỏi nhóm thì mất quyền).
+- `GET /leader/recaps` trả thêm `missing[]`: các buổi đã có lịch nhưng chưa có recap MTO mà người gọi được phép nộp hộ (Admin / Trưởng ban Mentoring: mọi buổi; người được ủy quyền `PROXY`: buổi thuộc phạm vi ủy quyền). Giao diện dùng danh sách này để hiện nút "Nộp hộ recap MTO" ở tab Chấm recap.
+- Làm thay ghi nhật ký `RECAP_REVIEW` / `RECAP_PROXY` kèm `onBehalfOf` = người cấp ủy quyền; recap nộp hộ ghi `proxyReason` "[Theo ủy quyền của …]".
+- MTE được ủy quyền theo cặp được duyệt recap MTO của chính cặp mình (ngoại lệ so với quy tắc không chấm cặp mình tham gia).
+- Trưởng ban Học tập và Trưởng ban MTE (khi chưa được ủy quyền) **không** duyệt được recap MTO.
+
+**Dashboard điểm học tập trung bình**
+- `GET /dashboard/learning-average?period=YYYY-MM | quarter=2026Q4 &groupId=&moduleId=&memberType=MENTEE|MENTOR`.
+  - Điểm trung bình = trung bình điểm các bài học tập đã chấm và điểm recap mentoring của MTE, quy về thang 100. Điểm recap lấy trực tiếp từ `MentoringRecap`, không sao chép.
+  - Trả `overall` (chung / học tập / recap), `byMember`, `byGroup`, `byModule` (kèm "Recap mentoring"), `byMonth` (6 tháng gần nhất), `top` (nửa trên, tối đa 5), `needImprovement` (nửa dưới, tối đa 5), `filters`, `canViewAll`.
+  - Quyền: Admin toàn cục, Trưởng ban Học tập (mọi module, kèm recap), Trưởng ban MTE (bao hàm học tập); Admin module nhỏ chỉ thấy module mình (`canViewAll: false`, không có recap, `moduleId` ngoài phạm vi → `403`). Mentoring head, Fund head, thành viên thường → `403`.
+  - Phần mentoring chỉ để xem; điều chỉnh bằng đề xuất `MENTORING_DATA`.
 
 ---
 

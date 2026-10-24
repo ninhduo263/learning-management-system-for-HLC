@@ -338,6 +338,54 @@ export const REVIEW_STATUS_LABEL: Record<ReviewStatus, string> = {
   REJECTED: 'Bị từ chối'
 };
 
+// ---------- Ủy quyền duyệt hộ / nộp hộ recap MTO (Trưởng ban Mentoring cấp) ----------
+
+export type RecapDelegationAction = 'REVIEW' | 'PROXY';
+export type RecapDelegationScope = 'PAIR' | 'GROUP';
+export type RecapDelegationStatus = 'ACTIVE' | 'UPCOMING' | 'EXPIRED' | 'REVOKED';
+export const RECAP_ACTION_LABEL: Record<RecapDelegationAction, string> = { REVIEW: 'Duyệt / không duyệt', PROXY: 'Nộp hộ' };
+export const RECAP_DELEGATION_STATUS: Record<RecapDelegationStatus, { label: string; color: string }> = {
+  ACTIVE: { label: 'Đang hiệu lực', color: 'green' },
+  UPCOMING: { label: 'Sắp hiệu lực', color: 'blue' },
+  EXPIRED: { label: 'Đã hết hạn', color: 'default' },
+  REVOKED: { label: 'Đã thu hồi', color: 'red' }
+};
+export interface RecapDelegationView {
+  _id: string;
+  scopeType: RecapDelegationScope;
+  scopeId: string;
+  actions: RecapDelegationAction[];
+  startDate: string;
+  endDate: string;
+  reason: string;
+  grantedByName: string;
+  status: RecapDelegationStatus;
+  to: { _id: string; memberCode: string; fullName: string } | null;
+  scope: { label: string; mentor?: { fullName: string; memberCode: string } | null; mentee?: { fullName: string; memberCode: string } | null };
+  createdAt: string;
+}
+export interface RecapDelegationInput {
+  toMemberId: string;
+  scopeType: RecapDelegationScope;
+  scopeId: string;
+  actions: RecapDelegationAction[];
+  startDate: string;
+  endDate: string;
+  reason: string;
+}
+export const recapDelegationApi = {
+  list: () => apiJson<RecapDelegationView[]>('/mentoring/recap-delegations'),
+  eligible: (scopeType: RecapDelegationScope, scopeId: string) =>
+    apiJson<{ _id: string; memberCode: string; fullName: string }[]>(`/mentoring/recap-delegations/eligible?scopeType=${scopeType}&scopeId=${encodeURIComponent(scopeId)}`),
+  create: (body: RecapDelegationInput) => apiJson<RecapDelegationView>('/mentoring/recap-delegations', { method: 'POST', json: body }),
+  revoke: (id: string) => apiJson<RecapDelegationView>(`/mentoring/recap-delegations/${id}/revoke`, { method: 'PUT' }),
+  /** Ủy quyền đang dành cho tôi */
+  mine: () => apiJson<RecapDelegationView[]>('/mentoring/me/recap-delegations'),
+  /** Duyệt / không duyệt recap (recap MTO theo ủy quyền) */
+  review: (recapId: string, body: { status: 'APPROVED' | 'REJECTED'; note?: string }) =>
+    apiJson<SessionView>(`/mentoring/recaps/${recapId}/review`, { method: 'PUT', json: body })
+};
+
 const dateTimeFormat = new Intl.DateTimeFormat('vi-VN', {
   timeZone: 'Asia/Ho_Chi_Minh',
   day: '2-digit',

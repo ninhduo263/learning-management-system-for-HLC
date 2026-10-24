@@ -61,6 +61,8 @@ export interface Capabilities {
     scopes: Set<string>;
     /** Hành động cấp hệ thống (GLOBAL_PERMISSIONS) */
     actions: Set<string>;
+    /** Module học tập được quản lý: null = mọi module (Admin toàn cục, Trưởng ban Học tập, Trưởng ban MTE) */
+    moduleIds: string[] | null;
 }
 
 /** Phạm vi người duyệt: isAdmin = toàn quyền */
@@ -403,9 +405,11 @@ export class GroupAccessService {
     }
 
     /**
-     * Quyền tổng hợp: phạm vi quản trị (cấp trực tiếp hoặc từ vai trò, kèm phạm vi bao hàm) và hành động
-     * cấp hệ thống (từ vai trò). Quyền POINT cấp trực tiếp (Admin điểm) và Trưởng ban MTE có đủ
-     * quyền chốt kỳ / sửa điểm / xem bảng chi trả.
+     * Quyền tổng hợp: phạm vi quản trị (cấp trực tiếp hoặc từ chức vụ, kèm phạm vi bao hàm) và hành động
+     * cấp hệ thống (từ chức vụ).
+     * - Trưởng ban HLC Fund (phạm vi FUND) và quyền POINT cấp trực tiếp: toàn quyền thu chi (chốt kỳ, sửa điểm,
+     *   xem bảng chi trả, xác nhận đã chi).
+     * - Trưởng ban MTE chỉ XEM bảng điểm phụ cấp; muốn sửa điểm phải gửi đề xuất cho Trưởng ban HLC Fund.
      */
     async capabilities(user: Pick<User, "_id" | "systemRole">) {
         const all = Object.values(AdminScope) as string[];
@@ -415,6 +419,7 @@ export class GroupAccessService {
                 memberId: null,
                 scopes: new Set(all),
                 actions: new Set(GLOBAL_PERMISSIONS),
+                moduleIds: null,
             } as Capabilities;
         const grants = await this.permissionModel.findAll({
             where: { userId: user._id },
@@ -438,19 +443,25 @@ export class GroupAccessService {
                 ),
             ),
         );
+        const directScopes = new Set<string>([
+            ...grants.map((row) => row.scope as string),
+            ...holders.map((row) => row.position.adminScope).filter(Boolean),
+        ]);
+        // Toàn quyền thu chi: Trưởng ban HLC Fund và Admin điểm (cấp trực tiếp)
         if (
-            grants.some((row) => row.scope === AdminScope.POINT) ||
-            scopes.has(AdminScope.MENTEE)
+            directScopes.has(AdminScope.FUND) ||
+            directScopes.has(AdminScope.POINT)
         )
             for (const item of [
                 RolePermission.LOCK_PERIOD,
                 RolePermission.EDIT_POINTS,
                 RolePermission.VIEW_PAYOUT,
+                RolePermission.CONFIRM_PAYOUT,
             ])
                 actions.add(item);
-        // Trưởng ban HLC Fund (vai trò có phạm vi FUND) xác nhận đã chi
-        if (holders.some((row) => row.position.adminScope === AdminScope.FUND))
-            actions.add(RolePermission.CONFIRM_PAYOUT);
+        // Trưởng ban MTE: xem bảng điểm phụ cấp để đề xuất, không tự sửa / chốt
+        if (scopes.has(AdminScope.MENTEE))
+            actions.add(RolePermission.VIEW_PAYOUT);
         // Có quyền thao tác trên bảng phụ cấp thì vào được màn hình điểm phụ cấp
         if (
             actions.has(RolePermission.CONFIRM_PAYOUT) ||
@@ -459,11 +470,32 @@ export class GroupAccessService {
             actions.has(RolePermission.VIEW_PAYOUT)
         )
             scopes.add(AdminScope.POINT);
+        const moduleIds = scopes.has(AdminScope.LEARNING)
+            ? null
+            : [
+                  ...new Set([
+                      ...grants
+                          .filter(
+                              (row) => row.scope === AdminScope.LEARNING_MODULE,
+                          )
+                          .map((row) => row.moduleId),
+                      ...holders
+                          .filter(
+                              (row) =>
+                                  row.position.adminScope ===
+                                  AdminScope.LEARNING_MODULE,
+                          )
+                          .map((row) => row.position.moduleId),
+                  ]),
+              ].filter(Boolean);
+        // Admin module học tập nhỏ vào được màn hình học tập
+        if (moduleIds?.length) scopes.add(AdminScope.LEARNING_MODULE);
         return {
             superAdmin: false,
             memberId: member?._id ?? null,
             scopes,
             actions,
+            moduleIds,
         } as Capabilities;
     }
 

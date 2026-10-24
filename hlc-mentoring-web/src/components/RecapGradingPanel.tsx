@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, App, Button, Descriptions, Form, Input, InputNumber, Modal, Segmented, Space, Table, Tag, Typography } from 'antd';
 import FileThumbs from '@/components/FileThumbs';
+import ProxyRecapModal from '@/components/ProxyRecapModal';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
 import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL, REVIEW_STATUS_LABEL, formatDateTime } from '@/services/mentoringApi';
-import { leaderApi, points, type RecapRubric, type RecapToScore } from '@/services/hlcApi';
+import { leaderApi, points, type MissingMentorRecap, type RecapRubric, type RecapToScore } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
 /** Chấm recap mentoring thang 100 theo tiêu chí module "Recap mentoring" (Leader nhóm / Admin) */
@@ -16,6 +17,8 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
   const [filter, setFilter] = useState('UNSCORED');
   const [rubric, setRubric] = useState<RecapRubric | null>(null);
   const [rows, setRows] = useState<RecapToScore[]>([]);
+  const [missing, setMissing] = useState<MissingMentorRecap[]>([]);
+  const [proxyTarget, setProxyTarget] = useState<{ sessionId: string; code: string; role: 'MENTOR' | 'MENTEE' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [scoring, setScoring] = useState<RecapToScore | null>(null);
   const [saving, setSaving] = useState(false);
@@ -27,6 +30,7 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
       const result = await leaderApi.recaps({ period: code, groupId, filter });
       setRubric(result.rubric);
       setRows(result.rows);
+      setMissing(result.missing ?? []);
     } catch (error) {
       message.error(errorMessage(error, 'Không tải được recap'));
     } finally {
@@ -117,6 +121,26 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
           { title: '', render: (_: unknown, row: RecapToScore) => row.conflict ? <Tag color="purple" title="Leader không chấm recap của cặp mình tham gia">Cặp của bạn</Tag> : null }
         ]}
       />
+      {missing.length > 0 && (
+        <div className="mt-4 space-y-2">
+          <Typography.Text strong>Buổi chưa có recap MTO (bạn được nộp hộ)</Typography.Text>
+          <Table<MissingMentorRecap>
+            rowKey={(row) => row.session._id}
+            size="small"
+            dataSource={missing}
+            pagination={{ pageSize: 10, hideOnSinglePage: true }}
+            scroll={{ x: 'max-content' }}
+            columns={[
+              { title: 'Buổi', render: (_: unknown, row: MissingMentorRecap) => <div><code className="text-xs">{row.session.code}</code><div className="text-xs text-gray-500">{formatDateTime(row.session.scheduledStartAt)}</div></div> },
+              { title: 'Nhóm', render: (_: unknown, row: MissingMentorRecap) => row.groupName ?? '—' },
+              { title: 'Mentor (chưa nộp)', render: (_: unknown, row: MissingMentorRecap) => row.mentor?.fullName ?? '—' },
+              { title: 'Mentee', render: (_: unknown, row: MissingMentorRecap) => row.mentee?.fullName ?? '—' },
+              { title: '', render: (_: unknown, row: MissingMentorRecap) => <Button size="small" onClick={() => setProxyTarget({ sessionId: row.session._id, code: row.session.code, role: 'MENTOR' })}>Nộp hộ recap MTO</Button> }
+            ]}
+          />
+        </div>
+      )}
+      <ProxyRecapModal target={proxyTarget} onClose={() => setProxyTarget(null)} onSaved={() => void load()} />
       <Modal
         title={scoring ? `Recap ${scoring.role === 'MENTOR' ? 'MTO' : 'MTE'} · ${scoring.session.code}` : ''}
         open={Boolean(scoring)}

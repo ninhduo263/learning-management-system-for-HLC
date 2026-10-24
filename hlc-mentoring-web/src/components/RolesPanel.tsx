@@ -100,7 +100,7 @@ export default function RolesPanel() {
           dataSource={roles}
           scroll={{ x: 'max-content' }}
           columns={[
-            { title: 'Vai trò', render: (_: unknown, row: RoleView) => <div><strong>{row.name}</strong><div className="text-xs text-gray-400">{row.code}</div></div> },
+            { title: 'Vai trò', render: (_: unknown, row: RoleView) => <div><strong>{row.name}</strong>{row.isModuleAdmin && <Tag color="blue" className="!ml-2">Quản lý ở màn Học tập</Tag>}<div className="text-xs text-gray-400">{row.code}</div></div> },
             { title: 'Áp dụng cho', dataIndex: 'appliesTo', render: (value: RoleAppliesTo) => <Tag color={value === 'FUND' ? 'gold' : value === 'MENTEE' ? 'purple' : 'default'}>{ROLE_APPLIES_LABEL[value]}</Tag> },
             {
               title: 'Phạm vi · quyền hạn', render: (_: unknown, row: RoleView) => (
@@ -119,7 +119,7 @@ export default function RolesPanel() {
             {
               title: '', render: (_: unknown, row: RoleView) => (
                 <Space size="small">
-                  <Button size="small" onClick={() => { form.setFieldsValue({
+                  <Button size="small" disabled={row.isModuleAdmin} onClick={() => { form.setFieldsValue({
                     ...row,
                     adminScope: row.adminScope ?? undefined,
                     scopeKinds: row.scopeKinds ?? [],

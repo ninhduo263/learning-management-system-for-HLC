@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Card, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, DatePicker, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import GroupManager from '@/components/GroupManager';
@@ -11,10 +11,9 @@ import DelegationPanel from '@/components/DelegationPanel';
 import SystemConfigPanel from '@/components/SystemConfigPanel';
 import { useAccess } from '@/lib/useAccess';
 import { errorMessage } from '@/lib/api';
-import { formatDateTime } from '@/services/mentoringApi';
 import {
-  SCOPE_LABEL, accessApi, departmentApi, formatDate, groupApi, learningApi, memberCrudApi, memberPositionApi, positionApi,
-  type AdminScope, type Department, type LearningModule, type Member, type MemberPosition, type PermissionView, type Position
+  departmentApi, formatDate, groupApi, memberCrudApi, memberPositionApi, positionApi,
+  type Department, type Member, type MemberPosition, type Position
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
@@ -28,27 +27,21 @@ export default function AdminOrganizationPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [assignments, setAssignments] = useState<MemberPosition[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
-  const [permissions, setPermissions] = useState<PermissionView[]>([]);
-  const [modules, setModules] = useState<LearningModule[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!access?.isSuperAdmin) return;
     try {
-      const [nextDepartments, nextPositions, nextAssignments, nextMembers, nextPermissions, nextModules] = await Promise.all([
+      const [nextDepartments, nextPositions, nextAssignments, nextMembers] = await Promise.all([
         departmentApi.many(undefined, { code: 1 }),
         positionApi.many(undefined, { sortOrder: 1 }),
         memberPositionApi.many(undefined, { startDate: -1 }),
-        memberCrudApi.many(undefined, { memberCode: 1 }),
-        accessApi.list(),
-        learningApi.modules()
+        memberCrudApi.many(undefined, { memberCode: 1 })
       ]);
       setDepartments(nextDepartments);
       setPositions(nextPositions);
       setAssignments(nextAssignments);
       setMembers(nextMembers);
-      setPermissions(nextPermissions);
-      setModules(nextModules);
     } catch (error) {
       message.error(errorMessage(error, 'Không tải được dữ liệu tổ chức'));
     } finally {
@@ -89,7 +82,6 @@ export default function AdminOrganizationPage() {
           { key: 'fund', label: 'Nhóm HLC Fund', children: <GroupManager kind="FUND" /> },
           { key: 'roles', label: 'Vai trò & điểm', children: <RolesPanel /> },
           { key: 'assign', label: 'Chức vụ ban', children: <AssignmentPanel assignments={assignments.filter((row) => !groupIds.has(row.departmentId))} members={members} departments={departments.filter((item) => item.type !== 'GROUP')} positions={positions.filter((item) => !(item as Position & { groupKind?: string | null }).groupKind)} onChanged={load} /> },
-          { key: 'permission', label: 'Quyền module', children: <PermissionPanel permissions={permissions} members={members} modules={modules} onChanged={load} /> },
           { key: 'catalog', label: 'Danh sách ban', children: <CatalogPanel departments={departments.filter((item) => item.type !== 'GROUP')} onChanged={load} /> },
           { key: 'delegation', label: 'Ủy quyền', children: <DelegationPanel mode="admin" /> },
           { key: 'logs', label: 'Nhật ký', children: <ActivityLogPanel /> },
@@ -188,61 +180,6 @@ function AssignmentPanel({ assignments, members, departments, positions, onChang
             <Form.Item name="startDate" label="Từ ngày" rules={[{ required: true }]}><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
             <Form.Item name="endDate" label="Đến ngày (trống = đang giữ)"><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
           </div>
-          <Form.Item name="note" label="Ghi chú"><Input /></Form.Item>
-        </Form>
-      </Modal>
-    </div>
-  );
-}
-
-function PermissionPanel({ permissions, members, modules, onChanged }: { permissions: PermissionView[]; members: Member[]; modules: LearningModule[]; onChanged: () => Promise<void> }) {
-  const { message } = App.useApp();
-  const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form] = Form.useForm();
-  const scope = Form.useWatch('scope', form) as AdminScope | undefined;
-
-  const grant = async (values: { account: string; scope: AdminScope; moduleId?: string; note?: string }) => {
-    setSaving(true);
-    try {
-      await accessApi.grant(values);
-      message.success('Đã giao quyền');
-      setOpen(false);
-      await onChanged();
-    } catch (error) {
-      message.error(errorMessage(error));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <Alert type="info" showIcon title="Quyền quản trị HLC Fund / Mentoring / Điểm nay gán bằng vai trò (ví dụ vai trò “Admin HLC Fund” ở tab Chức vụ ban). Tại đây chỉ còn cấp quyền quản lý từng module học tập; các quyền cũ vẫn hiển thị để thu hồi nếu cần." />
-      <div className="flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setOpen(true); }}>Giao quyền</Button></div>
-      <Table<PermissionView>
-        rowKey="_id"
-        size="small"
-        dataSource={permissions}
-        scroll={{ x: 'max-content' }}
-        columns={[
-          { title: 'Người được giao', render: (_: unknown, row: PermissionView) => <div><strong>{row.member?.fullName ?? row.user?.fullname ?? row.user?.username}</strong><div className="text-xs text-gray-500">{row.member?.memberCode ?? row.user?.username}</div></div> },
-          { title: 'Quyền', render: (_: unknown, row: PermissionView) => <Tag color="geekblue">{SCOPE_LABEL[row.scope]}</Tag> },
-          { title: 'Module', render: (_: unknown, row: PermissionView) => row.module ? `${row.module.name} (${row.module.code})` : '—' },
-          { title: 'Ghi chú', dataIndex: 'note' },
-          { title: 'Giao lúc', render: (_: unknown, row: PermissionView) => formatDateTime(row.createdAt) },
-          { title: '', render: (_: unknown, row: PermissionView) => <Popconfirm title="Thu hồi quyền này?" onConfirm={async () => { try { await accessApi.revoke(row._id); await onChanged(); } catch (error) { message.error(errorMessage(error)); } }}><Button size="small" danger>Thu hồi</Button></Popconfirm> }
-        ]}
-      />
-      <Modal title="Giao quyền quản trị" open={open} onCancel={() => setOpen(false)} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden>
-        <Form form={form} layout="vertical" onFinish={grant}>
-          <Form.Item name="account" label="Thành viên" rules={[{ required: true }]}>
-            <Select showSearch={{ optionFilterProp: 'label' }} options={members.filter((item) => item.userId).map((item) => ({ value: item.memberCode, label: `${item.memberCode} – ${item.fullName}` }))} placeholder="Chỉ hiện thành viên đã có tài khoản" />
-          </Form.Item>
-          <Form.Item name="scope" label="Quyền" rules={[{ required: true }]}><Select options={Object.entries(SCOPE_LABEL).filter(([value]) => value === 'LEARNING_MODULE').map(([value, label]) => ({ value, label }))} /></Form.Item>
-          {scope === 'LEARNING_MODULE' && (
-            <Form.Item name="moduleId" label="Module" rules={[{ required: true }]}><Select options={modules.map((item) => ({ value: item._id, label: item.name }))} /></Form.Item>
-          )}
           <Form.Item name="note" label="Ghi chú"><Input /></Form.Item>
         </Form>
       </Modal>

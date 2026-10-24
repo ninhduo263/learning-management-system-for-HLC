@@ -460,7 +460,7 @@ export class CatalogSeedService implements OnApplicationBootstrap {
             },
             {
                 code: "ADMIN_HLC_FUND",
-                name: "Admin HLC Fund",
+                name: "Trưởng ban HLC Fund",
                 groupKind: null,
                 permissions: [],
                 allowancePoints: 0,
@@ -470,7 +470,7 @@ export class CatalogSeedService implements OnApplicationBootstrap {
             },
             {
                 code: "ADMIN_MENTORING",
-                name: "Admin Mentoring",
+                name: "Trưởng ban Mentoring",
                 groupKind: null,
                 permissions: [],
                 allowancePoints: 0,
@@ -483,11 +483,8 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                 code: "TRUONG_BAN_MTE",
                 name: "Trưởng ban MTE",
                 groupKind: null,
-                permissions: [
-                    GROUP_PERMS.LOCK_PERIOD,
-                    GROUP_PERMS.EDIT_POINTS,
-                    GROUP_PERMS.VIEW_PAYOUT,
-                ],
+                // Vòng 6: chốt kỳ và sửa điểm phụ cấp thuộc Trưởng ban HLC Fund; Trưởng ban MTE chỉ xem và đề xuất
+                permissions: [GROUP_PERMS.VIEW_PAYOUT],
                 scopeKinds: [GroupKind.MENTEE],
                 allowancePoints: 0,
                 bonusPoints: 0,
@@ -551,6 +548,30 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                 { where: { code, name: from } },
             );
             changed += count;
+        }
+        // Vòng 6: chuyển quyền chốt kỳ / sửa điểm của Trưởng ban MTE sang Trưởng ban HLC Fund.
+        // Chỉ đổi khi cấu hình vẫn là mặc định cũ (Admin đã tự chỉnh thì giữ nguyên)
+        const truongBanMte = await this.positionModel.findOne({
+            where: { code: "TRUONG_BAN_MTE" },
+        });
+        const oldMtePermissions = [
+            GROUP_PERMS.LOCK_PERIOD,
+            GROUP_PERMS.EDIT_POINTS,
+            GROUP_PERMS.VIEW_PAYOUT,
+        ];
+        const currentMtePermissions = (truongBanMte?.permissions ??
+            []) as string[];
+        if (
+            truongBanMte &&
+            currentMtePermissions.length === oldMtePermissions.length &&
+            oldMtePermissions.every((item) =>
+                currentMtePermissions.includes(item),
+            )
+        ) {
+            await truongBanMte.update({
+                permissions: [GROUP_PERMS.VIEW_PAYOUT],
+            });
+            changed += 1;
         }
         for (const role of roles) {
             const existing = await this.positionModel.findOne({

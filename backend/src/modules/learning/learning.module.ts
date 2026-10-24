@@ -1,4 +1,5 @@
 import { ModuleAudienceService } from "./flow/module-audience.service";
+import { ModuleAdminService } from "./flow/module-admin.service";
 import { Entity } from "@module/repository";
 import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
@@ -69,6 +70,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
     ],
     providers: [
         ModuleAudienceService,
+        ModuleAdminService,
         LearningFlowService,
         LibraryExcelService,
         LibraryItemService,
@@ -104,6 +106,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
     ],
     exports: [
         ModuleAudienceService,
+        ModuleAdminService,
         LearningFlowService,
         LibraryItemService,
         LearningModuleService,

@@ -6,11 +6,12 @@ import {
 } from 'antd';
 import { PrinterOutlined, CalculatorOutlined, DownloadOutlined, LockOutlined, PlusOutlined, SettingOutlined, UnlockOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
+import ProposalModal from '@/components/ProposalModal';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
   PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, POINT_CATEGORY_LABEL, SOURCE_TYPE_LABEL,
-  GROUP_KIND_LABEL, PERIOD_FIELD_LABEL, systemConfigApi, PERIOD_LOG_LABEL, type PeriodLog, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
+  GROUP_KIND_LABEL, PERIOD_FIELD_LABEL, proposalApi, systemConfigApi, PERIOD_LOG_LABEL, type PeriodLog, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
   type AdjustmentView, type Member, type MemberBreakdown, type PeriodExportView, type PeriodSummary, type PointRule, type PointType, type SummaryRow
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
@@ -38,6 +39,12 @@ export default function AdminPointsPage() {
   const canLock = can(access, 'LOCK_PERIOD');
   const canConfirmPayout = can(access, 'CONFIRM_PAYOUT');
   const [unlockPaidAllowed, setUnlockPaidAllowed] = useState(true);
+  // Chức vụ chỉ xem điểm (Trưởng ban MTE) muốn sửa điểm phải gửi đề xuất cho Trưởng ban HLC Fund
+  const [canProposePoints, setCanProposePoints] = useState(false);
+  const [proposalOpen, setProposalOpen] = useState(false);
+  useEffect(() => {
+    proposalApi.summary().then((value) => setCanProposePoints(value.canPropose.includes('POINT_ADJUST'))).catch(() => undefined);
+  }, []);
   useEffect(() => {
     let active = true;
     systemConfigApi.get().then((config) => { if (active) setUnlockPaidAllowed(config.allowUnlockPaidPeriod); }).catch(() => undefined);
@@ -186,7 +193,10 @@ export default function AdminPointsPage() {
     <div className="space-y-3">
       <div className="flex justify-end">
         {canEdit && <Button type="primary" icon={<PlusOutlined />} disabled={locked} onClick={() => { adjustForm.resetFields(); setAdjustOpen(true); }}>Cộng / trừ điểm</Button>}
+        {!canEdit && canProposePoints && <Button type="primary" icon={<PlusOutlined />} onClick={() => setProposalOpen(true)}>Đề xuất cộng / trừ điểm</Button>}
       </div>
+      {!canEdit && canProposePoints && <Alert type="info" showIcon title="Bạn chỉ xem điểm phụ cấp" description="Sửa điểm thuộc quyền Trưởng ban HLC Fund. Bấm “Đề xuất cộng / trừ điểm” kèm lý do; Trưởng ban HLC Fund duyệt hoặc từ chối, mọi đề xuất được lưu lịch sử (menu Đề xuất)." />}
+      <ProposalModal open={proposalOpen} allowed={['POINT_ADJUST']} preset={{ type: 'POINT_ADJUST', periodCode: code }} onClose={() => setProposalOpen(false)} onDone={() => setProposalOpen(false)} />
       <Table<AdjustmentView>
         rowKey="_id"
         size="small"

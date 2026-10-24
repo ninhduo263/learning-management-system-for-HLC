@@ -2,15 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
-import { BulbOutlined, CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
+import { AuditOutlined, BulbOutlined, CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
 import ProfileLink from '@/components/ProfileLink';
 import RecapCard from '@/components/RecapCard';
 import PairSuggestModal from '@/components/PairSuggestModal';
 import { useAccess } from '@/lib/useAccess';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
+import RecapDelegationPanel from '@/components/RecapDelegationPanel';
+import ProposalModal, { type ProposalPreset } from '@/components/ProposalModal';
 import HistoryImportPanel from '@/components/HistoryImportPanel';
 import ProxyRecapModal from '@/components/ProxyRecapModal';
 import { errorMessage } from '@/lib/api';
+import { proposalApi, type ProposalType } from '@/services/hlcApi';
 import {
   PAIR_STATUS_COLOR,
   PAIR_STATUS_LABEL,
@@ -40,6 +43,8 @@ export default function AdminMentoringPage() {
   const [nextVisible, setNextVisible] = useState(false);
   const [openingNext, setOpeningNext] = useState(false);
   const nextCode = currentCode ? nextQuarterCode(currentCode) : '';
+  // Chỉ xem (Trưởng ban Học tập, Trưởng ban MTE): không tạo quý, không sửa gì; muốn điều chỉnh thì gửi đề xuất
+  const canManage = Boolean(access?.isSuperAdmin || access?.scopes.includes('MENTORING'));
 
   useEffect(() => {
     const refresh = () => {
@@ -56,13 +61,17 @@ export default function AdminMentoringPage() {
   }, []);
 
   useEffect(() => {
-    if (!currentCode) return;
+    if (!currentCode || !access) return;
     let active = true;
+    if (!canManage) {
+      Promise.resolve().then(() => { if (active) setReadyCode(currentCode); });
+      return () => { active = false; };
+    }
     mentoringApi.ensureQuarter(currentCode)
       .then(() => { if (active) setReadyCode(currentCode); })
       .catch((error) => { if (active) message.error(errorMessage(error, 'Không thể khởi tạo quý hiện tại')); });
     return () => { active = false; };
-  }, [currentCode, message]);
+  }, [currentCode, message, access, canManage]);
 
   const openNext = async () => {
     setOpeningNext(true);
@@ -86,8 +95,8 @@ export default function AdminMentoringPage() {
 
   return (
     <div className="space-y-5">
-      <QuarterPanel key={currentCode} quarterCode={currentCode} kind="current" />
-      {nextOpen && !nextVisible && (
+      <QuarterPanel key={currentCode} quarterCode={currentCode} kind="current" canManage={canManage} />
+      {canManage && nextOpen && !nextVisible && (
         <Card className="overflow-hidden !border-violet-200 bg-gradient-to-r from-violet-50 via-white to-indigo-50 shadow-sm">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
@@ -101,9 +110,9 @@ export default function AdminMentoringPage() {
           </div>
         </Card>
       )}
-      {nextVisible && <QuarterPanel key={nextCode} quarterCode={nextCode} kind="next" />}
-      {access?.isSuperAdmin && (
-        <Card className="overflow-hidden !rounded-xl !border-slate-200" title={<span className="font-semibold">Dữ liệu mentoring quý cũ (chỉ Admin toàn cục)</span>}>
+      {nextVisible && <QuarterPanel key={nextCode} quarterCode={nextCode} kind="next" canManage={canManage} />}
+      {canManage && (
+        <Card className="overflow-hidden !rounded-xl !border-slate-200" title={<span className="font-semibold">Dữ liệu mentoring quý cũ (Admin toàn cục, Trưởng ban Mentoring)</span>}>
           <HistoryImportPanel />
         </Card>
       )}
@@ -115,7 +124,7 @@ function memberLabel(member?: MemberView | null) {
   return member ? <div><strong>{member.fullName}</strong><div className="text-xs text-gray-500">{member.memberCode}</div></div> : '—';
 }
 
-function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'current' | 'next' }) {
+function QuarterPanel({ quarterCode, kind, canManage }: { quarterCode: string; kind: 'current' | 'next'; canManage: boolean }) {
   const { message, notification, modal: dialog } = App.useApp();
   const [createForm] = Form.useForm<PairFormValues>();
   const [editForm] = Form.useForm<PairFormValues>();
@@ -135,9 +144,17 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const [pairLogs, setPairLogs] = useState<PairLogView[] | null>(null);
   const [proxyTarget, setProxyTarget] = useState<{ sessionId: string; code: string; role: 'MENTOR' | 'MENTEE' } | null>(null);
   const [logs, setLogs] = useState<{ title: string; rows: ScheduleLogView[] } | null>(null);
+  const [canPropose, setCanPropose] = useState<ProposalType[]>([]);
+  const [proposal, setProposal] = useState<ProposalPreset | null>(null);
+  const readOnly = !canManage;
   const quarter = board?.quarter;
   const locked = Boolean(quarter?.isLocked);
   const canPair = Boolean(quarter?.canPair);
+
+  useEffect(() => {
+    if (!readOnly) return;
+    proposalApi.summary().then((summary) => setCanPropose(summary.canPropose.filter((item) => item === 'PAIR_CHANGE' || item === 'MENTORING_DATA'))).catch(() => undefined);
+  }, [readOnly]);
 
   const fetchAll = () => Promise.all([
     mentoringApi.board(quarterCode),
@@ -372,11 +389,15 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
     },
     {
       title: 'Thao tác',
+      fixed: 'right' as const,
       render: (_: unknown, row: SessionView) => (
         <Space>
           <Button type="text" icon={<EyeOutlined />} onClick={(event) => { event.stopPropagation(); setSelected(row); setModal('detail'); }} />
-          <Button type="link" icon={<EditOutlined />} disabled={!canPair} onClick={(event) => { event.stopPropagation(); openEdit(row); }}>Chỉnh sửa</Button>
-          <Button type="link" danger icon={<DeleteOutlined />} disabled={!canPair} onClick={(event) => { event.stopPropagation(); void confirmDelete(row); }}>Xóa</Button>
+          {!readOnly && <Button type="link" icon={<EditOutlined />} disabled={!canPair} onClick={(event) => { event.stopPropagation(); openEdit(row); }}>Chỉnh sửa</Button>}
+          {!readOnly && <Button type="link" danger icon={<DeleteOutlined />} disabled={!canPair} onClick={(event) => { event.stopPropagation(); void confirmDelete(row); }}>Xóa</Button>}
+          {readOnly && canPropose.length > 0 && (
+            <Button type="link" icon={<AuditOutlined />} onClick={(event) => { event.stopPropagation(); setProposal({ type: canPropose.includes('PAIR_CHANGE') ? 'PAIR_CHANGE' : 'MENTORING_DATA', sessionId: row._id }); }}>Đề xuất</Button>
+          )}
         </Space>
       )
     }
@@ -400,23 +421,31 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
           </div>
           <div className="flex min-w-0 flex-col gap-2 rounded-xl border border-white/80 bg-white/80 p-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-center">
             <div className="flex flex-wrap gap-2">
-              <Upload accept=".xlsx,.xls,.csv" showUploadList={false} disabled={importing || locked} beforeUpload={(file) => { void importPairs(file); return Upload.LIST_IGNORE; }}>
+              {!readOnly && <Upload accept=".xlsx,.xls,.csv" showUploadList={false} disabled={importing || locked} beforeUpload={(file) => { void importPairs(file); return Upload.LIST_IGNORE; }}>
                 <Button icon={<InboxOutlined />} disabled={importing || locked}>Import file</Button>
-              </Upload>
-              <Button type="primary" icon={<PlusOutlined />} disabled={!canPair} onClick={() => { setTimeout(() => createForm.setFieldsValue({ month: months[0] }), 0); setModal('create'); }}>Thêm mới</Button>
-              <Button icon={<BulbOutlined />} disabled={!canPair} onClick={() => setSuggestOpen(true)}>Gợi ý ghép cặp</Button>
-              <Button icon={<DownloadOutlined />} onClick={() => mentoringApi.exportSchedules(quarterCode).catch((error) => message.error(errorMessage(error)))}>Xuất lịch .xlsx</Button>
-              <Upload accept=".xlsx" showUploadList={false} disabled={scheduleBusy || locked} beforeUpload={(file) => { void checkScheduleFile(file); return Upload.LIST_IGNORE; }}>
+              </Upload>}
+              {!readOnly && <Button type="primary" icon={<PlusOutlined />} disabled={!canPair} onClick={() => { setTimeout(() => createForm.setFieldsValue({ month: months[0] }), 0); setModal('create'); }}>Thêm mới</Button>}
+              {!readOnly && <Button icon={<BulbOutlined />} disabled={!canPair} onClick={() => setSuggestOpen(true)}>Gợi ý ghép cặp</Button>}
+              {!readOnly && <Button icon={<DownloadOutlined />} onClick={() => mentoringApi.exportSchedules(quarterCode).catch((error) => message.error(errorMessage(error)))}>Xuất lịch .xlsx</Button>}
+              {!readOnly && <Upload accept=".xlsx" showUploadList={false} disabled={scheduleBusy || locked} beforeUpload={(file) => { void checkScheduleFile(file); return Upload.LIST_IGNORE; }}>
                 <Button icon={<UploadOutlined />} loading={scheduleBusy} disabled={locked}>Nhập lịch .xlsx</Button>
-              </Upload>
+              </Upload>}
               <Button icon={<HistoryOutlined />} onClick={() => void openLogs(`Nhật ký thay đổi lịch quý ${quarterCode}`)}>Nhật ký lịch</Button>
               <Button icon={<HistoryOutlined />} onClick={async () => { try { setPairLogs(await mentoringApi.pairLogs(quarterCode)); } catch (error) { message.error(errorMessage(error)); } }}>Nhật ký ghép / xóa cặp</Button>
-              <Button icon={locked ? <UnlockOutlined /> : <LockOutlined />} onClick={() => run(() => mentoringApi.setLock(quarterCode, !locked), locked ? 'Đã mở khóa quý' : 'Đã khóa quý', 'Không thể đổi trạng thái khóa quý')}>
+              {!readOnly && <Button icon={locked ? <UnlockOutlined /> : <LockOutlined />} onClick={() => run(() => mentoringApi.setLock(quarterCode, !locked), locked ? 'Đã mở khóa quý' : 'Đã khóa quý', 'Không thể đổi trạng thái khóa quý')}>
                 {locked ? 'Mở khóa quý' : 'Khóa quý'}
-              </Button>
+              </Button>}
             </div>
           </div>
         </div>
+        {readOnly && (
+          <Alert
+            type="info"
+            showIcon
+            title="Chế độ chỉ xem"
+            description={`Bạn xem được dữ liệu mentoring nhưng không duyệt, không sửa, không nộp hộ.${canPropose.length ? ' Cần điều chỉnh thì bấm “Đề xuất” trên từng buổi để gửi Trưởng ban Mentoring.' : ''}`}
+          />
+        )}
         {importErrors.length > 0 && (
           <Alert
             type="warning"
@@ -451,7 +480,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
         />
       </Card>
 
-      {kind === 'current' && (
+      {kind === 'current' && !readOnly && (
         <Card
           className="overflow-hidden !rounded-xl !border-slate-200"
           title={<span className="font-semibold">Duyệt & chấm recap (barem chung với màn hình Leader nhóm)</span>}
@@ -459,6 +488,15 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
           <RecapGradingPanel />
         </Card>
       )}
+      {kind === 'current' && !readOnly && (
+        <Card
+          className="overflow-hidden !rounded-xl !border-slate-200"
+          title={<span className="font-semibold">Ủy quyền duyệt hộ / nộp hộ recap MTO</span>}
+        >
+          <RecapDelegationPanel sessions={sessions} />
+        </Card>
+      )}
+      <ProposalModal open={Boolean(proposal)} allowed={canPropose} preset={proposal ?? undefined} onClose={() => setProposal(null)} onDone={() => setProposal(null)} />
 
       <PairSuggestModal
         quarterCode={quarterCode}
@@ -492,7 +530,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
                 <Typography.Title level={5} className="!mb-0">Lịch mentoring</Typography.Title>
                 <Space size="small">
                   <Button size="small" icon={<HistoryOutlined />} onClick={() => void openLogs(`Nhật ký lịch ${selected.code}`, selected._id)}>Nhật ký</Button>
-                  <Button size="small" icon={<CheckOutlined />} disabled={locked} onClick={() => openOverride(selected)}>Ghi đè lịch</Button>
+                  {!readOnly && <Button size="small" icon={<CheckOutlined />} disabled={locked} onClick={() => openOverride(selected)}>Ghi đè lịch</Button>}
                 </Space>
               </div>
               {selected.schedule ? (
@@ -516,7 +554,12 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
               {(['mentee', 'mentor'] as const).map((role) => selected.recaps[role] && (
                 <RecapCard key={role} recap={selected.recaps[role]!} />
               ))}
-              {selected.schedule && !locked && (
+              {readOnly && canPropose.length > 0 && (
+                <Space className="mt-3" wrap>
+                  <Button size="small" icon={<AuditOutlined />} onClick={() => setProposal({ type: canPropose.includes('PAIR_CHANGE') ? 'PAIR_CHANGE' : 'MENTORING_DATA', sessionId: selected._id })}>Gửi đề xuất về buổi này</Button>
+                </Space>
+              )}
+              {!readOnly && selected.schedule && !locked && (
                 <Space className="mt-3" wrap>
                   {(['mentee', 'mentor'] as const).filter((role) => !selected.recaps[role]).map((role) => (
                     <Button key={role} size="small" onClick={() => setProxyTarget({ sessionId: selected._id, code: selected.code, role: role === 'mentee' ? 'MENTEE' : 'MENTOR' })}>

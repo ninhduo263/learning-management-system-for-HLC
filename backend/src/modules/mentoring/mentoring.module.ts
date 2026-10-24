@@ -7,6 +7,8 @@ import { Module } from "@nestjs/common";
 import { MentoringAdminController } from "./flow/mentoring-admin.controller";
 import { MentoringExcelService } from "./flow/mentoring-excel.service";
 import { MentoringFlowService } from "./flow/mentoring-flow.service";
+import { RecapDelegationModel } from "./models/recap-delegation.model";
+import { RecapAccessService } from "./flow/recap-access.service";
 import { RecapScoreService } from "./flow/recap-score.service";
 import { MentoringHistoryService } from "./flow/mentoring-history.service";
 import { MentoringImportBatchModel } from "./models/mentoring-import-batch.model";
@@ -57,6 +59,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
             MentoringRecapModel,
             MentoringAwardModel,
             MentoringImportBatchModel,
+            RecapDelegationModel,
         ]),
     ],
     controllers: [
@@ -74,6 +77,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
     providers: [
         MentoringSuggestService,
         MentoringFlowService,
+        RecapAccessService,
         RecapScoreService,
         MentoringHistoryService,
         MentoringExcelService,
@@ -113,6 +117,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
     ],
     exports: [
         MentoringFlowService,
+        RecapAccessService,
         RecapScoreService,
         MentoringQuarterService,
         MentorPreferenceService,

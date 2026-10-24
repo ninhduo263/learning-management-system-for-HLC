@@ -1,3 +1,4 @@
+import { RecapAccessService } from "./recap-access.service";
 import { Configuration } from "@config/configuration";
 import { ApiError } from "@config/exception/api-error";
 import { AttachmentOwnerType } from "@module/attachment/common/constant";
@@ -194,6 +195,7 @@ export class MentoringFlowService {
         private readonly fileModel: typeof FileModel,
         @InjectModel(PointEntryModel)
         private readonly pointEntryModel: typeof PointEntryModel,
+        private readonly recapAccess: RecapAccessService,
     ) {}
 
     now() {
@@ -1706,6 +1708,11 @@ export class MentoringFlowService {
     async proxyRecap(sessionId: string, dto: ProxyRecapDto, user: User) {
         const { session, pair, quarter } =
             await this.getSessionContext(sessionId);
+        // Recap MTE: chỉ Admin toàn cục / Trưởng ban Mentoring nộp hộ. Recap MTO: thêm người được Trưởng ban Mentoring ủy quyền
+        const auth =
+            dto.role === "MENTOR"
+                ? await this.recapAccess.authorize(user, pair, "PROXY")
+                : (await this.recapAccess.requireHead(user), {});
         this.assertQuarterWritable(quarter);
         if (!session.scheduledStartAt)
             throw ApiError.Conflict("error-mentoring-recap-too-early");
@@ -1748,7 +1755,9 @@ export class MentoringFlowService {
                         new Date(session.recapDeadlineAt).getTime(),
                     proxyBy: user._id,
                     proxyAt: now,
-                    proxyReason: dto.reason.trim(),
+                    proxyReason: auth.behalf
+                        ? `[Theo ủy quyền của ${auth.behalf.name}] ${dto.reason.trim()}`
+                        : dto.reason.trim(),
                 },
                 { transaction: t },
             );
@@ -1768,6 +1777,13 @@ export class MentoringFlowService {
                 );
             }
         });
+        await this.recapAccess.log(
+            user,
+            "RECAP_PROXY",
+            `Nộp hộ recap ${role === MentoringRole.MENTOR ? "MTO" : "MTE"} buổi ${session.code}: ${dto.reason.trim()}`,
+            { id: session._id, name: session.code },
+            auth,
+        );
         const [view] = await this.buildSessionViews([session]);
         return view;
     }
@@ -1778,7 +1794,12 @@ export class MentoringFlowService {
             raw: true,
         });
         if (!recap) throw ApiError.NotFound("error-record-not-found");
-        const { quarter } = await this.getSessionContext(recap.sessionId);
+        const { quarter, pair } = await this.getSessionContext(recap.sessionId);
+        // Duyệt / không duyệt recap MTO: Admin toàn cục, Trưởng ban Mentoring hoặc người được ủy quyền
+        const auth =
+            recap.role === MentoringRole.MENTOR
+                ? await this.recapAccess.authorize(user, pair, "REVIEW")
+                : (await this.recapAccess.requireHead(user), {});
         this.assertQuarterWritable(quarter);
         if (dto.status === "REJECTED" && !dto.note?.trim()) {
             throw ApiError.BadRequest("error-mentoring-review-note-required");
@@ -1800,12 +1821,18 @@ export class MentoringFlowService {
             },
             { where: { _id: recap._id } },
         );
-        const [view] = await this.buildSessionViews([
-            await this.sessionModel.findOne({
-                where: { _id: recap.sessionId },
-                raw: true,
-            }),
-        ]);
+        const sessionRow = await this.sessionModel.findOne({
+            where: { _id: recap.sessionId },
+            raw: true,
+        });
+        await this.recapAccess.log(
+            user,
+            "RECAP_REVIEW",
+            `${dto.status === "APPROVED" ? "Duyệt" : "Không duyệt"} recap ${recap.role === MentoringRole.MENTOR ? "MTO" : "MTE"} buổi ${sessionRow.code}${dto.note?.trim() ? `: ${dto.note.trim()}` : ""}`,
+            { id: recap._id, name: sessionRow.code },
+            auth,
+        );
+        const [view] = await this.buildSessionViews([sessionRow]);
         return view;
     }
 

@@ -81,8 +81,10 @@ export class RoleService {
             activeHolderCount: Number(
                 active.find((item) => item.positionId === row._id)?.count ?? 0,
             ),
-            /** Vai trò Leader / Phó nhóm mặc định: không xóa được */
-            isSystem: systemCodes.includes(row.code),
+            /** Vai trò Leader / Phó nhóm mặc định và "Admin module ...": không xóa được */
+            isSystem: systemCodes.includes(row.code) || Boolean(row.moduleId),
+            /** Chức vụ Admin module học tập nhỏ: do màn hình Học tập quản lý */
+            isModuleAdmin: Boolean(row.moduleId),
             allowancePoints: Number(row.allowancePoints ?? 0),
             bonusPoints: Number(row.bonusPoints ?? 0),
             assignmentCount: Number(
@@ -118,6 +120,8 @@ export class RoleService {
         if (id) {
             const row = await this.positionModel.findByPk(id);
             if (!row) throw ApiError.NotFound("error-record-not-found");
+            if (row.moduleId)
+                throw ApiError.BadRequest("error-role-managed-by-module");
             // Đã có người giữ thì không đổi loại nhóm (tránh vai trò lệch loại)
             if (
                 (row.groupKind ?? null) !== values.groupKind &&
@@ -149,7 +153,7 @@ export class RoleService {
             item.leader,
             item.deputy,
         ]);
-        if (systemCodes.includes(row.code))
+        if (systemCodes.includes(row.code) || row.moduleId)
             throw ApiError.BadRequest("error-role-system", { role: row.name });
         const holders = await this.activeHolders(id);
         if (holders)

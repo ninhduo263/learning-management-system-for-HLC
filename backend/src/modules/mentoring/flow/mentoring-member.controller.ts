@@ -12,6 +12,7 @@ import { PreferenceDto } from "./dto/preference.dto";
 import { RecapDto } from "./dto/recap.dto";
 import { ScheduleDto } from "./dto/schedule.dto";
 import { MentoringFlowService } from "./mentoring-flow.service";
+import { RecapAccessService } from "./recap-access.service";
 
 /** Nghiệp vụ mentoring cho chính mentor / mentee đang đăng nhập */
 @Controller("mentoring")
@@ -19,7 +20,16 @@ import { MentoringFlowService } from "./mentoring-flow.service";
 @Authorization()
 @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
 export class MentoringMemberController {
-    constructor(private readonly flowService: MentoringFlowService) {}
+    constructor(
+        private readonly flowService: MentoringFlowService,
+        private readonly recapAccess: RecapAccessService,
+    ) {}
+
+    /** Ủy quyền duyệt hộ / nộp hộ recap MTO đang dành cho tôi */
+    @Get("me/recap-delegations")
+    myRecapDelegations(@ReqUser() user: User) {
+        return this.recapAccess.mine(user);
+    }
 
     @Get("me")
     getMine(@ReqUser() user: User) {

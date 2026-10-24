@@ -5,6 +5,7 @@ import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Spa
 import ImageUpload, { type UploadedImage } from '@/components/ImageUpload';
 import RecapCard from '@/components/RecapCard';
 import ProfileLink from '@/components/ProfileLink';
+import ProxyRecapModal from '@/components/ProxyRecapModal';
 import { errorMessage } from '@/lib/api';
 import {
   PAIR_STATUS_COLOR,
@@ -14,8 +15,11 @@ import {
   formatDateTime,
   fromDateTimeLocal,
   mentoringApi,
+  recapDelegationApi,
   toDateTimeLocal,
   type MemberView,
+  type RecapDelegationAction,
+  type RecapDelegationView,
   type MyMentoring,
   type MySessionView
 } from '@/services/mentoringApi';
@@ -41,6 +45,10 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
   const [scheduleSession, setScheduleSession] = useState<MySessionView | null>(null);
   const [recapSession, setRecapSession] = useState<MySessionView | null>(null);
   const [preferenceOpen, setPreferenceOpen] = useState(false);
+  const [delegations, setDelegations] = useState<RecapDelegationView[]>([]);
+  const [reviewing, setReviewing] = useState<{ session: MySessionView; status: 'APPROVED' | 'REJECTED' } | null>(null);
+  const [proxyTarget, setProxyTarget] = useState<{ sessionId: string; code: string; role: 'MENTOR' | 'MENTEE' } | null>(null);
+  const [reviewNote, setReviewNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [scheduleForm] = Form.useForm();
   const [recapForm] = Form.useForm<{ content: string; images: UploadedImage[] }>();
@@ -65,6 +73,8 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
       .catch((error) => { if (active) setLoadError(errorMessage(error, 'Không tải được dữ liệu mentoring')); })
       .finally(() => { if (active) setLoading(false); });
     if (role === 'MENTEE') mentoringApi.mentors().then((list) => { if (active) setMentors(list); }).catch(() => undefined);
+    // Ủy quyền duyệt hộ / nộp hộ recap MTO mà Trưởng ban Mentoring giao cho tôi (theo cặp)
+    recapDelegationApi.mine().then((list) => { if (active) setDelegations(list); }).catch(() => undefined);
     return () => { active = false; };
   }, [role]);
 
@@ -96,6 +106,29 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
   const quarterRows = pastSessions.filter((item) => item.quarterCode === selectedQuarter && (!monthFilter || item.month === monthFilter));
   const needRecap = (item: MySessionView) => item.canWriteRecap && !(item.myRole === 'MENTEE' ? item.recaps.mentee : item.recaps.mentor);
   const pendingCount = pastSessions.filter(needRecap).length;
+
+  /** Ủy quyền đang hiệu lực theo CẶP cho hành động này (ủy quyền theo nhóm dùng ở màn hình Leader) */
+  const delegated = (session: MySessionView, action: RecapDelegationAction) => delegations.find((item) =>
+    item.status === 'ACTIVE' && item.scopeType === 'PAIR' && item.scopeId === session.pair._id && item.actions.includes(action));
+
+  const reviewMentorRecap = async () => {
+    if (!reviewing) return;
+    const recap = reviewing.session.recaps.mentor;
+    if (!recap) return;
+    setSaving(true);
+    try {
+      await recapDelegationApi.review(recap._id, { status: reviewing.status, note: reviewNote.trim() || undefined });
+      message.success(reviewing.status === 'APPROVED' ? 'Đã duyệt recap MTO (làm thay theo ủy quyền)' : 'Đã không duyệt recap MTO');
+      setReviewing(null);
+      setDetail(null);
+      setReviewNote('');
+      await loadData();
+    } catch (error) {
+      message.error(errorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const counterpart = (session: MySessionView) => (session.myRole === 'MENTEE' ? session.mentor : session.mentee);
   const myStatus = (session: MySessionView) => (session.myRole === 'MENTEE' ? session.recapStatus.mentee : session.recapStatus.mentor);
@@ -234,6 +267,11 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-800">Lịch mentoring & recap</h1>
       {loadError && <Alert type="error" showIcon title="Không tải được dữ liệu mentoring" description={loadError} />}
+      {delegations.map((item) => (
+        <Alert key={item._id} type="warning" showIcon
+          title={`Trưởng ban Mentoring ${item.grantedByName} đã ủy quyền cho bạn: ${item.actions.map((action) => (action === 'REVIEW' ? 'duyệt / không duyệt' : 'nộp hộ')).join(', ')} recap MTO (${item.scope.label}), đến hết ${item.endDate.split('-').reverse().join('/')}`}
+          description={`Lý do: ${item.reason}. Thao tác làm thay được ghi nhật ký. Vào Xem chi tiết của buổi để thực hiện.`} />
+      ))}
 
       {role === 'MENTEE' && preference && (
         <Card title={`Nguyện vọng mentor cho quý ${preference.quarterCode}`}>
@@ -331,6 +369,21 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
         />
       </Card>
 
+      <Modal
+        title={reviewing ? `${reviewing.status === 'APPROVED' ? 'Duyệt' : 'Không duyệt'} recap MTO · ${reviewing.session.code}` : ''}
+        open={Boolean(reviewing)}
+        onCancel={() => setReviewing(null)}
+        onOk={reviewMentorRecap}
+        okText={reviewing?.status === 'APPROVED' ? 'Duyệt' : 'Không duyệt'}
+        okButtonProps={{ danger: reviewing?.status === 'REJECTED', disabled: reviewing?.status === 'REJECTED' && !reviewNote.trim() }}
+        confirmLoading={saving}
+        destroyOnHidden
+      >
+        <Alert className="!mb-3" type="info" showIcon title="Bạn thao tác theo ủy quyền của Trưởng ban Mentoring; hành động được ghi nhật ký là “làm thay cho”." />
+        <Input.TextArea rows={3} value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} placeholder={reviewing?.status === 'REJECTED' ? 'Lý do không duyệt (bắt buộc)' : 'Ghi chú (không bắt buộc)'} />
+      </Modal>
+      <ProxyRecapModal target={proxyTarget} onClose={() => setProxyTarget(null)} onSaved={() => { setDetail(null); void loadData(); }} />
+
       <Modal title={detail ? `Chi tiết ${detail.code} · tháng ${pad(detail.month)}/${detail.year}` : ''} open={Boolean(detail)} onCancel={() => setDetail(null)} footer={null} width={860} destroyOnHidden>
         {detail && (
           <>
@@ -344,6 +397,21 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
               <Descriptions.Item label="Trạng thái cặp"><Tag color={PAIR_STATUS_COLOR[detail.recapStatus.pair]}>{PAIR_STATUS_LABEL[detail.recapStatus.pair]}</Tag></Descriptions.Item>
             </Descriptions>
             {myRecap(detail) ? <RecapCard recap={myRecap(detail)!} /> : <Typography.Text type="secondary">Bạn chưa nộp recap cho buổi này.</Typography.Text>}
+            {detail.myRole === 'MENTEE' && (
+              <div className="mt-4">
+                <Typography.Title level={5}>Recap của mentor (chỉ xem)</Typography.Title>
+                {detail.recaps.mentor ? <RecapCard recap={detail.recaps.mentor} /> : <Typography.Text type="secondary">Mentor chưa nộp recap cho buổi này.</Typography.Text>}
+                {detail.recaps.mentor && delegated(detail, 'REVIEW') && detail.recaps.mentor.reviewStatus === 'PENDING' && (
+                  <Space className="mt-3">
+                    <Button type="primary" onClick={() => { setReviewNote(''); setReviewing({ session: detail, status: 'APPROVED' }); }}>Duyệt hộ (theo ủy quyền)</Button>
+                    <Button danger onClick={() => { setReviewNote(''); setReviewing({ session: detail, status: 'REJECTED' }); }}>Không duyệt</Button>
+                  </Space>
+                )}
+                {!detail.recaps.mentor && detail.schedule && delegated(detail, 'PROXY') && (
+                  <Button className="mt-3" onClick={() => setProxyTarget({ sessionId: detail._id, code: detail.code, role: 'MENTOR' })}>Nộp recap hộ mentor (theo ủy quyền)</Button>
+                )}
+              </div>
+            )}
           </>
         )}
       </Modal>

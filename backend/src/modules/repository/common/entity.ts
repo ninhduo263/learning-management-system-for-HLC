@@ -63,3 +63,5 @@ export const ACTIVITY_LOG = "ActivityLog";
 export const GROUP_DELEGATION = "GroupDelegation";
 export const MODULE_AUDIENCE = "ModuleAudience";
 export const PROVINCE = "Province";
+export const PROPOSAL = "Proposal";
+export const RECAP_DELEGATION = "RecapDelegation";

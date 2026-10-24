@@ -34,6 +34,7 @@ import { MentoringRecapModel } from "../models/mentoring-recap.model";
 import { MentoringSessionModel } from "../models/mentoring-session.model";
 import { MentoringQuarterModel } from "../models/mentoring-quarter.model";
 import { ScoreRecapDto } from "./dto/score-recap.dto";
+import { RecapAccessService } from "./recap-access.service";
 import { pairRecapStatus, roleRecapStatus } from "./mentoring-rules";
 
 export interface RecapReviewQuery {
@@ -57,6 +58,7 @@ export class RecapScoreService {
         private readonly periodFlow: PeriodFlowService,
         private readonly groupAccess: GroupAccessService,
         private readonly activityLog: ActivityLogService,
+        private readonly recapAccess: RecapAccessService,
         private readonly attachments: AttachmentFlowService,
         @InjectModel(LearningModuleModel)
         private readonly moduleModel: typeof LearningModuleModel,
@@ -105,24 +107,15 @@ export class RecapScoreService {
     }
 
     /**
-     * Toàn quyền: Admin toàn cục, phạm vi MENTORING (cấp trực tiếp hoặc vai trò Trưởng ban Mentoring),
-     * Trưởng ban học tập / MTE, hoặc được giao module RECAP
+     * Toàn quyền chấm: Admin toàn cục, Trưởng ban Mentoring, Trưởng ban MTE (nhóm MTE), hoặc Admin module RECAP.
+     * Trưởng ban Học tập chỉ XEM mentoring (điểm recap góp vào điểm học tập trung bình), không chấm, không duyệt.
      */
     private async isGlobalReviewer(user: User, moduleId: string) {
         if (user.systemRole === SystemRole.ADMIN) return true;
-        const { scopes } = await this.groupAccess.capabilities(user);
-        if (scopes.has(AdminScope.MENTORING) || scopes.has(AdminScope.LEARNING))
+        const { scopes, moduleIds } = await this.groupAccess.capabilities(user);
+        if (scopes.has(AdminScope.MENTORING) || scopes.has(AdminScope.MENTEE))
             return true;
-        return Boolean(
-            await this.permissionModel.findOne({
-                where: {
-                    userId: user._id,
-                    scope: AdminScope.LEARNING_MODULE,
-                    moduleId,
-                },
-                raw: true,
-            }),
-        );
+        return Boolean(moduleIds?.includes(moduleId));
     }
 
     /** Duyệt recap MTO: chỉ Admin toàn cục / Admin Mentoring */
@@ -189,7 +182,6 @@ export class RecapScoreService {
                 : []
             ).map((pair) => [pair._id, pair]),
         );
-        const canApproveMentor = await this.isMentoringAdmin(user);
         // Cặp thuộc nhóm MTE của mentee
         const inScope = sessions.filter((session) => {
             const pair = pairs.get(session.pairId);
@@ -201,10 +193,15 @@ export class RecapScoreService {
                   raw: true,
               })
             : [];
-        // Leader/Phó không xử lý recap của MTO
-        const recaps = allRecaps.filter(
-            (recap) => recap.role === MentoringRole.MENTEE || canApproveMentor,
-        );
+        // Recap MTO: MTE trong cặp và Leader nhóm XEM mặc định; duyệt / không duyệt chỉ khi là Trưởng ban Mentoring
+        // hoặc được ủy quyền (canScore bên dưới)
+        const recaps = allRecaps;
+        const canReviewPair = new Map<string, boolean>();
+        for (const pair of pairs.values())
+            canReviewPair.set(
+                pair._id,
+                await this.recapAccess.canReview(user, pair),
+            );
         const memberIds = [
             ...new Set(
                 [...pairs.values()].flatMap((pair) => [
@@ -305,9 +302,10 @@ export class RecapScoreService {
                             ? ("APPROVE" as const)
                             : ("SCORE" as const),
                     canScore:
-                        !conflict &&
-                        (recap.role === MentoringRole.MENTOR ||
-                            recap.reviewStatus !== RecapReviewStatus.REJECTED),
+                        recap.role === MentoringRole.MENTOR
+                            ? Boolean(canReviewPair.get(pair._id))
+                            : !conflict &&
+                              recap.reviewStatus !== RecapReviewStatus.REJECTED,
                     conflict,
                 };
             })
@@ -326,7 +324,42 @@ export class RecapScoreService {
                         new Date(b.session.scheduledStartAt).getTime() ||
                     a.session.code.localeCompare(b.session.code),
             );
-        return { rubric, rows };
+        // Buổi đã có lịch nhưng chưa có recap MTO mà người này được ủy quyền nộp hộ (Admin / Trưởng ban Mentoring: mọi buổi)
+        const missing: {
+            session: {
+                _id: string;
+                code: string;
+                scheduledStartAt: Date;
+                recapDeadlineAt: Date;
+            };
+            mentor: ReturnType<typeof brief>;
+            mentee: ReturnType<typeof brief>;
+            groupName: string | null;
+        }[] = [];
+        for (const session of inScope) {
+            if (
+                allRecaps.some(
+                    (item) =>
+                        item.sessionId === session._id &&
+                        item.role === MentoringRole.MENTOR,
+                )
+            )
+                continue;
+            const pair = pairs.get(session.pairId);
+            if (!(await this.recapAccess.can(user, pair, "PROXY"))) continue;
+            missing.push({
+                session: {
+                    _id: session._id,
+                    code: session.code,
+                    scheduledStartAt: session.scheduledStartAt,
+                    recapDeadlineAt: session.recapDeadlineAt,
+                },
+                mentor: brief(pair.mentorId),
+                mentee: brief(pair.menteeId),
+                groupName: groupOf(pair.menteeId),
+            });
+        }
+        return { rubric, rows, missing };
     }
 
     async score(user: User, recapId: string, dto: ScoreRecapDto) {
@@ -350,14 +383,23 @@ export class RecapScoreService {
             await this.periodFlow.getById(session.periodId),
         );
         const isMentorRecap = recap.role === MentoringRole.MENTOR;
-        if (isMentorRecap && !(await this.isMentoringAdmin(user)))
-            throw ApiError.Forbidden("error-recap-mentor-admin-only");
-        // Không chấm / duyệt recap của cặp mình tham gia (kể cả người có quyền toàn cục là thành viên)
+        // Recap MTO: Admin toàn cục, Trưởng ban Mentoring hoặc người được Trưởng ban Mentoring ủy quyền
+        const mentorAuth = isMentorRecap
+            ? await this.recapAccess.authorize(user, pair, "REVIEW")
+            : null;
+        // Không chấm / duyệt recap của cặp mình tham gia, trừ khi được ủy quyền đúng cặp đó (MTE trong cặp)
         const self = await this.groupAccess.memberOfUser(user);
-        if (self && (self._id === pair.menteeId || self._id === pair.mentorId))
+        if (
+            self &&
+            (self._id === pair.menteeId || self._id === pair.mentorId) &&
+            mentorAuth?.scopeType !== "PAIR"
+        )
             throw ApiError.Forbidden("error-recap-score-conflict");
         let behalf: { memberId: string; name: string } | null = null;
-        if (!(await this.isGlobalReviewer(user, rubric.module._id))) {
+        if (
+            !isMentorRecap &&
+            !(await this.isGlobalReviewer(user, rubric.module._id))
+        ) {
             const scope = await this.groupAccess.reviewerScope(user, {
                 permission: RolePermission.SCORE_RECAP,
                 kind: GroupKind.MENTEE,
@@ -455,6 +497,14 @@ export class RecapScoreService {
                 { where: { _id: recap._id } },
             );
         }
+        if (mentorAuth)
+            await this.recapAccess.log(
+                user,
+                "RECAP_REVIEW",
+                `${dto.status === "REJECTED" ? "Không duyệt" : "Duyệt"} recap MTO buổi ${session.code}`,
+                { id: recap._id, name: session.code },
+                mentorAuth,
+            );
         if (behalf)
             await this.activityLog.log(user, {
                 module: "MENTORING",

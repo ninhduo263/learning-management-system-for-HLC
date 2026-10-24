@@ -1,4 +1,6 @@
 import { ModuleAudienceDto } from "./dto/module-audience.dto";
+import { ModuleAdminsDto } from "./dto/module-admins.dto";
+import { ModuleAdminService } from "./module-admin.service";
 import { ModuleAudienceService } from "./module-audience.service";
 import {
     AllowAdminScope,
@@ -45,6 +47,7 @@ export class LearningFlowController {
         private readonly flowService: LearningFlowService,
         private readonly libraryExcel: LibraryExcelService,
         private readonly audience: ModuleAudienceService,
+        private readonly moduleAdmins: ModuleAdminService,
     ) {}
 
     // ---- Thành viên ----
@@ -129,6 +132,27 @@ export class LearningFlowController {
     async getAudience(@ReqUser() user: User, @Param("id") id: string) {
         await this.flowService.assertCanManage(user, id);
         return this.audience.get(id);
+    }
+
+    /** Người giữ chức vụ "Admin module <tên>" của module */
+    @Get("modules/:id/admins")
+    @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING_MODULE)
+    async getModuleAdmins(@ReqUser() user: User, @Param("id") id: string) {
+        await this.flowService.assertCanManage(user, id);
+        return this.moduleAdmins.list(id);
+    }
+
+    /** Chỉ Admin toàn cục và Trưởng ban Học tập chỉ định admin module nhỏ (admin module nhỏ không tự đổi) */
+    @Put("modules/:id/admins")
+    @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING)
+    saveModuleAdmins(
+        @ReqUser() user: User,
+        @Param("id") id: string,
+        @Body() dto: ModuleAdminsDto,
+    ) {
+        return this.moduleAdmins.save(user, id, dto.memberIds);
     }
 
     @Put("modules/:id/audience")

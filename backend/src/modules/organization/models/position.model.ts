@@ -49,6 +49,10 @@ export class PositionModel extends Model implements Position {
     @Column({ type: DataType.STRING(20), allowNull: true })
     adminScope?: string;
 
+    /** Chức vụ Admin module học tập nhỏ: module được quản lý (adminScope = LEARNING_MODULE) */
+    @Column({ type: DataType.STRING(24), allowNull: true })
+    moduleId?: string;
+
     @Column({ type: DataType.TEXT, allowNull: true })
     description?: string;
 

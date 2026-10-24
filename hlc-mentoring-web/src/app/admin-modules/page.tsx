@@ -2,17 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload
+  Alert, App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Progress, Radio, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload
 } from 'antd';
 import { DeleteOutlined, DownloadOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
 import ModuleAudienceModal from '@/components/ModuleAudienceModal';
+import ModuleAdminsModal from '@/components/ModuleAdminsModal';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import SubmissionData from '@/components/SubmissionData';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
-  CYCLE_LABEL, FIELD_TYPE_LABEL, SUBMISSION_STATUS_COLOR, SUBMISSION_STATUS_LABEL, accessApi, departmentApi, learningApi, points,
-  type Department, type LearningModule, type LibraryImportResult, type LibraryItem, type ModuleConfigInput, type ModuleProgress, type SubmissionView
+  CYCLE_LABEL, FIELD_TYPE_LABEL, GROUP_KIND_LABEL, SUBMISSION_STATUS_COLOR, SUBMISSION_STATUS_LABEL, accessApi, departmentApi, learningApi, memberDirectoryApi, points,
+  type Department, type DirectoryMember, type GroupKind, type LearningModule, type LibraryImportResult, type LibraryItem, type ModuleConfigInput, type ModuleProgress, type SubmissionView
 } from '@/services/hlcApi';
 
 const TARGET_LABEL = { MENTEE: 'Mentee', MENTOR: 'Mentor', ALL: 'Tất cả' };
@@ -23,12 +24,17 @@ export default function AdminModulesPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [canCreate, setCanCreate] = useState(false);
   const [audienceOf, setAudienceOf] = useState<LearningModule | null>(null);
+  const [adminsOf, setAdminsOf] = useState<LearningModule | null>(null);
+  const [directory, setDirectory] = useState<DirectoryMember[]>([]);
+  const [directoryGroups, setDirectoryGroups] = useState<{ _id: string; name: string; groupKind: GroupKind }[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('review');
   const [moduleId, setModuleId] = useState<string>('');
   const [editing, setEditing] = useState<LearningModule | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
+  const audienceMode = Form.useWatch('audienceMode', form) as 'ALL' | 'SELECTED' | undefined;
+  const targetType = Form.useWatch('targetMemberType', form) as string | undefined;
 
   const load = useCallback(async () => {
     try {
@@ -37,6 +43,11 @@ export default function AdminModulesPage() {
       setCanCreate(access.isSuperAdmin || access.scopes.includes('LEARNING'));
       setModuleId((current) => current || list.find((item) => item.pendingReviews)?._id || list[0]?._id || '');
       if (access.isSuperAdmin) setDepartments(await departmentApi.many());
+      if (access.isSuperAdmin || access.scopes.includes('LEARNING')) {
+        const [people, groups] = await Promise.all([memberDirectoryApi.list(), memberDirectoryApi.groups()]);
+        setDirectory(people.filter((item) => item.status === 'ACTIVE'));
+        setDirectoryGroups(groups);
+      }
     } catch (error) {
       message.error(errorMessage(error, 'Không tải được module'));
     } finally {
@@ -54,15 +65,28 @@ export default function AdminModulesPage() {
     form.resetFields();
     form.setFieldsValue(module
       ? { ...module, fields: module.fields.map((field) => ({ ...field, options: field.options ?? [] })), criteria: module.criteria }
-      : { cycleType: 'MONTHLY', targetMemberType: 'MENTEE', minSubmissionsPerCycle: 1, requireReview: true, enableScoring: true, maxScore: 100, isActive: true, fields: [{ key: 'content', label: 'Nội dung', fieldType: 'LONG_TEXT', isRequired: true }], criteria: [] });
+      : { audienceMode: 'ALL', cycleType: 'MONTHLY', targetMemberType: 'MENTEE', minSubmissionsPerCycle: 1, requireReview: true, enableScoring: true, maxScore: 100, isActive: true, fields: [{ key: 'content', label: 'Nội dung', fieldType: 'LONG_TEXT', isRequired: true }], criteria: [] });
     setEditing(module ?? 'new');
   };
 
   const saveModule = async (values: ModuleConfigInput) => {
     setSaving(true);
     try {
+      const { audienceMode, audienceGroupIds, audienceMemberIds, adminMemberIds, ...config } = values as ModuleConfigInput & {
+        audienceMode?: 'ALL' | 'SELECTED'; audienceGroupIds?: string[]; audienceMemberIds?: string[];
+      };
+      const creating = !editing || editing === 'new';
+      if (creating && audienceMode === 'SELECTED' && !audienceGroupIds?.length && !audienceMemberIds?.length) {
+        message.error('Chọn ít nhất một người hoặc một nhóm được gán, hoặc chuyển sang "Mọi thành viên đúng đối tượng"');
+        setSaving(false);
+        return;
+      }
       const body: ModuleConfigInput = {
-        ...values,
+        ...config,
+        ...(creating && {
+          audience: { mode: audienceMode ?? 'ALL', memberIds: audienceMemberIds ?? [], groupIds: audienceGroupIds ?? [] },
+          adminMemberIds: adminMemberIds ?? []
+        }),
         maxSubmissionsPerCycle: values.maxSubmissionsPerCycle || undefined,
         libraryType: values.libraryType || undefined,
         departmentId: values.departmentId || undefined,
@@ -117,6 +141,16 @@ export default function AdminModulesPage() {
           },
           { title: 'Trường', render: (_: unknown, row: LearningModule) => <div className="flex max-w-xs flex-wrap gap-1">{row.fields.map((field) => <Tag key={field._id}>{field.label}</Tag>)}</div> },
           { title: 'Chấm điểm', render: (_: unknown, row: LearningModule) => row.enableScoring ? `Thang ${row.maxScore}${row.criteria.length ? ` · ${row.criteria.length} tiêu chí` : ''}` : 'Không' },
+          {
+            title: 'Admin module', render: (_: unknown, row: LearningModule) => row.isRecapModule ? '—' : (
+              <div>
+                {(row.adminMembers ?? []).length
+                  ? <div className="flex max-w-56 flex-wrap gap-1">{(row.adminMembers ?? []).map((item) => <Tag key={item._id} color="blue" className="!m-0">{item.fullName}</Tag>)}</div>
+                  : <span className="text-gray-500">Chưa có</span>}
+                {canCreate && <Button size="small" type="link" className="!px-0" onClick={() => setAdminsOf(row)}>Chỉ định</Button>}
+              </div>
+            )
+          },
           { title: 'Chờ duyệt', dataIndex: 'pendingReviews', render: (value: number, row: LearningModule) => value ? <Button size="small" type="link" onClick={() => { setModuleId(row._id); setTab('review'); }}>{value} bài</Button> : 0 },
           { title: 'Trạng thái', dataIndex: 'isActive', render: (value: boolean) => value ? <Tag color="green">Đang mở</Tag> : <Tag>Tạm tắt</Tag> },
           { title: '', render: (_: unknown, row: LearningModule) => <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(row)}>Sửa</Button> }
@@ -153,6 +187,7 @@ export default function AdminModulesPage() {
       )}
 
       <ModuleAudienceModal module={audienceOf} onClose={() => setAudienceOf(null)} onSaved={() => void load()} />
+      <ModuleAdminsModal module={adminsOf} onClose={() => setAdminsOf(null)} onSaved={() => void load()} />
       <Modal title={editing && editing !== 'new' ? `Sửa module ${editing.code}` : 'Tạo module mới'} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => form.submit()} confirmLoading={saving} width={820} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={saveModule}>
           <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
@@ -171,6 +206,33 @@ export default function AdminModulesPage() {
             <Form.Item name="enableScoring" label="Chấm điểm" valuePropName="checked"><Switch /></Form.Item>
             <Form.Item name="isActive" label="Đang mở" valuePropName="checked"><Switch /></Form.Item>
           </Space>
+
+          {editing === 'new' && (
+            <>
+              <Divider titlePlacement="start">Đối tượng áp dụng</Divider>
+              <Form.Item name="audienceMode" label="Ai thấy và nộp module này">
+                <Radio.Group>
+                  <Radio value="ALL">Mọi thành viên đúng đối tượng</Radio>
+                  <Radio value="SELECTED">Chỉ MTE / MTO được chọn (riêng lẻ hoặc theo nhóm)</Radio>
+                </Radio.Group>
+              </Form.Item>
+              {audienceMode === 'SELECTED' && (
+                <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
+                  <Form.Item name="audienceGroupIds" label="Theo nhóm (mọi thành viên hiện tại)">
+                    <Select mode="multiple" optionFilterProp="label" options={directoryGroups.map((item) => ({ value: item._id, label: `${item.name} (${GROUP_KIND_LABEL[item.groupKind]})` }))} />
+                  </Form.Item>
+                  <Form.Item name="audienceMemberIds" label="Từng người" extra={targetType === 'ALL' ? 'Chọn được cả MTE và MTO trong cùng một module' : undefined}>
+                    <Select mode="multiple" optionFilterProp="label" options={directory.filter((item) => targetType === 'ALL' || item.memberType === targetType).map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName}` }))} />
+                  </Form.Item>
+                </div>
+              )}
+              <Typography.Text type="secondary" className="text-xs">Người không được gán hoàn toàn không thấy module và không bị tính thiếu bài. Thêm / bớt người sau khi module đã mở được; bài đã nộp giữ nguyên.</Typography.Text>
+              <Divider titlePlacement="start">Admin module (chức vụ riêng của module)</Divider>
+              <Form.Item name="adminMemberIds" label="Người giữ chức vụ Admin module" extra="Chỉ quản lý đúng module này, không thấy module khác. Chức vụ đặt tên theo module, ví dụ “Admin module Đọc sách”.">
+                <Select mode="multiple" optionFilterProp="label" options={directory.map((item) => ({ value: item._id, label: `${item.memberCode} – ${item.fullName}` }))} />
+              </Form.Item>
+            </>
+          )}
 
           <Divider titlePlacement="start">Trường trong form nộp bài</Divider>
           <Form.List name="fields">

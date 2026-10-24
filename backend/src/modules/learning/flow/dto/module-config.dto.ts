@@ -15,6 +15,7 @@ import {
 import { TargetMemberType } from "@module/member/common/constant";
 import { CycleType, LibraryType } from "../../common/constant";
 import { ModuleCriterionConfigDto } from "./module-criterion-config.dto";
+import { ModuleAudienceDto } from "./module-audience.dto";
 import { ModuleFieldConfigDto } from "./module-field-config.dto";
 
 export class ModuleConfigDto {
@@ -83,4 +84,16 @@ export class ModuleConfigDto {
     @IsArray()
     @IsOptional()
     criteria?: ModuleCriterionConfigDto[];
+
+    /** Chỉ dùng khi TẠO module: đối tượng áp dụng (MTE / MTO riêng lẻ hoặc nhóm). Sửa sau bằng PUT modules/:id/audience */
+    @ValidateNested()
+    @Type(() => ModuleAudienceDto)
+    @IsOptional()
+    audience?: ModuleAudienceDto;
+
+    /** Chỉ dùng khi TẠO module: người giữ chức vụ "Admin module <tên>". Sửa sau bằng PUT modules/:id/admins */
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    adminMemberIds?: string[];
 }

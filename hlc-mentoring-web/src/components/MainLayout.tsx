@@ -1,7 +1,7 @@
 ﻿'use client';
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { App, Layout, Menu, Button, Drawer, Grid, Modal, DatePicker, Tag } from 'antd';
+import { App, Badge, Layout, Menu, Button, Drawer, Grid, Modal, DatePicker, Tag } from 'antd';
 import {
   DashboardOutlined,
   TeamOutlined,
@@ -17,13 +17,16 @@ import {
   ApartmentOutlined,
   IdcardOutlined,
   CrownOutlined,
-  SolutionOutlined
+  SolutionOutlined,
+  BarChartOutlined,
+  AuditOutlined,
+  EyeOutlined
 } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { apiFetch, apiJson, clearSession, getSessionUser } from '@/lib/api';
 import { getCurrentTime, syncServerTime } from '@/utils/time';
-import { type AdminScope } from '@/services/hlcApi';
+import { proposalApi, type AdminScope } from '@/services/hlcApi';
 import { loadAccess } from '@/lib/useAccess';
 
 const { Header, Sider, Content } = Layout;
@@ -42,6 +45,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [scopes, setScopes] = useState<AdminScope[]>([]);
   const [isGroupLeader, setIsGroupLeader] = useState(false);
   const [actions, setActions] = useState<string[]>([]);
+  const [moduleIds, setModuleIds] = useState<string[] | null>([]);
+  const [proposalAbility, setProposalAbility] = useState({ canPropose: 0, canDecide: 0, pending: 0 });
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const { message } = App.useApp();
   const router = useRouter();
@@ -109,11 +114,26 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       setScopes(access.scopes);
       setIsGroupLeader(access.leaderGroups.length > 0);
       setActions(access.actions ?? []);
+      setModuleIds(access.moduleIds);
       setMustChangePassword(Boolean(access.mustChangePassword));
     }).catch(() => undefined);
     void refresh();
     window.addEventListener('hlc-access-change', refresh);
     return () => { active = false; window.removeEventListener('hlc-access-change', refresh); };
+  }, [user]);
+
+  // Đề xuất giữa các chức vụ: hiện menu khi được gửi / duyệt, huy hiệu = số đề xuất đang chờ tôi duyệt
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refresh = () => proposalApi.summary().then((summary) => {
+      if (active) setProposalAbility({ canPropose: summary.canPropose.length, canDecide: summary.canDecide.length, pending: summary.pendingInbox });
+    }).catch(() => undefined);
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('hlc-proposal-change', refresh);
+    window.addEventListener('hlc-access-change', refresh);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('hlc-proposal-change', refresh); window.removeEventListener('hlc-access-change', refresh); };
   }, [user]);
 
   // Công tắc "bắt buộc đổi mật khẩu lần đầu" (Admin bật khi lên production): chỉ cho ở trang hồ sơ
@@ -124,6 +144,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   if (pathname === '/login') return <>{children}</>;
   if (!user) return null;
 
+  const proposalLabel = (text: string) => (
+    <span className="flex items-center justify-between gap-2">{text}{proposalAbility.pending > 0 && <Badge count={proposalAbility.pending} size="small" />}</span>
+  );
+
   const adminMenuItems = [
     { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Dashboard tháng' },
     { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Ghép cặp mentoring' },
@@ -132,18 +156,24 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     { key: 'admin-modules', icon: <BookOutlined />, label: 'Học tập' },
     { key: 'admin-organization', icon: <ApartmentOutlined />, label: 'Tổ chức & phân quyền' },
     { key: 'leader', icon: <CrownOutlined />, label: 'Tiến độ theo nhóm' },
+    { key: 'learning-dashboard', icon: <BarChartOutlined />, label: 'Điểm học tập TB' },
+    { key: 'proposals', icon: <AuditOutlined />, label: proposalLabel('Đề xuất') },
     { key: 'admin-members', icon: <IdcardOutlined />, label: 'Thành viên & báo cáo' },
   ];
 
   // Trang quản trị mở cho mentor/mentee được giao quyền
-  const scopedMenuItems = [
+  type MenuEntry = { key: string; icon: React.JSX.Element; label: React.ReactNode };
+  const scopedMenuItems = ([
     isGroupLeader && { key: 'leader', icon: <CrownOutlined />, label: 'Nhóm của tôi' },
     scopes.includes('MENTORING') && { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý ghép cặp' },
+    !scopes.includes('MENTORING') && scopes.includes('MENTORING_VIEW') && { key: 'admin-mentoring', icon: <EyeOutlined />, label: 'Mentoring (chỉ xem)' },
     scopes.includes('POINT') && { key: 'admin-points', icon: <TrophyOutlined />, label: 'Quản lý điểm' },
     scopes.includes('FUND') && { key: 'admin-fund', icon: <WalletOutlined />, label: 'Duyệt HLC Fund' },
     scopes.includes('LEARNING_MODULE') && { key: 'admin-modules', icon: <BookOutlined />, label: 'Quản lý module' },
     (scopes.includes('MENTEE') || actions.includes('VIEW_ACTIVITY_LOG')) && { key: 'admin-organization', icon: <ApartmentOutlined />, label: scopes.includes('MENTEE') ? 'Nhóm MTE' : 'Nhật ký thao tác' },
-  ].filter((item): item is { key: string; icon: React.JSX.Element; label: string } => Boolean(item));
+    (scopes.includes('LEARNING') || Boolean(moduleIds?.length)) && { key: 'learning-dashboard', icon: <BarChartOutlined />, label: 'Điểm học tập TB' },
+    (proposalAbility.canPropose > 0 || proposalAbility.canDecide > 0) && { key: 'proposals', icon: <AuditOutlined />, label: proposalLabel('Đề xuất') },
+  ] as (MenuEntry | false)[]).filter((item): item is MenuEntry => Boolean(item));
 
   const menteeMenuItems = [
     { key: 'mentee-dashboard', icon: <DashboardOutlined />, label: 'Tổng quan' },
@@ -194,6 +224,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     'admin-points': '/admin-points',
     'admin-organization': '/admin-organization',
     'admin-members': '/admin-members',
+    'learning-dashboard': '/learning-dashboard',
+    proposals: '/proposals',
     'mentor-learning': '/mentor-learning',
     'mentor-fund': '/mentor-fund',
     leader: '/leader',

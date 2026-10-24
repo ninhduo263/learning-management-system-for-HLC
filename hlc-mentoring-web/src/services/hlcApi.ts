@@ -481,7 +481,11 @@ export interface LearningModule {
   audienceMode?: 'ALL' | 'SELECTED';
   /** Module chấm recap mentoring (bài gốc nằm ở mentoring) */
   isRecapModule?: boolean;
+  /** Người giữ chức vụ "Admin module <tên>" */
+  adminMembers?: ModuleAdminMember[];
 }
+
+export interface ModuleAdminMember { _id: string; memberCode: string; fullName: string; memberType: string; startDate: string }
 
 export interface SubmissionView {
   _id: string;
@@ -542,6 +546,10 @@ export interface ModuleConfigInput {
   isActive?: boolean;
   fields: Partial<ModuleField>[];
   criteria?: Partial<ModuleCriterion>[];
+  /** Chỉ khi TẠO module: đối tượng áp dụng (MTE / MTO riêng lẻ hoặc nhóm) */
+  audience?: { mode: 'ALL' | 'SELECTED'; memberIds?: string[]; groupIds?: string[] };
+  /** Chỉ khi TẠO module: người giữ chức vụ "Admin module <tên>" */
+  adminMemberIds?: string[];
 }
 
 export interface ModuleProgress {
@@ -581,7 +589,10 @@ export const learningApi = {
     apiJson<SubmissionView>(`/learning/submissions/${id}/review`, { method: 'PUT', json: body }),
   audience: (moduleId: string) => apiJson<ModuleAudience>(`/learning/modules/${moduleId}/audience`),
   saveAudience: (moduleId: string, body: { mode: 'ALL' | 'SELECTED'; memberIds?: string[]; groupIds?: string[] }) =>
-    apiJson<ModuleAudience>(`/learning/modules/${moduleId}/audience`, { method: 'PUT', json: body })
+    apiJson<ModuleAudience>(`/learning/modules/${moduleId}/audience`, { method: 'PUT', json: body }),
+  moduleAdmins: (moduleId: string) => apiJson<ModuleAdminMember[]>(`/learning/modules/${moduleId}/admins`),
+  saveModuleAdmins: (moduleId: string, memberIds: string[]) =>
+    apiJson<ModuleAdminMember[]>(`/learning/modules/${moduleId}/admins`, { method: 'PUT', json: { memberIds } })
 };
 
 /** Người / nhóm được gán module (mode SELECTED: chỉ những người này thấy và nộp bài) */
@@ -595,14 +606,15 @@ export interface ModuleAudience {
 
 // ---------- Quyền ----------
 
-export type AdminScope = 'FUND' | 'MENTORING' | 'POINT' | 'LEARNING_MODULE' | 'LEARNING' | 'MENTEE';
+export type AdminScope = 'FUND' | 'MENTORING' | 'POINT' | 'LEARNING_MODULE' | 'LEARNING' | 'MENTEE' | 'MENTORING_VIEW';
 export const SCOPE_LABEL: Record<AdminScope, string> = {
   FUND: 'Duyệt HLC Fund',
   MENTORING: 'Quản lý mentoring',
   POINT: 'Điểm phụ cấp',
   LEARNING_MODULE: 'Quản lý module học tập',
   LEARNING: 'Trưởng ban học tập (mọi module)',
-  MENTEE: 'Trưởng ban MTE (toàn quyền phần MTE)'
+  MENTEE: 'Trưởng ban MTE (quản lý nhóm MTE; sửa điểm, đổi cặp phải đề xuất)',
+  MENTORING_VIEW: 'Xem mentoring (không duyệt, không sửa)'
 };
 
 export interface LeaderGroupAccess {
@@ -678,7 +690,95 @@ export interface MyDashboard {
 
 export const dashboardApi = {
   admin: (code?: string) => apiJson<AdminDashboard>(`/dashboard/admin${q({ period: code })}`),
-  mine: (code?: string) => apiJson<MyDashboard>(`/dashboard/me${q({ period: code })}`)
+  mine: (code?: string) => apiJson<MyDashboard>(`/dashboard/me${q({ period: code })}`),
+  learningAverage: (params: { period?: string; quarter?: string; groupId?: string; moduleId?: string; memberType?: string }) =>
+    apiJson<LearningAverage>(`/dashboard/learning-average${q(params)}`)
+};
+
+// ---------- Dashboard điểm học tập trung bình ----------
+
+export interface AverageMemberRow {
+  member: { _id: string; memberCode: string; fullName: string; memberType: 'MENTOR' | 'MENTEE' };
+  group: { _id: string; name: string } | null;
+  average: number | null;
+  learningAverage: number | null;
+  recapAverage: number | null;
+  scoredItems: number;
+}
+export interface LearningAverage {
+  range: { label: string; mode: 'MONTH' | 'QUARTER'; code: string; months: string[] };
+  /** false = chỉ thấy module mình quản lý (Admin module nhỏ) */
+  canViewAll: boolean;
+  overall: { average: number | null; learningAverage: number | null; recapAverage: number | null; members: number; scoredItems: number };
+  byMember: AverageMemberRow[];
+  byGroup: { group: { _id: string | null; name: string }; average: number | null; members: number; scoredItems: number }[];
+  byModule: { module: { _id: string; code: string; name: string; isRecap: boolean }; average: number | null; members: number; scoredItems: number }[];
+  byMonth: { period: string; average: number | null; learningAverage: number | null; recapAverage: number | null; scoredItems: number }[];
+  top: AverageMemberRow[];
+  needImprovement: AverageMemberRow[];
+  filters: { groups: { _id: string; name: string }[]; modules: { _id: string; name: string; isRecap: boolean }[] };
+}
+
+// ---------- Đề xuất giữa các chức vụ ----------
+
+export type ProposalType = 'PAIR_CHANGE' | 'POINT_ADJUST' | 'MENTORING_POINT' | 'MENTORING_DATA';
+export type ProposalStatus = 'PENDING' | 'PROCESSING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+export const PROPOSAL_TYPE_LABEL: Record<ProposalType, string> = {
+  PAIR_CHANGE: 'Đổi cặp mentoring',
+  POINT_ADJUST: 'Sửa điểm phụ cấp',
+  MENTORING_POINT: 'Điểm phụ cấp / thưởng từ mentoring',
+  MENTORING_DATA: 'Điều chỉnh dữ liệu mentoring'
+};
+/** Chức vụ nắm quyền quyết định từng loại đề xuất */
+export const PROPOSAL_DECIDER_LABEL: Record<ProposalType, string> = {
+  PAIR_CHANGE: 'Trưởng ban Mentoring',
+  POINT_ADJUST: 'Trưởng ban HLC Fund',
+  MENTORING_POINT: 'Trưởng ban HLC Fund',
+  MENTORING_DATA: 'Trưởng ban Mentoring'
+};
+export const PROPOSAL_STATUS_LABEL: Record<ProposalStatus, string> = {
+  PENDING: 'Chờ duyệt', PROCESSING: 'Đang xử lý', APPROVED: 'Đã duyệt', REJECTED: 'Từ chối', CANCELLED: 'Đã rút'
+};
+export const PROPOSAL_STATUS_COLOR: Record<ProposalStatus, string> = {
+  PENDING: 'gold', PROCESSING: 'processing', APPROVED: 'green', REJECTED: 'red', CANCELLED: 'default'
+};
+export interface ProposalView {
+  _id: string;
+  type: ProposalType;
+  typeLabel: string;
+  status: ProposalStatus;
+  decider: 'MENTORING' | 'FUND';
+  deciderLabel: string;
+  title: string;
+  reason: string;
+  targetType: string | null;
+  targetId: string | null;
+  payload: Record<string, unknown>;
+  proposerName: string;
+  proposerRole: string;
+  deciderName: string | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  resultRef: string | null;
+  createdAt: string;
+  canDecide: boolean;
+  canCancel: boolean;
+}
+export interface ProposalSummary { canPropose: ProposalType[]; canDecide: ProposalType[]; pendingInbox: number }
+export interface ProposalInput {
+  type: ProposalType;
+  reason: string;
+  targetId: string;
+  targetType?: string;
+  payload?: Record<string, unknown>;
+}
+export const proposalApi = {
+  summary: () => apiJson<ProposalSummary>('/proposals/summary'),
+  list: (params: { box?: 'mine' | 'inbox' | 'all'; status?: string; type?: string }) => apiJson<ProposalView[]>(`/proposals${q(params)}`),
+  create: (body: ProposalInput) => apiJson<ProposalView>('/proposals', { method: 'POST', json: body }),
+  decide: (id: string, body: { status: 'APPROVED' | 'REJECTED'; note?: string }) =>
+    apiJson<ProposalView>(`/proposals/${id}/decide`, { method: 'PUT', json: body }),
+  cancel: (id: string) => apiJson<ProposalView>(`/proposals/${id}/cancel`, { method: 'PUT' })
 };
 
 // ---------- Nhóm & Leader ----------
@@ -725,11 +825,12 @@ export const GROUP_PERMISSIONS = ['VIEW_PROGRESS', 'SCORE_RECAP', 'REVIEW_FUND',
 export const GLOBAL_PERMISSIONS = ['LOCK_PERIOD', 'CONFIRM_PAYOUT', 'EDIT_POINTS', 'VIEW_PAYOUT', 'EXPORT_PERSONAL', 'VIEW_ACTIVITY_LOG'];
 export const ROLE_APPLIES_LABEL: Record<RoleAppliesTo, string> = { MENTEE: 'Nhóm MTE', FUND: 'Nhóm HLC Fund (MTO & thầy cô)', BAN: 'Chức vụ ban (không gắn nhóm)' };
 export const ADMIN_SCOPE_LABEL: Record<string, string> = {
-  FUND: 'Toàn quyền HLC Fund (MTO và MTE)',
-  MENTORING: 'Toàn quyền dịch vụ mentoring',
-  POINT: 'Toàn quyền điểm phụ cấp',
-  LEARNING: 'Toàn quyền học tập (module, thư viện, bài nộp)',
-  MENTEE: 'Toàn quyền phần MTE (Trưởng ban MTE)'
+  FUND: 'Trưởng ban HLC Fund: toàn quyền thu chi (duyệt quỹ, sửa đơn giá, chốt kỳ, xác nhận đã chi)',
+  MENTORING: 'Trưởng ban Mentoring: toàn quyền mentoring (ghép cặp, lịch, recap, ủy quyền recap)',
+  POINT: 'Admin điểm phụ cấp (cấp riêng, cũ)',
+  LEARNING: 'Trưởng ban Học tập: toàn bộ module học tập; chỉ xem mentoring',
+  MENTEE: 'Trưởng ban MTE: quản lý nhóm MTE; sửa điểm, đổi cặp phải đề xuất',
+  LEARNING_MODULE: 'Admin module học tập nhỏ (chỉ một module)'
 };
 export interface RoleView {
   _id: string;
@@ -748,6 +849,9 @@ export interface RoleView {
   scopeKinds: GroupKind[];
   activeHolderCount: number;
   isSystem: boolean;
+  /** Chức vụ "Admin module <tên>": do màn hình Học tập quản lý */
+  isModuleAdmin?: boolean;
+  moduleId?: string | null;
 }
 export const roleApi = {
   list: () => apiJson<RoleView[]>('/roles'),
@@ -818,7 +922,7 @@ export interface ActivityLogView {
 }
 export const ACTIVITY_MODULE_LABEL: Record<string, string> = {
   ORGANIZATION: 'Tổ chức', ROLE: 'Vai trò, chức vụ', MEMBER: 'Thành viên', POINT: 'Điểm phụ cấp', FUND: 'HLC Fund',
-  MENTORING: 'Mentoring', LEARNING: 'Học tập', DELEGATION: 'Ủy quyền', SYSTEM: 'Cấu hình hệ thống'
+  MENTORING: 'Mentoring', LEARNING: 'Học tập', DELEGATION: 'Ủy quyền', SYSTEM: 'Cấu hình hệ thống', PROPOSAL: 'Đề xuất'
 };
 export const activityApi = {
   list: (params: { module?: string; action?: string; from?: string; to?: string; keyword?: string; limit?: number }) =>
@@ -878,6 +982,13 @@ export interface RecapRubric {
   module: { _id: string; code: string; name: string; maxScore: number };
   criteria: { _id: string; name: string; description: string | null; maxScore: number }[];
 }
+/** Buổi đã có lịch nhưng chưa có recap MTO, mà tôi được phép nộp hộ (Trưởng ban Mentoring hoặc được ủy quyền) */
+export interface MissingMentorRecap {
+  session: { _id: string; code: string; scheduledStartAt: string; recapDeadlineAt: string | null };
+  mentor: MemberBrief | null;
+  mentee: MemberBrief | null;
+  groupName: string | null;
+}
 export interface RecapToScore {
   _id: string;
   role: 'MENTOR' | 'MENTEE';
@@ -925,7 +1036,7 @@ export interface LeaderOverview {
 
 export const leaderApi = {
   overview: (code?: string) => apiJson<LeaderOverview>(`/leader/overview${q({ period: code })}`),
-  recaps: (params: { period?: string; groupId?: string; filter?: string }) => apiJson<{ rubric: RecapRubric; rows: RecapToScore[] }>(`/leader/recaps${q(params)}`),
+  recaps: (params: { period?: string; groupId?: string; filter?: string }) => apiJson<{ rubric: RecapRubric; rows: RecapToScore[]; missing: MissingMentorRecap[] }>(`/leader/recaps${q(params)}`),
   score: (id: string, body: { status: 'APPROVED' | 'REJECTED'; scores?: { criterionId: string; score: number }[]; feedback?: string }) =>
     apiJson(`/leader/recaps/${id}/score`, { method: 'PUT', json: body })
 };

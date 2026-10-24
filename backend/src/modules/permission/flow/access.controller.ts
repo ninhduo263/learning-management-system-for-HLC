@@ -40,12 +40,6 @@ export class AccessController {
     @Get("me")
     async getMine(@ReqUser() user: User) {
         const isSuperAdmin = user.systemRole === SystemRole.ADMIN;
-        const rows = isSuperAdmin
-            ? []
-            : await this.permissionModel.findAll({
-                  where: { userId: user._id },
-                  raw: true,
-              });
         const capabilities = await this.groupAccess.capabilities(user);
         const config = await this.securityConfig.get();
         return {
@@ -54,12 +48,8 @@ export class AccessController {
             scopes: [...capabilities.scopes],
             /** Hành động cấp hệ thống: chốt kỳ, sửa điểm, xem bảng chi trả, xuất dữ liệu cá nhân, xem nhật ký */
             actions: [...capabilities.actions],
-            /** null = mọi module (Admin tổng, Trưởng ban học tập / MTE) */
-            moduleIds: capabilities.scopes.has(AdminScope.LEARNING)
-                ? null
-                : rows
-                      .filter((row) => row.scope === AdminScope.LEARNING_MODULE)
-                      .map((row) => row.moduleId),
+            /** null = mọi module (Admin tổng, Trưởng ban học tập / MTE); Admin module nhỏ: các module được giao */
+            moduleIds: isSuperAdmin ? null : capabilities.moduleIds,
             /** Nhóm có quyền (vai trò trong nhóm, vai trò cấp ban, ủy quyền): menu "Nhóm của tôi" */
             leaderGroups: await this.leaderGroupsOf(user),
             /** Công tắc "bắt buộc đổi mật khẩu lần đầu" đang bật và tài khoản chưa tự đổi lần nào */

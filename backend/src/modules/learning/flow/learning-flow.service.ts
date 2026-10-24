@@ -1,4 +1,5 @@
 import { ModuleAudienceService } from "./module-audience.service";
+import { ModuleAdminService } from "./module-admin.service";
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import {
     vnDateKey,
@@ -17,7 +18,6 @@ import {
 import { Member } from "@module/member/entities/member.entity";
 import { MemberModel } from "@module/member/models/member.model";
 import { PeriodFlowService } from "@module/period/flow/period-flow.service";
-import { AdminScope } from "@module/permission/common/constant";
 import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
 import { TimeService } from "@module/time/time.service";
 import { SystemRole } from "@module/user/common/constant";
@@ -106,6 +106,7 @@ export class LearningFlowService {
         private readonly permissionModel: typeof AdminPermissionModel,
         private readonly groupAccess: GroupAccessService,
         private readonly audience: ModuleAudienceService,
+        private readonly moduleAdmins: ModuleAdminService,
     ) {}
 
     // ------------------------------------------------------------------
@@ -115,18 +116,8 @@ export class LearningFlowService {
     /** null = quản lý mọi module (Admin tổng) */
     async manageableModuleIds(user: User): Promise<string[] | null> {
         if (user.systemRole === SystemRole.ADMIN) return null;
-        // Trưởng ban học tập / Trưởng ban MTE: mọi module
-        if (
-            (await this.groupAccess.capabilities(user)).scopes.has(
-                AdminScope.LEARNING,
-            )
-        )
-            return null;
-        const rows = await this.permissionModel.findAll({
-            where: { userId: user._id, scope: AdminScope.LEARNING_MODULE },
-            raw: true,
-        });
-        return rows.map((row) => row.moduleId).filter(Boolean);
+        // Trưởng ban học tập / Trưởng ban MTE: mọi module; Admin module nhỏ: module được giao theo chức vụ
+        return (await this.groupAccess.capabilities(user)).moduleIds;
     }
 
     async assertCanManage(user: User, moduleId: string) {
@@ -178,9 +169,12 @@ export class LearningFlowService {
                   raw: true,
               })
             : [];
+        const admins = await this.moduleAdmins.holdersByModule(ids);
         return modules.map((module) => ({
             ...module,
             maxScore: Number(module.maxScore ?? 100),
+            /** Người giữ chức vụ "Admin module <tên>" */
+            adminMembers: admins.get(module._id) ?? [],
             fields: fields.filter((field) => field.moduleId === module._id),
             criteria: criteria
                 .filter((item) => item.moduleId === module._id)
@@ -392,6 +386,10 @@ export class LearningFlowService {
             await this.saveConfig(module._id, dto, t);
             return module._id;
         });
+        // Đối tượng áp dụng và người giữ chức vụ Admin module chọn ngay khi tạo (ghi nhật ký)
+        if (dto.audience) await this.audience.save(user, id, dto.audience);
+        if (dto.adminMemberIds?.length)
+            await this.moduleAdmins.save(user, id, dto.adminMemberIds);
         return this.getModuleDetail(user, id);
     }
 
@@ -406,6 +404,7 @@ export class LearningFlowService {
             });
             await this.saveConfig(id, dto, t);
         });
+        await this.moduleAdmins.syncName(await this.getModule(id));
         return this.getModuleDetail(user, id);
     }
 

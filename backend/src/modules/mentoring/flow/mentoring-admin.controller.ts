@@ -30,18 +30,22 @@ import { EnsureQuarterDto } from "./dto/ensure-quarter.dto";
 import { MemberListQueryDto } from "./dto/member-list-query.dto";
 import { QuarterLockDto } from "./dto/quarter-lock.dto";
 import { ReviewRecapDto } from "./dto/review-recap.dto";
+import { RecapDelegationDto } from "./dto/recap-delegation.dto";
+import { RecapAccessService } from "./recap-access.service";
 import { OverrideScheduleDto } from "./dto/override-schedule.dto";
 import { ProxyRecapDto } from "./dto/proxy-recap.dto";
 import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
 import { MentoringExcelService } from "./mentoring-excel.service";
 import { MentoringFlowService } from "./mentoring-flow.service";
 import { MentoringHistoryService } from "./mentoring-history.service";
-import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import { GroupFlowService } from "@module/organization/flow/group-flow.service";
 import { GroupKind } from "@module/organization/common/constant";
 import { MentoringSuggestService } from "./mentoring-suggest.service";
 
-/** Nghiệp vụ mentoring cho Admin tổng hoặc người có quyền MENTORING */
+/**
+ * Nghiệp vụ mentoring cho Admin tổng hoặc người có quyền MENTORING (Trưởng ban Mentoring).
+ * Các API chỉ ĐỌC mở thêm cho phạm vi MENTORING_VIEW (Trưởng ban Học tập, Trưởng ban MTE): xem, không sửa.
+ */
 @Controller("mentoring")
 @ApiTags("mentoring (admin)")
 @Authorization()
@@ -52,12 +56,13 @@ export class MentoringAdminController {
         private readonly flowService: MentoringFlowService,
         private readonly excelService: MentoringExcelService,
         private readonly historyService: MentoringHistoryService,
-        private readonly groupAccess: GroupAccessService,
         private readonly groupFlow: GroupFlowService,
         private readonly suggestService: MentoringSuggestService,
+        private readonly recapAccess: RecapAccessService,
     ) {}
 
     @Get("quarters")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     listQuarters() {
         return this.flowService.listQuarters();
     }
@@ -68,6 +73,7 @@ export class MentoringAdminController {
     }
 
     @Get("quarters/:code/board")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     getBoard(@Param("code") code: string) {
         return this.flowService.getQuarterBoard(code);
     }
@@ -179,7 +185,9 @@ export class MentoringAdminController {
         return this.flowService.overrideSchedule(id, dto, user);
     }
 
+    /** Admin toàn cục, Trưởng ban Mentoring hoặc người được ủy quyền (service kiểm tra) */
     @Put("recaps/:id/review")
+    @AllowSystemRoles(SystemRole.ADMIN, SystemRole.MENTOR, SystemRole.MENTEE)
     reviewRecap(
         @ReqUser() user: User,
         @Param("id") id: string,
@@ -189,11 +197,13 @@ export class MentoringAdminController {
     }
 
     @Get("reports/quarters")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     getReports() {
         return this.flowService.getQuarterReports();
     }
 
     @Get("reports/quarters/:code/export.xlsx")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     async exportReport(@Param("code") code: string, @Res() res: Response) {
         const { fileName, buffer } =
             await this.excelService.exportQuarterReport(code);
@@ -216,6 +226,7 @@ export class MentoringAdminController {
 
     /** Nhật ký ghép / xóa cặp: ?quarter=2026Q4 */
     @Get("pair-logs")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     pairLogs(@Query("quarter") quarter: string) {
         return this.flowService.listPairLogs(quarter);
     }
@@ -261,8 +272,7 @@ export class MentoringAdminController {
         @UploadedFile() file: Express.Multer.File,
         @Body("reason") reason?: string,
     ) {
-        // Nhập dữ liệu quý cũ: chỉ Admin toàn cục
-        this.groupAccess.assertSuperAdmin(user);
+        // Nhập dữ liệu quý cũ: Admin toàn cục và Trưởng ban Mentoring (quyền lớp controller: phạm vi MENTORING)
         if (!file?.buffer?.length)
             throw ApiError.BadRequest("error-import-file-invalid");
         return this.historyService.importQuarter(
@@ -282,12 +292,12 @@ export class MentoringAdminController {
     /** Hoàn tác cả lô nhập */
     @Post("history/batches/:id/revert")
     revertHistoryBatch(@ReqUser() user: User, @Param("id") id: string) {
-        this.groupAccess.assertSuperAdmin(user);
         return this.historyService.revertBatch(id, user);
     }
 
     /** Nhập recap hộ cho MTE / MTO (ghi người nhập, thời điểm, lý do) */
     @Post("sessions/:id/recap/proxy")
+    @AllowSystemRoles(SystemRole.ADMIN, SystemRole.MENTOR, SystemRole.MENTEE)
     proxyRecap(
         @ReqUser() user: User,
         @Param("id") id: string,
@@ -342,6 +352,7 @@ export class MentoringAdminController {
 
     /** Nhật ký thay đổi / ghi đè lịch: ?quarter=2026Q4&sessionId=&onlyOverride=true */
     @Get("schedule-logs")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     listScheduleLogs(
         @Query("quarter") quarter?: string,
         @Query("sessionId") sessionId?: string,
@@ -354,7 +365,37 @@ export class MentoringAdminController {
         });
     }
 
+    // ---- Ủy quyền duyệt hộ / nộp hộ recap MTO (Trưởng ban Mentoring cấp) ----
+
+    @Get("recap-delegations")
+    listRecapDelegations() {
+        return this.recapAccess.list();
+    }
+
+    /** Người đủ điều kiện nhận ủy quyền theo phạm vi: ?scopeType=PAIR|GROUP&scopeId= */
+    @Get("recap-delegations/eligible")
+    eligibleRecapDelegates(
+        @Query("scopeType") scopeType: string,
+        @Query("scopeId") scopeId: string,
+    ) {
+        return this.recapAccess.eligible(scopeType, scopeId);
+    }
+
+    @Post("recap-delegations")
+    createRecapDelegation(
+        @ReqUser() user: User,
+        @Body() dto: RecapDelegationDto,
+    ) {
+        return this.recapAccess.create(user, dto);
+    }
+
+    @Put("recap-delegations/:id/revoke")
+    revokeRecapDelegation(@ReqUser() user: User, @Param("id") id: string) {
+        return this.recapAccess.revoke(user, id);
+    }
+
     @Get("members")
+    @AllowAdminScope(AdminScope.MENTORING_VIEW)
     listMembers(@Query() query: MemberListQueryDto) {
         return this.flowService.listMembers({
             type: query.type as MemberType,

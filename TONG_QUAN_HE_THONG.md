@@ -1,7 +1,7 @@
 # HLC Mentoring & LMS: Tổng quan tính năng và luồng hoạt động
 
 > Tài liệu này mô tả hệ thống **cần làm gì** (theo yêu cầu nghiệp vụ đã chốt) và **code hiện tại đã làm tới đâu**.
-> Cập nhật theo mã nguồn ngày 16/10/2026.
+> Cập nhật theo mã nguồn ngày 16/10/2026; mục 2.1 cập nhật theo yêu cầu vòng 6 (24/10/2026).
 
 ---
 
@@ -28,6 +28,25 @@ HLC có khoảng **100 mentee** và **120 mentor**; số người thực sự ho
 | *(dự kiến)* Ban học tập, Ban HLC Fund | Duyệt bài của ban mình. **Code hiện chỉ có 3 role:** `ADMIN`, `MENTOR`, `MENTEE` |
 
 Mã thành viên: mentee là `HLC-MTE-xxxxx`, mentor là `HLC-MTO-xxxxx`. Mã ghép cặp dùng **5 chữ số cuối**.
+
+### 2.1 Quản trị theo tên chức vụ (vòng 6)
+
+Không còn chức năng "quyền module" riêng. Mỗi chức vụ có sẵn bộ quyền; gán chức vụ cho ai thì người đó có quyền tương ứng (Tổ chức & phân quyền → Vai trò & điểm / Chức vụ ban).
+
+| Chức vụ | Quyền chính | Giới hạn |
+|---|---|---|
+| **Admin toàn cục** | Toàn bộ hệ thống | — |
+| **Trưởng ban Mentoring** | Toàn bộ mentoring: ghép / đổi cặp, lịch, duyệt và nộp hộ recap, **ủy quyền recap MTO**, duyệt đề xuất đổi cặp và điều chỉnh dữ liệu mentoring | Không có quyền điểm, quỹ. Điểm phụ cấp từ mentoring chỉ **đề xuất** |
+| **Trưởng ban HLC Fund** | Toàn quyền thu chi: duyệt quỹ, sửa đơn giá, điều chỉnh bù, **chốt kỳ**, **xác nhận đã chi**, dashboard thu chi, **duyệt đề xuất điểm** | Không tự có quyền mentoring / học tập |
+| **Trưởng ban Học tập** | Toàn bộ module học tập, tạo module, chỉ định Admin module, **dashboard điểm học tập trung bình** | Mentoring **chỉ xem**; muốn điều chỉnh thì đề xuất cho Trưởng ban Mentoring |
+| **Admin module nhỏ** ("Admin module Đọc sách"...) | Quản lý riêng một module, xem dashboard điểm của module đó | Không thấy module khác |
+| **Trưởng ban MTE** | Quản lý mọi nhóm MTE, duyệt / nộp hộ trong phạm vi MTE, xem điểm phụ cấp và mentoring | Sửa điểm → đề xuất Trưởng ban HLC Fund; đổi cặp → đề xuất Trưởng ban Mentoring |
+| **Leader / Phó nhóm MTE** | Xem tiến độ, duyệt, chấm bài của nhóm mình | Recap MTO chỉ xem; duyệt hộ khi được ủy quyền |
+| **Leader / Phó nhóm HLC Fund** | Duyệt, nộp hộ, xem tiến độ minh chứng của thầy cô và MTO trong nhóm | Không phải thành viên nhóm |
+
+**Đề xuất giữa các chức vụ** (menu *Đề xuất*): chức vụ không có quyền sửa gửi đề xuất kèm lý do; người nắm quyền duyệt hoặc từ chối; duyệt thì hệ thống áp dụng ngay; mọi đề xuất lưu lịch sử và ghi nhật ký.
+
+**Recap MTO:** MTE trong cặp và Leader nhóm **xem** mặc định. Duyệt / nộp hộ chỉ Admin toàn cục, Trưởng ban Mentoring, hoặc người được Trưởng ban Mentoring ủy quyền (theo cặp hoặc nhóm, có thời hạn và lý do). Nộp hộ recap MTE chỉ Admin toàn cục và Trưởng ban Mentoring. Chi tiết API ở `backend/docs/API_GUIDE.md`, mục 11.17.
 
 ---
 
