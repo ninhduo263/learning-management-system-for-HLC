@@ -63,14 +63,22 @@ export default function AdminOrganizationPage() {
   }, [load]);
 
   if (!access) return null;
-  // Trưởng ban MTE: chỉ quản lý các nhóm MTE (không xóa nhóm, không phân quyền)
-  if (!access.isSuperAdmin)
+  // Không phải Admin tổng: Trưởng ban MTE quản lý nhóm MTE (không xóa nhóm, không phân quyền);
+  // người được giao quyền xem nhật ký (VIEW_ACTIVITY_LOG) xem được tab Nhật ký
+  if (!access.isSuperAdmin) {
+    const canGroups = access.scopes.includes('MENTEE');
+    const canLogs = access.actions.includes('VIEW_ACTIVITY_LOG');
+    const limitedTabs = [
+      canGroups && { key: 'mte', label: 'Nhóm MTE', children: <GroupManager kind="MENTEE" canDelete={false} /> },
+      canLogs && { key: 'logs', label: 'Nhật ký', children: <ActivityLogPanel /> }
+    ].filter((item): item is { key: string; label: string; children: React.JSX.Element } => Boolean(item));
     return (
       <div className="space-y-4">
-        <Typography.Title level={3} className="!mb-0">Nhóm MTE</Typography.Title>
-        <Card><GroupManager kind="MENTEE" canDelete={false} /></Card>
+        <Typography.Title level={3} className="!mb-0">{canGroups && canLogs ? 'Nhóm MTE & nhật ký' : canLogs ? 'Nhật ký thao tác' : 'Nhóm MTE'}</Typography.Title>
+        <Card>{limitedTabs.length ? <Tabs items={limitedTabs} /> : <Alert type="warning" showIcon title="Bạn chưa được giao quyền ở trang này" />}</Card>
       </div>
     );
+  }
 
   return (
     <div className="space-y-4">
@@ -265,6 +273,7 @@ function CatalogPanel({ departments, onChanged }: { departments: Department[]; o
           { title: 'Mã', dataIndex: 'code' },
           { title: 'Tên', dataIndex: 'name' },
           { title: 'Loại', dataIndex: 'type', render: (value: string) => DEPARTMENT_TYPE[value] ?? value },
+          { title: 'Ban cha', dataIndex: 'parentId', render: (value: string | null) => departments.find((item) => item._id === value)?.name ?? '—' },
           { title: '', dataIndex: 'isActive', render: (value: boolean) => value ? <Tag color="green">Hoạt động</Tag> : <Tag>Ngừng</Tag> },
           { title: '', render: (_: unknown, row: Department) => <Button size="small" onClick={() => { departmentForm.setFieldsValue(row); setEditingDepartment(row); }}>Sửa</Button> }
         ]} />
@@ -274,6 +283,7 @@ function CatalogPanel({ departments, onChanged }: { departments: Department[]; o
           <Form.Item name="code" label="Mã (VD: BAN_TRUYEN_THONG)" rules={[{ required: true, pattern: /^[A-Z0-9_]+$/, message: 'Chữ in hoa, số, _' }]}><Input disabled={Boolean(editingDepartment && editingDepartment !== 'new')} /></Form.Item>
           <Form.Item name="name" label="Tên" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="type" label="Loại"><Select options={Object.entries(DEPARTMENT_TYPE).map(([value, label]) => ({ value, label }))} /></Form.Item>
+          <Form.Item name="parentId" label="Ban cha (tùy chọn)"><Select allowClear placeholder="Không có (ban cấp cao nhất)" options={departments.filter((item) => item.isActive && (editingDepartment === 'new' || item._id !== editingDepartment?._id)).map((item) => ({ value: item._id, label: item.name }))} /></Form.Item>
           <Form.Item name="isActive" label="Hoạt động" valuePropName="checked"><Switch /></Form.Item>
         </Form>
       </Modal>

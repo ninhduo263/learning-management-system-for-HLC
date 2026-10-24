@@ -41,6 +41,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [user, setUser] = useState<{ userId: string; fullName: string; role: 'ADMIN' | 'MENTOR' | 'MENTEE' } | null>(null);
   const [scopes, setScopes] = useState<AdminScope[]>([]);
   const [isGroupLeader, setIsGroupLeader] = useState(false);
+  const [actions, setActions] = useState<string[]>([]);
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const { message } = App.useApp();
   const router = useRouter();
@@ -107,6 +108,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       if (!active) return;
       setScopes(access.scopes);
       setIsGroupLeader(access.leaderGroups.length > 0);
+      setActions(access.actions ?? []);
       setMustChangePassword(Boolean(access.mustChangePassword));
     }).catch(() => undefined);
     void refresh();
@@ -140,7 +142,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     scopes.includes('POINT') && { key: 'admin-points', icon: <TrophyOutlined />, label: 'Quản lý điểm' },
     scopes.includes('FUND') && { key: 'admin-fund', icon: <WalletOutlined />, label: 'Duyệt HLC Fund' },
     scopes.includes('LEARNING_MODULE') && { key: 'admin-modules', icon: <BookOutlined />, label: 'Quản lý module' },
-    scopes.includes('MENTEE') && { key: 'admin-organization', icon: <ApartmentOutlined />, label: 'Nhóm MTE' },
+    (scopes.includes('MENTEE') || actions.includes('VIEW_ACTIVITY_LOG')) && { key: 'admin-organization', icon: <ApartmentOutlined />, label: scopes.includes('MENTEE') ? 'Nhóm MTE' : 'Nhật ký thao tác' },
   ].filter((item): item is { key: string; icon: React.JSX.Element; label: string } => Boolean(item));
 
   const menteeMenuItems = [

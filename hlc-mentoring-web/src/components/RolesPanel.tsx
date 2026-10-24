@@ -171,6 +171,7 @@ export default function RolesPanel() {
             </Form.Item>
           )}
           <Form.Item name="description" label="Mô tả"><Input.TextArea rows={2} /></Form.Item>
+          <Form.Item name="sortOrder" label="Thứ tự hiển thị" extra="Số nhỏ hiện trước trong danh sách vai trò."><InputNumber<number> className="w-full" min={0} /></Form.Item>
           <Form.Item name="isActive" label="Đang dùng" valuePropName="checked"><Switch /></Form.Item>
           <Typography.Text type="secondary" className="text-xs">Thay đổi điểm có hiệu lực ở lần “Tính lại” tiếp theo của các kỳ chưa chốt.</Typography.Text>
         </Form>

@@ -129,7 +129,7 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
               extra={(
                 <Space size="small">
                   <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
-                  <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, isActive: group.isActive }); setEditing(group); }}>Sửa</Button>
+                  <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, isActive: group.isActive, deputyCanReview: group.deputyCanReview }); setEditing(group); }}>Sửa</Button>
                   {canDelete && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setDeleting(group)}>Xóa</Button>}
                 </Space>
               )}
@@ -181,6 +181,7 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
           if (ok) setEditing(null);
         }}>
           <Form.Item name="name" label="Tên nhóm" rules={[{ required: true, message: 'Nhập tên nhóm' }]}><Input placeholder={isFund ? 'VD: Quỹ MTO nhóm 1' : 'VD: Nhóm MTE 1'} /></Form.Item>
+          <Form.Item name="deputyCanReview" label="Phó nhóm được chấm / duyệt thay Leader" valuePropName="checked" extra="Tắt thì chỉ Leader của nhóm có quyền chấm recap và duyệt minh chứng."><Switch /></Form.Item>
           {editing && editing !== 'new' && <Form.Item name="isActive" label="Đang hoạt động" valuePropName="checked"><Switch /></Form.Item>}
         </Form>
       </Modal>
