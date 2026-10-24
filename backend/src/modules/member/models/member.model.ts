@@ -69,6 +69,10 @@ export class MemberModel extends Model implements Member {
     @Column({ type: DataType.STRING(50), allowNull: true })
     bankAccount?: string;
 
+    /** Số CCCD (dữ liệu nhạy cảm: chỉ Admin toàn cục và chính chủ xem; xem / sửa / xuất đều ghi nhật ký) */
+    @Column({ type: DataType.STRING(20), allowNull: true, unique: true })
+    nationalId?: string;
+
     @Column({ type: DataType.STRING(255), allowNull: true })
     bankName?: string;
 

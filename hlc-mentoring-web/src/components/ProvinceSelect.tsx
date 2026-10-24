@@ -21,10 +21,11 @@ export function useProvinces() {
 }
 
 /** Ô chọn 1 tỉnh, thành phố trong danh mục 34 đơn vị sau sáp nhập (không nhập tự do) */
-export default function ProvinceSelect(props: { value?: string | null; onChange?: (value: string | null) => void; placeholder?: string; disabled?: boolean }) {
+export default function ProvinceSelect(props: { id?: string; value?: string | null; onChange?: (value: string | null) => void; placeholder?: string; disabled?: boolean }) {
   const provinces = useProvinces();
   return (
     <Select
+      id={props.id}
       allowClear
       showSearch
       disabled={props.disabled}

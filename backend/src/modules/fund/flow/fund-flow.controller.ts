@@ -110,7 +110,7 @@ export class FundFlowController {
         return this.flowService.saveContributor(user, dto, id);
     }
 
-    /** Sổ thu chi: ?year=2026&quarter=4&kind=MTO|MTE|EXTERNAL */
+    /** Sổ thu chi / Dashboard: ?year=2026&quarter=4&month=10&kind=MTO|MTE|EXTERNAL&groupKind=MENTEE|FUND */
     @Get("ledger")
     @AllowSystemRoles(SystemRole.ADMIN)
     @AllowAdminScope(AdminScope.FUND)
@@ -118,11 +118,15 @@ export class FundFlowController {
         @Query("year") year?: string,
         @Query("quarter") quarter?: string,
         @Query("kind") kind?: PayerKind,
+        @Query("month") month?: string,
+        @Query("groupKind") groupKind?: string,
     ) {
         return this.flowService.ledger({
             year: year ? Number(year) : undefined,
             quarter: quarter ? Number(quarter) : undefined,
+            month: month ? Number(month) : undefined,
             kind,
+            groupKind,
         });
     }
 

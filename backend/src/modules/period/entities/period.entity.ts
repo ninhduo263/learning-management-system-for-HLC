@@ -69,4 +69,9 @@ export class Period implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Người khóa" })
     lockedBy?: string;
+
+    /** Ngày chi thực tế */
+    paidDate?: string;
+
+    paidBy?: string;
 }

@@ -9,8 +9,8 @@ import GroupPlanModal from '@/components/GroupPlanModal';
 import type { Dayjs } from 'dayjs';
 import { errorMessage } from '@/lib/api';
 import {
-  GROUP_KIND_LABEL, formatDate, fundApi, groupApi, memberCrudApi, roleApi,
-  type FundContributor, type GroupHistory, type GroupKind, type GroupMember, type GroupRoleAssignment, type GroupView, type Member, type RoleView
+  GROUP_KIND_LABEL, formatDate, fundApi, groupApi, memberDirectoryApi, roleApi,
+  type FundContributor, type GroupHistory, type GroupKind, type GroupMember, type GroupRoleAssignment, type GroupView, type DirectoryMember, type RoleView
 } from '@/services/hlcApi';
 
 const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'green'}>{type === 'MENTOR' ? 'MTO' : 'MTE'}</Tag>;
@@ -24,7 +24,7 @@ const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'gre
 export default function GroupManager({ kind, canDelete = true }: { kind: GroupKind; canDelete?: boolean }) {
   const { message } = App.useApp();
   const [groups, setGroups] = useState<GroupView[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<DirectoryMember[]>([]);
   const [unassigned, setUnassigned] = useState<GroupMember[]>([]);
   const [roles, setRoles] = useState<RoleView[]>([]);
   const [contributors, setContributors] = useState<FundContributor[]>([]);
@@ -51,7 +51,7 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
     try {
       const [list, all, free, roleList, contributorList] = await Promise.all([
         groupApi.list(),
-        memberCrudApi.many({ status: 'ACTIVE' }, { memberCode: 1 }),
+        memberDirectoryApi.list(),
         groupApi.unassigned(),
         roleApi.list().catch(() => [] as RoleView[]),
         isFund ? fundApi.contributors() : Promise.resolve([] as FundContributor[])

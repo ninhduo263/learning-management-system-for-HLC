@@ -1009,6 +1009,62 @@ Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi 
 **Nhóm HLC Fund của thầy cô / MTO**
 - `/leader/overview` trả `groupKind`. Nhóm `FUND` chỉ có dữ liệu quỹ; `mentoring` và `learning` để trống.
 
+### 11.16 Cập nhật vòng 5 (chi phụ cấp vào sổ quỹ, Dashboard thu chi, thêm thành viên, mở khóa kỳ)
+
+**Xác nhận đã chi → sổ quỹ**
+- `POST /points/periods/{code}/paid` với `{ paidDate? }` (ngày chi thực tế, mặc định hôm nay).
+  - Cần quyền `CONFIRM_PAYOUT`: Admin toàn cục, hoặc người giữ vai trò có phạm vi `FUND` (Trưởng ban HLC Fund). Quyền này tách riêng khỏi chốt kỳ và sửa điểm.
+  - Kỳ phải đang chốt. Ngày chi không được trước ngày đầu kỳ (`error-payout-date-invalid`).
+- Lần đầu xác nhận, hệ thống sinh **1** `FundExpense`:
+  - Các trường: `source: ALLOWANCE`, `periodId` (unique), `sheetCode: PC-YYYY-MM`, `expenseDate = paidDate`, `amount` = tổng bảng tổng hợp (khớp Excel và PDF).
+  - `detail` gồm `members` và `carryOvers[]` (các dòng bù chênh lệch kèm lý do, ghi ở tháng được bù).
+- Xác nhận lại sau khi mở khóa: không sinh thêm khoản chi, giữ ngày chi cũ, trả `{ created: false, difference }` (chênh lệch so với số đã ghi sổ). Phần chênh lệch ghi bằng `POST /points/periods/{code}/carry-over`.
+- Khoản chi phụ cấp không sửa hoặc xóa tay được (`error-expense-allowance-managed`).
+- `GET /points/periods/{code}/summary` trả thêm `payout`, là khoản chi đã ghi sổ.
+- Các kỳ đã "Đã chi" từ trước khi có tính năng này được tự sinh khoản chi khi khởi động.
+
+**Dashboard thu chi**
+- `GET /fund/ledger?year=&quarter=&month=&kind=&groupKind=MENTEE|FUND`.
+  - Thu tính theo ngày đóng. Chi tính theo **ngày chi thực tế**.
+  - `totals` gồm `income`, `incomeByKind {MTE, MTO, EXTERNAL}`, `expense`, `expenseByType {ALLOWANCE, OTHER}`, `net`, `balance`.
+  - Trả thêm `byMonth[]` và `byQuarter[]`.
+  - `allowancePeriods[]`: đối chiếu theo kỳ phụ cấp, gồm `summaryAmount`, `recordedAmount`, `paidDate`, `carryOverTotal`, `difference`.
+- Phụ cấp tháng 9 chi ngày 10/10 thì nằm ở tháng 10 của sổ quỹ.
+
+**Mở khóa kỳ (giai đoạn thử nghiệm)**
+- `POST /points/periods/{code}/unlock` với `{ reason }`: chỉ Admin toàn cục, bắt buộc lý do, có nhật ký, không phụ thuộc lịch ngày.
+  - Mở khóa xong hệ thống tự tính lại bảng.
+  - Kỳ đã chi chỉ mở được khi công tắc `allowUnlockPaidPeriod` đang bật (mặc định bật cho giai đoạn thử nghiệm). Tắt khi lên production; lúc đó kỳ đã chi trả `409 error-period-paid-unlock-disabled`.
+  - Khoản chi đã ghi sổ giữ nguyên khi mở khóa.
+- `GET` / `PUT /system-config` có thêm `allowUnlockPaidPeriod`.
+
+**Đổi mật khẩu lần đầu ở API**
+- Khi `forcePasswordChangeOnFirstLogin` bật và tài khoản chưa tự đổi mật khẩu, mọi API trả `403 error-password-change-required`.
+- Ngoại lệ (vẫn gọi được): `GET /user/me`, `PUT /user/me/password`, `GET /access/me`, `GET /system-config`, `GET /member/me(/profile)`, `GET /time/mock`, `GET /provinces`. Admin toàn cục không bị chặn.
+
+**Sửa đơn giá**
+- `PUT /points/periods/{code}/settings` bắt buộc `reason`.
+
+**Thêm thành viên (chỉ Admin toàn cục)**
+- `GET /member-admin/next-code?type=MENTEE|MENTOR` trả `{ code, method: COUNT | MAX_PLUS_ONE, total, maxSequence, warning }`.
+  - Mã dạng `HLC-MTE|MTO-xxxxx`, dùng một dãy số chung cho cả MTE và MTO.
+  - Cách tính chính: tổng hồ sơ (kể cả ngừng hoạt động) + 1.
+  - Nếu không khớp số lớn nhất + 1, hoặc mã đã tồn tại: cảnh báo và dùng số lớn nhất + 1. Vẫn trùng thì trả `409 error-member-code-conflict`.
+- `POST /member-admin/precheck` trả mã sẽ cấp và các hồ sơ trùng họ tên + ngày sinh (kể cả ngừng hoạt động). CCCD trùng thì trả `409 error-national-id-duplicate`.
+- `POST /member-admin/members` với `{ fullName, gender, dateOfBirth, memberType, hometownCode, addressCode, phone, email, nationalId?, bankAccount?, bankName?, groupId?, confirmDuplicate? }`.
+  - Thành viên MTE bắt buộc có `groupId` là một nhóm MTE.
+  - `bankName` phải thuộc `GET /member-admin/banks`.
+  - Trùng họ tên + ngày sinh mà chưa gửi `confirmDuplicate` thì trả `409 error-member-possible-duplicate`.
+  - Mã được cấp dưới advisory lock của Postgres, nên 2 lần thêm cùng lúc không nhận trùng mã.
+  - Hệ thống tạo tài khoản với `username` = mã viết thường và mật khẩu khởi tạo ngẫu nhiên. Mật khẩu **chỉ trả 1 lần** trong `account`; máy chủ chỉ lưu mã băm.
+  - Mỗi lần thêm được ghi nhật ký `MEMBER_CREATE`.
+- Dữ liệu nhạy cảm:
+  - `nationalId` (CCCD, unique) và `bankAccount` bị che (`•••123`) trong `GET /member`, `/member/many`, `/member/{id}`.
+  - Xem đầy đủ qua `GET /member-admin/members/{id}/sensitive` (có nhật ký `MEMBER_SENSITIVE_VIEW`). Chính chủ xem đầy đủ ở `/member/me/profile`.
+  - Gửi lại giá trị đã che thì máy chủ bỏ qua, không ghi đè dữ liệu thật.
+  - File xuất thành viên chỉ có cột CCCD khi người xuất là Admin toàn cục.
+- Danh bạ rút gọn (mọi tài khoản đăng nhập, không có dữ liệu nhạy cảm): `GET /member-directory?type=` và `GET /member-directory/groups`.
+
 ---
 
 ## 12. Danh mục resource

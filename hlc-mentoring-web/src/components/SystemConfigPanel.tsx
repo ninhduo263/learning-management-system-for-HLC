@@ -51,6 +51,10 @@ export default function SystemConfigPanel() {
             <Switch checked={config?.memberCanEditProfileUrl} onChange={(value) => toggle('memberCanEditProfileUrl', value)} />
             <div><strong>MTE / MTO tự sửa link profile</strong><div className="text-xs text-gray-500">Tạm thời tắt: chỉ Admin sửa link profile (có nhật ký). Bật để mở lại quyền tự sửa.</div></div>
           </div>
+          <div className="flex items-start gap-3">
+            <Switch checked={config?.allowUnlockPaidPeriod} onChange={(value) => toggle('allowUnlockPaidPeriod', value)} />
+            <div><strong>Cho mở khóa kỳ phụ cấp đã xác nhận đã chi (giai đoạn thử nghiệm)</strong><div className="text-xs text-gray-500">Bật: Admin toàn cục mở khóa được mọi kỳ để sửa rồi chốt lại (luôn bắt buộc lý do, có nhật ký); khoản chi đã ghi sổ quỹ giữ nguyên, chênh lệch ghi bằng bù tháng sau. Tắt khi lên production: chỉ mở khóa kỳ chưa chi.</div></div>
+          </div>
         </div>
       </Card>
       <Card size="small" title={`Danh mục tỉnh, thành phố (${active.length} đang dùng)`} extra={<Button size="small" onClick={() => { form.resetFields(); form.setFieldsValue({ isActive: true, aliases: [] }); setEditing('new'); }}>Thêm đơn vị</Button>}>

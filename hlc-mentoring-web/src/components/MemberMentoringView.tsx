@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Steps, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, App, Button, Card, Descriptions, Form, Input, Modal, Select, Space, Steps, Table, Tag, Tooltip, Typography } from 'antd';
 import ImageUpload, { type UploadedImage } from '@/components/ImageUpload';
-import MemberQuarterlyReport from '@/components/MemberQuarterlyReport';
+import RecapCard from '@/components/RecapCard';
 import ProfileLink from '@/components/ProfileLink';
 import { errorMessage } from '@/lib/api';
 import {
@@ -70,11 +70,10 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
 
   const currentCode = quarterOf(getCurrentTime()).code;
   /**
-   * Sắp tới: buổi chưa kết thúc (hoặc chưa có lịch) từ tháng hiện tại trở đi, thuộc quý hiện tại/sau.
-   * Cần xử lý: buổi đã qua nhưng vẫn còn việc (viết recap trong hạn, gửi lịch).
-   * Còn lại vào lịch sử, theo quý.
+   * Lịch sắp tới: chỉ các buổi từ hiện tại trở đi (chưa kết thúc, hoặc chưa có lịch ở tháng hiện tại trở đi).
+   * Danh sách ghép cặp theo quý: mọi buổi còn lại (đã diễn ra, cần viết recap, kết quả duyệt / điểm).
    */
-  const { upcoming, history } = useMemo(() => {
+  const { upcoming, pastSessions, quarterCodes } = useMemo(() => {
     const now = getCurrentTime();
     const vn = new Date(now.getTime() + 7 * 3600_000);
     const monthIndex = vn.getUTCFullYear() * 12 + vn.getUTCMonth() + 1;
@@ -82,14 +81,21 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
     const isUpcoming = (item: MySessionView) => item.quarterCode >= currentCode && (item.schedule
       ? new Date(item.schedule.endAt) >= now
       : item.year * 12 + item.month >= monthIndex);
-    const pending = (item: MySessionView) => item.canWriteRecap && !(item.myRole === 'MENTEE' ? item.recaps.mentee : item.recaps.mentor);
     const next = all
-      .filter((item) => isUpcoming(item) || pending(item))
+      .filter(isUpcoming)
       .sort((a, b) => (a.schedule ? new Date(a.schedule.startAt).getTime() : (a.year * 12 + a.month) * 1e12) - (b.schedule ? new Date(b.schedule.startAt).getTime() : (b.year * 12 + b.month) * 1e12));
-    const past = all.filter((item) => !next.includes(item));
-    const codes = [...new Set(past.map((item) => item.quarterCode))].sort().reverse();
-    return { upcoming: next, history: codes.map((code) => ({ code, sessions: past.filter((item) => item.quarterCode === code) })) };
+    const past = all.filter((item) => !next.includes(item)).sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month) || a.code.localeCompare(b.code));
+    const codes = [...new Set([...(data?.quarters ?? []).map((item) => item.code), ...all.map((item) => item.quarterCode)])].sort().reverse();
+    return { upcoming: next, pastSessions: past, quarterCodes: codes };
   }, [data, currentCode]);
+  const [quarterFilter, setQuarterFilter] = useState<string | undefined>();
+  const [monthFilter, setMonthFilter] = useState<number | undefined>();
+  const [detail, setDetail] = useState<MySessionView | null>(null);
+  const selectedQuarter = quarterFilter ?? (quarterCodes.includes(currentCode) ? currentCode : quarterCodes[0]);
+  const quarterMonths = selectedQuarter ? [1, 2, 3].map((offset) => (Number(selectedQuarter.slice(-1)) - 1) * 3 + offset) : [];
+  const quarterRows = pastSessions.filter((item) => item.quarterCode === selectedQuarter && (!monthFilter || item.month === monthFilter));
+  const needRecap = (item: MySessionView) => item.canWriteRecap && !(item.myRole === 'MENTEE' ? item.recaps.mentee : item.recaps.mentor);
+  const pendingCount = pastSessions.filter(needRecap).length;
 
   const counterpart = (session: MySessionView) => (session.myRole === 'MENTEE' ? session.mentor : session.mentee);
   const myStatus = (session: MySessionView) => (session.myRole === 'MENTEE' ? session.recapStatus.mentee : session.recapStatus.mentor);
@@ -262,8 +268,8 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
         </Card>
       )}
 
-      <Card title="Lịch sắp tới & việc cần làm" loading={loading && !data}>
-        {data && upcoming.length === 0 && history.length === 0 ? (
+      <Card title="Lịch sắp tới" loading={loading && !data}>
+        {data && upcoming.length === 0 && pastSessions.length === 0 ? (
           <Alert type="info" showIcon title="Chưa có dữ liệu mentoring" description="Admin chưa ghép cặp, hoặc cặp của quý tới chưa được công bố (ngày 25 tháng cuối quý)." />
         ) : (
           <>
@@ -271,24 +277,76 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
               Hai bên tự hẹn lịch qua điện thoại/tin nhắn rồi một người gửi lịch đã chốt lên đây. Lịch chỉ sửa được trước thời điểm đã chốt lần đầu.
               Recap viết sau khi buổi kết thúc, cần ít nhất 1 ảnh; nộp trong 24 giờ kể từ giờ mentoring là đúng hạn.
             </Typography.Paragraph>
-            <Table rowKey="_id" loading={loading} dataSource={upcoming} columns={columns} pagination={false} scroll={{ x: 'max-content' }} locale={{ emptyText: `Không có buổi mentoring sắp tới trong quý ${currentCode.slice(-1)}/${currentCode.slice(0, 4)}` }} />
+            <Table rowKey="_id" loading={loading} dataSource={upcoming} columns={columns} pagination={false} scroll={{ x: 'max-content' }} locale={{ emptyText: 'Không có buổi mentoring sắp tới' }} />
           </>
         )}
       </Card>
 
-      {history.length > 0 && (
-        <Card title="Lịch sử / đã qua">
-          <Tabs
-            items={history.map((tab) => ({
-              key: tab.code,
-              label: `Quý ${tab.code.slice(-1)}/${tab.code.slice(0, 4)}${tab.code === currentCode ? ' (hiện tại)' : ''}`,
-              children: <Table rowKey="_id" dataSource={tab.sessions} columns={columns} pagination={false} scroll={{ x: 'max-content' }} />
-            }))}
-          />
-        </Card>
-      )}
+      <Card
+        title="Danh sách ghép cặp theo quý"
+        extra={(
+          <Space wrap>
+            <Select className="min-w-36" value={selectedQuarter} onChange={(value) => { setQuarterFilter(value); setMonthFilter(undefined); }}
+              options={quarterCodes.map((code) => ({ value: code, label: `Quý ${code.slice(-1)}/${code.slice(0, 4)}${code === currentCode ? ' (hiện tại)' : ''}` }))} />
+            <Select className="min-w-32" allowClear placeholder="Cả quý" value={monthFilter} onChange={setMonthFilter}
+              options={quarterMonths.map((month) => ({ value: month, label: `Tháng ${month}` }))} />
+          </Space>
+        )}
+      >
+        {pendingCount > 0 && <Alert className="!mb-3" type="warning" showIcon title={`Bạn còn ${pendingCount} buổi đã diễn ra cần viết recap (đánh dấu “Cần viết recap” trong danh sách).`} />}
+        <Table
+          rowKey="_id"
+          loading={loading}
+          dataSource={quarterRows}
+          pagination={false}
+          scroll={{ x: 'max-content' }}
+          locale={{ emptyText: selectedQuarter ? `Chưa có buổi mentoring đã diễn ra trong ${monthFilter ? `tháng ${monthFilter}` : `quý ${selectedQuarter.slice(-1)}/${selectedQuarter.slice(0, 4)}`}` : 'Chưa có dữ liệu' }}
+          columns={[
+            ...columns.slice(0, -1),
+            {
+              title: 'Kết quả',
+              render: (_: unknown, row: MySessionView) => {
+                const recap = myRecap(row);
+                return (
+                  <Space orientation="vertical" size={2}>
+                    {needRecap(row) && <Tag color="orange">Cần viết recap</Tag>}
+                    {recap?.reviewStatus === 'APPROVED' && <Tag color="green">Đã duyệt{recap.score !== null && recap.score !== undefined ? ` · ${recap.score}/100 điểm` : ''}</Tag>}
+                    {recap?.reviewStatus === 'REJECTED' && <Tag color="red">Không duyệt</Tag>}
+                    {recap?.reviewStatus === 'PENDING' && <Tag color="gold">Chờ duyệt</Tag>}
+                    {!recap && !needRecap(row) && <Typography.Text type="secondary">—</Typography.Text>}
+                  </Space>
+                );
+              }
+            },
+            {
+              ...columns[columns.length - 1],
+              render: (value: unknown, row: MySessionView, index: number) => (
+                <Space wrap>
+                  {(columns[columns.length - 1].render as (v: unknown, r: MySessionView, i: number) => React.ReactNode)(value, row, index)}
+                  <Button onClick={() => setDetail(row)}>Xem chi tiết</Button>
+                </Space>
+              )
+            }
+          ]}
+        />
+      </Card>
 
-      <MemberQuarterlyReport />
+      <Modal title={detail ? `Chi tiết ${detail.code} · tháng ${pad(detail.month)}/${detail.year}` : ''} open={Boolean(detail)} onCancel={() => setDetail(null)} footer={null} width={860} destroyOnHidden>
+        {detail && (
+          <>
+            <Descriptions bordered size="small" column={1} className="mb-3">
+              <Descriptions.Item label="Mentor">{detail.mentor?.fullName} ({detail.mentor?.memberCode})</Descriptions.Item>
+              <Descriptions.Item label="Mentee">{detail.mentee?.fullName} ({detail.mentee?.memberCode})</Descriptions.Item>
+              <Descriptions.Item label="Vai trò của bạn">{detail.myRole === 'MENTOR' ? 'Mentor' : 'Mentee'}</Descriptions.Item>
+              <Descriptions.Item label="Thời gian mentoring">{detail.schedule ? `${formatDateTime(detail.schedule.startAt)} – ${formatDateTime(detail.schedule.endAt)}` : 'Chưa có lịch mentoring'}</Descriptions.Item>
+              {detail.schedule?.meetingLink && <Descriptions.Item label="Link meeting"><a href={detail.schedule.meetingLink} target="_blank" rel="noreferrer">Tham gia meeting</a></Descriptions.Item>}
+              <Descriptions.Item label="Recap của tôi"><Tag color={ROLE_STATUS_COLOR[myStatus(detail)]}>{ROLE_STATUS_LABEL[myStatus(detail)]}</Tag></Descriptions.Item>
+              <Descriptions.Item label="Trạng thái cặp"><Tag color={PAIR_STATUS_COLOR[detail.recapStatus.pair]}>{PAIR_STATUS_LABEL[detail.recapStatus.pair]}</Tag></Descriptions.Item>
+            </Descriptions>
+            {myRecap(detail) ? <RecapCard recap={myRecap(detail)!} /> : <Typography.Text type="secondary">Bạn chưa nộp recap cho buổi này.</Typography.Text>}
+          </>
+        )}
+      </Modal>
 
       <Modal title={`${scheduleSession?.schedule ? 'Sửa lịch' : 'Gửi lịch đã chốt'} - ${scheduleSession?.code ?? ''}`} open={Boolean(scheduleSession)} onCancel={() => setScheduleSession(null)} footer={null} forceRender destroyOnHidden>
         {scheduleSession && (

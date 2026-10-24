@@ -61,7 +61,9 @@ export class SelfProfileDto {
     @IsOptional()
     addressCode?: string;
 
-    @Matches(/^[0-9 ]{4,30}$/, { message: "Số tài khoản chỉ gồm chữ số" })
+    @Matches(/^([0-9 ]{4,30}|.*•.*)$/, {
+        message: "Số tài khoản chỉ gồm chữ số",
+    })
     @IsOptional()
     bankAccount?: string;
 

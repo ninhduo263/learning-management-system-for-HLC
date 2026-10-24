@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { Alert, App, Button, Card, Dropdown, Form, Input, Modal, Space, Spin, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd';
-import { DownloadOutlined, InboxOutlined, UserAddOutlined } from '@ant-design/icons';
+import { DownloadOutlined, InboxOutlined, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
+import AddMemberModal from '@/components/AddMemberModal';
+import { useAccess } from '@/lib/useAccess';
 import MemberEditModal from '@/components/MemberEditModal';
 import ProfileLink from '@/components/ProfileLink';
 import { memberCrudApi, memberExportApi, provinceNeedsReview, type Member } from '@/services/hlcApi';
@@ -21,6 +23,9 @@ type ReportRow = QuarterReport['rows'][number];
 
 export default function AdminMembersPage() {
   const { message, modal } = App.useApp();
+  const access = useAccess();
+  const isSuperAdmin = Boolean(access?.isSuperAdmin);
+  const [addOpen, setAddOpen] = useState(false);
   const [reportsVisible, setReportsVisible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [reports, setReports] = useState<QuarterReport[]>([]);
@@ -233,6 +238,7 @@ export default function AdminMembersPage() {
             <Upload accept=".xlsx,.xls,.csv" showUploadList={false} disabled={importing} beforeUpload={(file) => { void importMembers(file); return Upload.LIST_IGNORE; }}>
               <Button icon={<InboxOutlined />} loading={importing}>Import Excel thành viên</Button>
             </Upload>
+            {isSuperAdmin && <Button type="primary" icon={<PlusOutlined />} onClick={() => setAddOpen(true)}>Thêm thành viên</Button>}
             <Button icon={<UserAddOutlined />} onClick={() => setAccountModalOpen(true)}>Tạo tài khoản</Button>
             <Dropdown
               menu={{
@@ -271,6 +277,7 @@ export default function AdminMembersPage() {
         )}
       </Card>
 
+      <AddMemberModal open={addOpen} onClose={() => setAddOpen(false)} onCreated={() => { if (membersVisible) void loadMembers(); }} />
       <MemberEditModal memberId={editingMember} onClose={() => setEditingMember(null)} onSaved={() => void loadMembers()} />
 
       <Modal title="Tạo tài khoản cho thành viên" open={accountModalOpen} onCancel={() => setAccountModalOpen(false)} footer={null} destroyOnHidden>

@@ -144,6 +144,8 @@ export class MemberExportService {
                     : "",
                 "Địa chỉ cũ (nhập tự do)": member.address ?? "",
                 "Số tài khoản": member.bankAccount ?? "",
+                // CCCD: chỉ Admin toàn cục
+                ...(caps.superAdmin && { "Số CCCD": member.nationalId ?? "" }),
                 "Ngân hàng": member.bankName ?? "",
             }),
             "Ngành học": member.major ?? "",

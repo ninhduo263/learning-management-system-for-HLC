@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, App, Modal, Radio, Select, Typography } from 'antd';
 import { errorMessage } from '@/lib/api';
-import { GROUP_KIND_LABEL, groupApi, learningApi, memberCrudApi, type GroupView, type LearningModule, type Member } from '@/services/hlcApi';
+import { GROUP_KIND_LABEL, learningApi, memberDirectoryApi, type DirectoryMember, type GroupKind, type LearningModule } from '@/services/hlcApi';
 
 /**
  * Gán module học tập cho MTE / MTO cụ thể (chọn từng người hoặc theo nhóm). Chỉ người được gán mới thấy và nộp bài;
@@ -14,15 +14,15 @@ export default function ModuleAudienceModal({ module, onClose, onSaved }: { modu
   const [mode, setMode] = useState<'ALL' | 'SELECTED'>('ALL');
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [groupIds, setGroupIds] = useState<string[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
-  const [groups, setGroups] = useState<GroupView[]>([]);
+  const [members, setMembers] = useState<DirectoryMember[]>([]);
+  const [groups, setGroups] = useState<{ _id: string; name: string; groupKind: GroupKind }[]>([]);
   const [count, setCount] = useState(0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!module) return;
     let active = true;
-    Promise.all([learningApi.audience(module._id), memberCrudApi.many({ status: 'ACTIVE' }, { memberCode: 1 }), groupApi.list().catch(() => [] as GroupView[])])
+    Promise.all([learningApi.audience(module._id), memberDirectoryApi.list(), memberDirectoryApi.groups()])
       .then(([audience, all, groupList]) => {
         if (!active) return;
         setMode(audience.mode);
@@ -30,7 +30,7 @@ export default function ModuleAudienceModal({ module, onClose, onSaved }: { modu
         setGroupIds(audience.groups.map((item) => item._id));
         setCount(audience.audienceCount);
         setMembers(all.filter((item) => module.targetMemberType === 'ALL' || item.memberType === module.targetMemberType));
-        setGroups(groupList.filter((item) => item.isActive));
+        setGroups(groupList);
       })
       .catch((error) => message.error(errorMessage(error)));
     return () => { active = false; };

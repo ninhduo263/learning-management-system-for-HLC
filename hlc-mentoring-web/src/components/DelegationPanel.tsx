@@ -7,8 +7,8 @@ import dayjs, { type Dayjs } from 'dayjs';
 import { errorMessage } from '@/lib/api';
 import { getCurrentTime } from '@/utils/time';
 import {
-  DELEGATION_STATUS, GROUP_PERMISSIONS, ROLE_PERMISSION_LABEL, delegationApi, formatDate, groupApi, memberCrudApi,
-  type DelegationView, type LeaderGroupAccess, type Member
+  DELEGATION_STATUS, GROUP_PERMISSIONS, ROLE_PERMISSION_LABEL, delegationApi, formatDate, groupApi, memberDirectoryApi,
+  type DelegationView, type LeaderGroupAccess, type DirectoryMember
 } from '@/services/hlcApi';
 
 type Values = { groupId: string; fromMemberId?: string; toMemberId: string; permissions: string[]; range: [Dayjs, Dayjs]; reason?: string };
@@ -21,7 +21,7 @@ type Values = { groupId: string; fromMemberId?: string; toMemberId: string; perm
 export default function DelegationPanel({ mode, myGroups = [] }: { mode: 'admin' | 'leader'; myGroups?: LeaderGroupAccess[] }) {
   const { message } = App.useApp();
   const [rows, setRows] = useState<DelegationView[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<DirectoryMember[]>([]);
   const [groups, setGroups] = useState<{ _id: string; name: string }[]>([]);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -35,7 +35,7 @@ export default function DelegationPanel({ mode, myGroups = [] }: { mode: 'admin'
 
   const load = useCallback(async () => {
     try {
-      const [list, all] = await Promise.all([delegationApi.list(), memberCrudApi.many({ status: 'ACTIVE' }, { memberCode: 1 }).catch(() => [] as Member[])]);
+      const [list, all] = await Promise.all([delegationApi.list(), memberDirectoryApi.list().catch(() => [] as DirectoryMember[])]);
       setRows(list);
       setMembers(all);
       if (mode === 'admin') {

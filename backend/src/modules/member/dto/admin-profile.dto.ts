@@ -31,4 +31,8 @@ export class AdminProfileDto extends SelfProfileDto {
     @IsString()
     @IsOptional()
     note?: string;
+
+    @Matches(/^(\d{12}|.*•.*)$/, { message: "Số CCCD gồm 12 chữ số" })
+    @IsOptional()
+    nationalId?: string;
 }

@@ -26,8 +26,10 @@ export enum RolePermission {
     REVIEW_FUND = "REVIEW_FUND",
     /** Nộp hộ minh chứng quỹ */
     PROXY_FUND = "PROXY_FUND",
-    /** Chốt kỳ phụ cấp, đánh dấu đã chi */
+    /** Chốt kỳ phụ cấp */
     LOCK_PERIOD = "LOCK_PERIOD",
+    /** Xác nhận đã chi (ghi khoản chi vào sổ quỹ): Admin toàn cục, Trưởng ban HLC Fund */
+    CONFIRM_PAYOUT = "CONFIRM_PAYOUT",
     /** Sửa đơn giá, cộng / trừ điểm thủ công, bù chênh lệch (bắt buộc lý do, có nhật ký) */
     EDIT_POINTS = "EDIT_POINTS",
     /** Kế toán: chỉ xem và xuất bảng phụ cấp đã chốt */
@@ -46,6 +48,7 @@ export const GROUP_PERMISSIONS: string[] = [
 ];
 export const GLOBAL_PERMISSIONS: string[] = [
     RolePermission.LOCK_PERIOD,
+    RolePermission.CONFIRM_PAYOUT,
     RolePermission.EDIT_POINTS,
     RolePermission.VIEW_PAYOUT,
     RolePermission.EXPORT_PERSONAL,
@@ -57,6 +60,7 @@ export const ROLE_PERMISSION_LABEL: Record<string, string> = {
     REVIEW_FUND: "Duyệt minh chứng quỹ",
     PROXY_FUND: "Nộp hộ minh chứng quỹ",
     LOCK_PERIOD: "Chốt kỳ phụ cấp",
+    CONFIRM_PAYOUT: "Xác nhận đã chi (ghi sổ quỹ)",
     EDIT_POINTS: "Sửa đơn giá, điểm thủ công",
     VIEW_PAYOUT: "Xem, xuất bảng phụ cấp đã chốt",
     EXPORT_PERSONAL: "Xuất dữ liệu cá nhân",

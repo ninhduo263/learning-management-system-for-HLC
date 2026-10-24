@@ -11,4 +11,12 @@ export class SettingSecurity {
     @IsBoolean()
     @IsOptional()
     memberCanEditProfileUrl?: boolean;
+
+    /**
+     * Mở khóa kỳ đã xác nhận đã chi. Giai đoạn thử nghiệm: bật (mở khóa tự do). Production: tắt (chỉ mở khóa
+     * kỳ chưa chi; kỳ đã chi xử lý bằng bù chênh lệch tháng sau).
+     */
+    @IsBoolean()
+    @IsOptional()
+    allowUnlockPaidPeriod?: boolean;
 }

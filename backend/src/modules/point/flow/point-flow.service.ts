@@ -32,6 +32,9 @@ import { PointEntryModel } from "../models/point-entry.model";
 import { PointTypeModel } from "../models/point-type.model";
 import { PointCalculationService, stableId } from "./point-calculation.service";
 import { PeriodLogModel } from "@module/period/models/period-log.model";
+import { FundExpenseModel } from "@module/fund/models/fund-expense.model";
+import { SecurityConfigService } from "@module/setting/security-config.service";
+import { isValidDateKey, vnDateKey } from "@common/utils/vn-date.util";
 import { UserModel } from "@module/repository/sequelize/model/user.model";
 
 /** Mã bảng tổng hợp phụ cấp: PC-YYYY-MM */
@@ -81,6 +84,9 @@ export class PointFlowService implements OnApplicationBootstrap {
         private readonly memberModel: typeof MemberModel,
         @InjectModel(PeriodLogModel)
         private readonly periodLogModel: typeof PeriodLogModel,
+        @InjectModel(FundExpenseModel)
+        private readonly expenseModel: typeof FundExpenseModel,
+        private readonly securityConfig: SecurityConfigService,
     ) {}
 
     /** Khởi động: tự tạo bảng của tháng hiện tại (bảng tháng mới cũng được tạo mỗi ngày lúc 01:00) */
@@ -90,6 +96,60 @@ export class PointFlowService implements OnApplicationBootstrap {
             await this.periodFlow.ensurePeriod(now.year, now.month);
         } catch (error) {
             this.logger.warn(`Không tạo được kỳ tháng hiện tại: ${error}`);
+        }
+        try {
+            await this.backfillPayouts();
+        } catch (error) {
+            this.logger.warn(
+                `Không ghi được khoản chi của kỳ đã chi: ${error}`,
+            );
+        }
+    }
+
+    /**
+     * Kỳ đã đánh dấu "Đã chi" trước khi có sổ quỹ tự động: sinh khoản chi (ngày chi = ngày chi trả dự kiến
+     * hoặc ngày cuối kỳ). Chỉ sinh khi kỳ chưa có khoản chi.
+     */
+    private async backfillPayouts() {
+        const paid = await this.periodModel.findAll({
+            where: { status: PeriodStatus.PAID },
+            raw: true,
+        });
+        for (const period of paid) {
+            if (
+                await this.expenseModel.count({
+                    where: { periodId: period._id },
+                })
+            )
+                continue;
+            const summaries = await this.summaryModel.findAll({
+                where: { periodId: period._id },
+                attributes: ["amount"],
+                raw: true,
+            });
+            const date = period.paidDate ?? period.payoutDate ?? period.endDate;
+            await this.expenseModel.create({
+                expenseDate: date,
+                amount: Math.round(
+                    summaries.reduce(
+                        (sum, row) => sum + Number(row.amount ?? 0),
+                        0,
+                    ),
+                ),
+                description: `Chi phụ cấp ${sheetCode(period.code)} (${summaries.length} người)`,
+                category: "Chi phụ cấp",
+                source: "ALLOWANCE",
+                periodId: period._id,
+                sheetCode: sheetCode(period.code),
+                detail: { members: summaries.length, backfilled: true },
+            });
+            await this.periodModel.update(
+                { paidDate: date },
+                { where: { _id: period._id, paidDate: null } },
+            );
+            this.logger.log(
+                `Ghi khoản chi ${sheetCode(period.code)} vào sổ quỹ`,
+            );
         }
     }
 
@@ -422,19 +482,22 @@ export class PointFlowService implements OnApplicationBootstrap {
         });
     }
 
-    /** Mở khóa kỳ đã chốt (chưa chi): bắt buộc lý do, ghi nhật ký */
+    /**
+     * Mở khóa kỳ đã chốt (chỉ Admin toàn cục, bắt buộc lý do, ghi nhật ký), không phụ thuộc lịch ngày.
+     * Kỳ đã xác nhận đã chi: giai đoạn thử nghiệm vẫn mở được (công tắc allowUnlockPaidPeriod); khoản chi
+     * đã ghi sổ quỹ giữ nguyên, phần chênh lệch sau khi sửa xử lý bằng bù chênh lệch ở tháng sau.
+     * Mở xong hệ thống tính lại bảng theo dữ liệu mới.
+     */
     async unlock(code: string, user?: Pick<User, "_id">, reason?: string) {
         const period = await this.periodFlow.getByCode(code);
-        if (
-            period.status === PeriodStatus.PAID ||
-            !this.periodFlow.isLocked(period)
-        ) {
-            throw ApiError.Conflict(
-                period.status === PeriodStatus.PAID
-                    ? "error-period-locked"
-                    : "error-period-not-locked",
-                { code },
-            );
+        if (!this.periodFlow.isLocked(period))
+            throw ApiError.Conflict("error-period-not-locked", { code });
+        if (period.status === PeriodStatus.PAID) {
+            const { allowUnlockPaidPeriod } = await this.securityConfig.get();
+            if (!allowUnlockPaidPeriod)
+                throw ApiError.Conflict("error-period-paid-unlock-disabled", {
+                    code,
+                });
         }
         await this.sequelize.transaction(async (t) => {
             await this.summaryModel.update(
@@ -456,37 +519,169 @@ export class PointFlowService implements OnApplicationBootstrap {
                 {
                     oldValue: period.status,
                     newValue: PeriodStatus.REVIEWING,
-                    reason,
+                    reason:
+                        period.status === PeriodStatus.PAID
+                            ? `${reason ?? ""} (kỳ đã chi: khoản chi trong sổ quỹ giữ nguyên, chênh lệch xử lý bằng bù tháng sau)`
+                            : reason,
                 },
                 t,
             );
         });
+        await this.recalculate(code, (user ?? { _id: null }) as User);
         return this.withLockFlag(await this.periodFlow.getByCode(code));
     }
 
-    async markPaid(code: string, user?: Pick<User, "_id">) {
+    /** Khoản chi phụ cấp đã ghi sổ quỹ của kỳ (nếu có) */
+    async payoutExpense(periodId: string) {
+        const row = await this.expenseModel.findOne({
+            where: { periodId },
+            raw: true,
+        });
+        return row ? { ...row, amount: Number(row.amount) } : null;
+    }
+
+    /**
+     * Xác nhận đã chi (Admin toàn cục, Trưởng ban HLC Fund): ghi ngày chi thực tế, người xác nhận và sinh
+     * đúng 1 khoản chi trong sổ quỹ (tổng tiền bảng tổng hợp, gồm các dòng bù chênh lệch kèm lý do).
+     * Xác nhận lại sau khi mở khóa không ghi trùng: trả về chênh lệch so với số đã ghi sổ.
+     */
+    async markPaid(code: string, user?: Pick<User, "_id">, paidDate?: string) {
         const period = await this.periodFlow.getByCode(code);
         if (!this.periodFlow.isLocked(period))
             throw ApiError.Conflict("error-period-not-locked", { code });
+        if (period.status === PeriodStatus.PAID)
+            throw ApiError.Conflict("error-period-locked", { code });
+        const date = paidDate || vnDateKey(this.timeService.now()).slice(0, 10);
+        if (!isValidDateKey(date) || date < period.startDate)
+            throw ApiError.BadRequest("error-payout-date-invalid");
         const now = this.timeService.now();
+        const sheet = sheetCode(period.code);
+        let difference = 0;
+        let created = false;
         await this.sequelize.transaction(async (t) => {
+            const summaries = await this.summaryModel.findAll({
+                where: { periodId: period._id },
+                raw: true,
+                transaction: t,
+            });
+            const total = Math.round(
+                summaries.reduce(
+                    (sum, row) => sum + Number(row.amount ?? 0),
+                    0,
+                ),
+            );
+            const members = new Map(
+                (
+                    await this.memberModel.findAll({
+                        where: { _id: summaries.map((row) => row.memberId) },
+                        raw: true,
+                        transaction: t,
+                    })
+                ).map((item) => [item._id, item]),
+            );
+            const carry = await this.adjustmentModel.findAll({
+                where: {
+                    periodId: period._id,
+                    kind: PointAdjustmentKind.CARRY_OVER,
+                    status: PointAdjustmentStatus.APPROVED,
+                },
+                raw: true,
+                transaction: t,
+            });
+            const rate = Number(period.pointRate ?? 0);
+            const carryOvers = carry.map((row) => ({
+                memberCode: members.get(row.memberId)?.memberCode ?? null,
+                fullName: members.get(row.memberId)?.fullName ?? null,
+                amount: Math.round(
+                    Number(row.amount ?? 0) + Number(row.points ?? 0) * rate,
+                ),
+                reason: row.reason,
+            }));
             await this.summaryModel.update(
                 { status: AllowanceSummaryStatus.PAID, paidAt: now },
                 { where: { periodId: period._id }, transaction: t },
             );
             await this.periodModel.update(
-                { status: PeriodStatus.PAID },
+                {
+                    status: PeriodStatus.PAID,
+                    paidDate: period.paidDate ?? date,
+                    paidBy: user?._id ?? null,
+                },
                 { where: { _id: period._id }, transaction: t },
             );
+            // Khóa dòng để 2 lần xác nhận cùng lúc không sinh 2 khoản chi
+            const existing = await this.expenseModel.findOne({
+                where: { periodId: period._id },
+                transaction: t,
+                lock: t.LOCK.UPDATE,
+            });
+            if (existing) {
+                difference = total - Number(existing.amount);
+                await existing.update(
+                    {
+                        detail: {
+                            ...(existing.detail ?? {}),
+                            reconfirmations: [
+                                ...((
+                                    (existing.detail ?? {}) as {
+                                        reconfirmations?: unknown[];
+                                    }
+                                ).reconfirmations ?? []),
+                                {
+                                    at: now,
+                                    by: user?._id ?? null,
+                                    summaryTotal: total,
+                                    difference,
+                                },
+                            ],
+                        },
+                    },
+                    { transaction: t },
+                );
+            } else {
+                created = true;
+                await this.expenseModel.create(
+                    {
+                        expenseDate: date,
+                        amount: total,
+                        description: `Chi phụ cấp ${sheet} (${summaries.length} người)`,
+                        category: "Chi phụ cấp",
+                        source: "ALLOWANCE",
+                        periodId: period._id,
+                        sheetCode: sheet,
+                        createdBy: user?._id ?? null,
+                        detail: {
+                            members: summaries.length,
+                            carryOvers,
+                            carryOverTotal: carryOvers.reduce(
+                                (sum, row) => sum + row.amount,
+                                0,
+                            ),
+                        },
+                    },
+                    { transaction: t },
+                );
+            }
             await this.log(
                 period._id,
                 "PAID",
                 user ?? null,
-                { oldValue: period.status, newValue: "Đã chi" },
+                {
+                    oldValue: period.status,
+                    newValue: `Đã chi ngày ${(period.paidDate ?? date).split("-").reverse().join("/")}`,
+                    reason: created
+                        ? `Ghi khoản chi ${total.toLocaleString("vi-VN")}đ vào sổ quỹ`
+                        : `Xác nhận lại: sổ quỹ giữ khoản chi đã ghi, chênh lệch ${difference.toLocaleString("vi-VN")}đ (xử lý bằng bù chênh lệch tháng sau)`,
+                },
                 t,
             );
         });
-        return this.withLockFlag(await this.periodFlow.getByCode(code));
+        return {
+            ...this.withLockFlag(await this.periodFlow.getByCode(code)),
+            expense: await this.payoutExpense(period._id),
+            created,
+            difference,
+        };
     }
 
     // ------------------------------------------------------------------
@@ -654,6 +849,8 @@ export class PointFlowService implements OnApplicationBootstrap {
                     ),
             );
         return {
+            /** Khoản chi đã ghi sổ quỹ khi Xác nhận đã chi (null nếu chưa chi) */
+            payout: await this.payoutExpense(period._id),
             period: this.withLockFlag(period),
             pointTypes: types.map((type) => ({
                 _id: type._id,

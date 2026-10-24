@@ -105,5 +105,14 @@
     "error-profile-url-admin-only": "Link profile tạm thời chỉ Admin được sửa",
     "error-module-audience-empty": "Chọn ít nhất 1 người hoặc 1 nhóm được gán module",
     "error-member-needs-group": "{name} đang hoạt động nên phải thuộc một nhóm: hãy chuyển sang nhóm khác thay vì gỡ khỏi nhóm",
-    "error-role-system": "Vai trò {role} là vai trò mặc định của hệ thống, không xóa được (có thể tắt quyền hoặc đặt điểm 0)"
+    "error-role-system": "Vai trò {role} là vai trò mặc định của hệ thống, không xóa được (có thể tắt quyền hoặc đặt điểm 0)",
+    "error-password-change-required": "Bạn cần đổi mật khẩu được cấp trước khi dùng chức năng này",
+    "error-period-paid-unlock-disabled": "Kỳ {code} đã xác nhận đã chi: theo cấu hình hiện tại không mở khóa được, hãy dùng bù chênh lệch ở tháng sau",
+    "error-payout-date-invalid": "Ngày chi thực tế không hợp lệ (dạng YYYY-MM-DD, không trước ngày đầu kỳ)",
+    "error-expense-allowance-managed": "Khoản chi phụ cấp được sinh tự động từ bảng {code}: không sửa hoặc xóa tay",
+    "error-member-possible-duplicate": "Đã có hồ sơ trùng họ tên và ngày sinh: kiểm tra lại trước khi tiếp tục",
+    "error-national-id-duplicate": "Số CCCD đã thuộc hồ sơ {code} - {name}: không thể tạo trùng",
+    "error-member-code-conflict": "Không sinh được mã thành viên: mã {code} đã tồn tại. Cần rà soát dữ liệu mã trước khi thêm",
+    "error-member-group-required": "Thành viên MTE mới phải được gán vào một nhóm MTE",
+    "error-bank-name-invalid": "Ngân hàng không có trong danh sách ngân hàng đang hoạt động"
 }

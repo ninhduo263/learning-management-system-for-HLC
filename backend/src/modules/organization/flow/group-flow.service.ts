@@ -329,6 +329,27 @@ export class GroupFlowService {
         }
     }
 
+    /** Đưa thành viên (mới tạo) vào nhóm trong cùng transaction: nhóm phải đang hoạt động, đúng loại thành viên */
+    async joinGroup(
+        groupId: string,
+        member: { _id: string; memberType: string },
+        user: User,
+        t: Transaction,
+        note?: string,
+    ) {
+        const group = await this.getGroup(groupId, t);
+        const expected =
+            group.groupKind === GroupKind.FUND
+                ? MemberType.MENTOR
+                : MemberType.MENTEE;
+        if (!group.isActive || member.memberType !== expected)
+            throw ApiError.BadRequest("error-group-member-type", {
+                name: group.name,
+            });
+        await this.moveMember(groupId, member._id, user, t, note);
+        return group;
+    }
+
     /** Chuyển thành viên vào nhóm (kết thúc nhóm cũ, gỡ chức Leader/Phó ở nhóm cũ) */
     private async moveMember(
         groupId: string,

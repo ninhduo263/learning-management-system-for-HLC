@@ -159,12 +159,12 @@ export default function AdminFundPage() {
         </div>
       )}
       <Card>
-        <Tabs items={[
+        <Tabs defaultActiveKey={typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') ?? 'list' : 'list'} items={[
           { key: 'list', label: date ? `Minh chứng ngày ${formatDate(date)}` : 'Minh chứng', children: listTab },
           { key: 'stats', label: 'Thống kê tháng', children: statsTab },
           { key: 'fund-groups', label: 'Nhóm MTO & thầy cô', children: <FundGroupReport fixedKind="FUND" /> },
           { key: 'mte-groups', label: 'Nhóm MTE', children: <FundGroupReport fixedKind="MENTEE" /> },
-          { key: 'ledger', label: 'Sổ thu chi (tổng hợp chung)', children: <FundLedgerPanel /> }
+          { key: 'ledger', label: 'Dashboard thu chi', children: <FundLedgerPanel /> }
         ]} />
       </Card>
       <Modal title={`Từ chối ${rejecting?.length ?? 0} minh chứng`} open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Từ chối" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden>

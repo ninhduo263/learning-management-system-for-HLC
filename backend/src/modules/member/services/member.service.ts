@@ -8,6 +8,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { MemberModel } from "../models/member.model";
 import { MemberProfileService } from "./member-profile.service";
+import { maskSensitive } from "./member-admin.service";
 import { Member } from "../entities/member.entity";
 import { MemberRepository } from "../repositories/member-repository.interface";
 
@@ -28,6 +29,48 @@ export class MemberService extends BaseService<Member, MemberRepository> {
         });
     }
 
+    /** API danh sách / chi tiết không trả đầy đủ CCCD và số tài khoản (xem đầy đủ qua API riêng, có nhật ký) */
+    private mask<T>(row: T): T {
+        if (!row || typeof row !== "object") return row;
+        const plain = (
+            typeof (row as { get?: unknown }).get === "function"
+                ? (row as unknown as { get: (o: object) => object }).get({
+                      plain: true,
+                  })
+                : row
+        ) as Record<string, unknown>;
+        return {
+            ...plain,
+            nationalId: maskSensitive(plain.nationalId as string),
+            bankAccount: maskSensitive(plain.bankAccount as string),
+        } as T;
+    }
+
+    async getById(
+        ...args: Parameters<BaseService<Member, MemberRepository>["getById"]>
+    ) {
+        return this.mask(await super.getById(...args));
+    }
+
+    async getOne(
+        ...args: Parameters<BaseService<Member, MemberRepository>["getOne"]>
+    ) {
+        return this.mask(await super.getOne(...args));
+    }
+
+    async getMany(
+        ...args: Parameters<BaseService<Member, MemberRepository>["getMany"]>
+    ) {
+        return (await super.getMany(...args)).map((row) => this.mask(row));
+    }
+
+    async getPage(
+        ...args: Parameters<BaseService<Member, MemberRepository>["getPage"]>
+    ) {
+        const page = await super.getPage(...args);
+        return { ...page, result: page.result.map((row) => this.mask(row)) };
+    }
+
     /** Sửa qua CRUD (PUT /member/:id) cũng ghi lịch sử hồ sơ */
     async updateById(
         user: User,
@@ -39,6 +82,14 @@ export class MemberService extends BaseService<Member, MemberRepository> {
             BaseService<Member, MemberRepository>["updateById"]
         >[3],
     ) {
+        // Giá trị đã che (•••) gửi ngược lên thì bỏ qua, không ghi đè dữ liệu thật
+        for (const key of ["nationalId", "bankAccount"])
+            if (
+                String(
+                    (update as Record<string, unknown>)?.[key] ?? "",
+                ).includes("•")
+            )
+                delete (update as Record<string, unknown>)[key];
         const before = await this.memberModel.findByPk(id, { raw: true });
         const result = await super.updateById(user, id, update, query);
         if (before && result)

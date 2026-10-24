@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
+  Alert, App, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
 } from 'antd';
 import { PrinterOutlined, CalculatorOutlined, DownloadOutlined, LockOutlined, PlusOutlined, SettingOutlined, UnlockOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
@@ -10,10 +10,11 @@ import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
   PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, POINT_CATEGORY_LABEL, SOURCE_TYPE_LABEL,
-  GROUP_KIND_LABEL, PERIOD_FIELD_LABEL, PERIOD_LOG_LABEL, type PeriodLog, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
+  GROUP_KIND_LABEL, PERIOD_FIELD_LABEL, systemConfigApi, PERIOD_LOG_LABEL, type PeriodLog, completionApi, type GroupCompletion, memberCrudApi, money, pointApi, pointRuleApi, pointTypeApi, points, periodLabel,
   type AdjustmentView, type Member, type MemberBreakdown, type PeriodExportView, type PeriodSummary, type PointRule, type PointType, type SummaryRow
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
+import dayjs, { type Dayjs } from 'dayjs';
 import { can, useAccess } from '@/lib/useAccess';
 
 /** Mã tháng trước của 'YYYY-MM' */
@@ -35,9 +36,23 @@ export default function AdminPointsPage() {
   const access = useAccess();
   const canEdit = can(access, 'EDIT_POINTS');
   const canLock = can(access, 'LOCK_PERIOD');
-  const [code, setCode] = useState(() => currentPeriodCode(getCurrentTime()));
+  const canConfirmPayout = can(access, 'CONFIRM_PAYOUT');
+  const [unlockPaidAllowed, setUnlockPaidAllowed] = useState(true);
+  useEffect(() => {
+    let active = true;
+    systemConfigApi.get().then((config) => { if (active) setUnlockPaidAllowed(config.allowUnlockPaidPeriod); }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
+  const [payOpen, setPayOpen] = useState(false);
+  const [payDate, setPayDate] = useState<Dayjs | null>(null);
+  // Mở từ sổ quỹ: /admin-points?period=2026-10
+  const [code, setCode] = useState(() => {
+    const fromUrl = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('period') : null;
+    return fromUrl && /^\d{4}-\d{2}$/.test(fromUrl) ? fromUrl : currentPeriodCode(getCurrentTime());
+  });
   // Ngày 1-10: bảng tháng trước còn chờ chi -> mặc định xem song song 2 bảng
-  const [view, setView] = useState<'single' | 'dual'>(() => vnDay(getCurrentTime()) <= 10 ? 'dual' : 'single');
+  const [view, setView] = useState<'single' | 'dual'>(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('period') ? 'single' : vnDay(getCurrentTime()) <= 10 ? 'dual' : 'single');
   const [dualTick, setDualTick] = useState(0);
   const [summary, setSummary] = useState<PeriodSummary | null>(null);
   const [adjustments, setAdjustments] = useState<AdjustmentView[]>([]);
@@ -240,7 +255,7 @@ export default function AdminPointsPage() {
         </div>
         {vnDay(getCurrentTime()) <= 10 && <Alert type="info" showIcon title={`Từ ngày 1 đến 10: bảng PC-${previousCode(current)} đang chờ chi, bảng PC-${current} đang tích lũy. Thao tác ở bảng nào chỉ áp dụng cho bảng đó.`} />}
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {[previousCode(current), current].map((target) => <PeriodBoard key={`${target}-${dualTick}`} code={target} onOpen={() => open(target)} canEdit={canEdit} canLock={canLock} />)}
+          {[previousCode(current), current].map((target) => <PeriodBoard key={`${target}-${dualTick}`} code={target} onOpen={() => open(target)} canEdit={canEdit} canLock={canLock} canPay={canConfirmPayout} />)}
         </div>
       </div>
     );
@@ -260,8 +275,8 @@ export default function AdminPointsPage() {
           {canEdit && <Button icon={<SettingOutlined />} disabled={locked} onClick={() => { settingsForm.setFieldsValue({ pointRate: Number(period?.pointRate ?? 0), baseAllowance: Number(period?.baseAllowance ?? 0), payoutDate: period?.payoutDate ?? '', reason: '' }); setSettingsOpen(true); }}>Đơn giá</Button>}
           {canEdit && <Button type="primary" icon={<CalculatorOutlined />} disabled={locked} loading={busy === 'recalc'} onClick={recalc}>Tính lại</Button>}
           {!locked && canLock && <Popconfirm title={`Chốt ${periodLabel(code)}?`} description="Sau khi chốt không thể tính lại hay điều chỉnh điểm." onConfirm={() => run('lock', () => pointApi.lock(code), 'Đã chốt kỳ')}><Button icon={<LockOutlined />} loading={busy === 'lock'}>Chốt kỳ</Button></Popconfirm>}
-          {locked && period?.status !== 'PAID' && access?.isSuperAdmin && <Button icon={<UnlockOutlined />} loading={busy === 'unlock'} onClick={() => { setUnlockReason(''); setUnlockOpen(true); }}>Mở khóa</Button>}
-          {locked && period?.status !== 'PAID' && canLock && <Popconfirm title="Xác nhận đã chi trả kỳ này?" onConfirm={() => run('paid', () => pointApi.paid(code), 'Đã đánh dấu chi trả')}><Button icon={<CheckCircleOutlined />}>Đã chi trả</Button></Popconfirm>}
+          {locked && (period?.status !== 'PAID' || unlockPaidAllowed) && access?.isSuperAdmin && <Button icon={<UnlockOutlined />} loading={busy === 'unlock'} onClick={() => { setUnlockReason(''); setUnlockOpen(true); }}>Mở khóa</Button>}
+          {locked && period?.status !== 'PAID' && canConfirmPayout && <Button icon={<CheckCircleOutlined />} onClick={() => { setPayDate(dayjs(period?.payoutDate ?? getCurrentTime())); setPayOpen(true); }}>Xác nhận đã chi</Button>}
         </Space>
       </div>
 
@@ -271,6 +286,15 @@ export default function AdminPointsPage() {
         <Card size="small"><Statistic title="Tổng chi trả" value={money(summary?.totals.amount)} /></Card>
         <Card size="small"><Statistic title="Khiếu nại chờ" value={pending.length} /></Card>
       </div>
+      {period?.status === 'PAID' && summary?.payout && (
+        <Alert
+          type="success"
+          showIcon
+          title={`Đã chi ngày ${(period.paidDate ?? summary.payout.expenseDate).split('-').reverse().join('/')} · ghi sổ quỹ ${money(summary.payout.amount)} (${summary.payout.sheetCode})`}
+          description={Math.round(summary.totals.amount) !== Math.round(summary.payout.amount) ? `Bảng hiện tại ${money(summary.totals.amount)}, lệch ${money(summary.totals.amount - summary.payout.amount)} so với số đã chi: ghi “Bù chênh lệch” sang tháng sau để sổ quỹ khớp.` : undefined}
+          action={<Button size="small" onClick={() => window.open('/admin-fund?tab=ledger', '_blank')}>Xem sổ quỹ</Button>}
+        />
+      )}
       {period && (
         <Typography.Text type="secondary">
           Đơn giá {money(period.pointRate)}/điểm · Phụ cấp cơ bản {money(period.baseAllowance)} · Ngày chi trả {period.payoutDate ? period.payoutDate.split('-').reverse().join('/') : '—'}.
@@ -328,8 +352,28 @@ export default function AdminPointsPage() {
 
       <Modal title={`Mở khóa ${period?.sheetCode ?? ''}`} open={unlockOpen} onCancel={() => setUnlockOpen(false)} okText="Mở khóa" okButtonProps={{ disabled: !unlockReason.trim() }} confirmLoading={busy === 'unlock'}
         onOk={() => run('unlock', async () => { await pointApi.unlock(code, unlockReason); setUnlockOpen(false); }, 'Đã mở khóa kỳ (đã ghi nhật ký)')} destroyOnHidden>
-        <Typography.Paragraph type="secondary">Mở khóa để sửa bảng đang chờ chi. Thao tác được ghi nhật ký. Kỳ đã chi không mở khóa được: dùng “Bù chênh lệch” sang tháng sau.</Typography.Paragraph>
+        <Typography.Paragraph type="secondary">
+          Mở khóa để sửa điểm, đơn giá rồi chốt lại; hệ thống tính lại bảng ngay. Thao tác được ghi nhật ký.
+          {period?.status === 'PAID' && ' Kỳ này đã chi: khoản chi trong sổ quỹ giữ nguyên, phần chênh lệch sau khi sửa ghi bằng “Bù chênh lệch” sang tháng sau.'}
+        </Typography.Paragraph>
         <Input.TextArea rows={3} placeholder="Lý do mở khóa (bắt buộc)" value={unlockReason} onChange={(event) => setUnlockReason(event.target.value)} />
+      </Modal>
+
+      <Modal title={`Xác nhận đã chi ${period?.sheetCode ?? ''}`} open={payOpen} onCancel={() => setPayOpen(false)} okText="Xác nhận đã chi" okButtonProps={{ disabled: !payDate }} confirmLoading={busy === 'paid'} destroyOnHidden
+        onOk={() => run('paid', async () => {
+          const result = await pointApi.paid(code, payDate?.format('YYYY-MM-DD'));
+          setPayOpen(false);
+          if (!result.created && result.difference) {
+            modal.warning({
+              title: 'Sổ quỹ giữ khoản chi đã ghi trước đó',
+              content: `Bảng đã sửa sau lần chi trước, lệch ${money(result.difference)} so với số đã ghi sổ. Hãy ghi “Bù chênh lệch” sang tháng sau (tab Xuất file chi trả) để sổ quỹ khớp.`
+            });
+          }
+        }, 'Đã xác nhận chi: khoản chi đã ghi vào sổ quỹ')}>
+        <Typography.Paragraph type="secondary">
+          Ghi ngày chi thực tế. Hệ thống sinh 1 khoản chi {money(summary?.totals.amount)} trong sổ quỹ HLC Fund, gắn mã {period?.sheetCode}; ngày chi là mốc tính thu chi theo tháng, quý.
+        </Typography.Paragraph>
+        <DatePicker className="w-full" format="DD/MM/YYYY" value={payDate} onChange={setPayDate} />
       </Modal>
 
       <Modal title={`Bù chênh lệch từ ${period?.sheetCode ?? ''} sang tháng sau`} open={carryOpen} onCancel={() => setCarryOpen(false)} onOk={() => carryForm.submit()} okText="Ghi dòng bù" confirmLoading={busy === 'carry'} destroyOnHidden>
@@ -362,7 +406,7 @@ export default function AdminPointsPage() {
           <Form.Item name="pointRate" label="Số tiền cho 1 điểm (đ)" rules={[{ required: true, message: 'Nhập đơn giá' }, { type: 'number', min: 0, message: 'Đơn giá không được âm' }]}><InputNumber<number> className="w-full" min={0} step={1000} /></Form.Item>
           <Form.Item name="baseAllowance" label="Phụ cấp cơ bản mỗi người (đ)" rules={[{ required: true, message: 'Nhập phụ cấp cơ bản (có thể là 0)' }, { type: 'number', min: 0, message: 'Không được âm' }]}><InputNumber<number> className="w-full" min={0} step={1000} /></Form.Item>
           <Form.Item name="payoutDate" label="Ngày chi trả (YYYY-MM-DD)" rules={[{ pattern: /^\d{4}-\d{2}-\d{2}$/, message: 'Dạng YYYY-MM-DD, ví dụ 2026-11-10' }]}><Input placeholder="2026-11-10" /></Form.Item>
-          <Form.Item name="reason" label="Lý do sửa (ghi nhật ký)"><Input /></Form.Item>
+          <Form.Item name="reason" label="Lý do sửa (bắt buộc, ghi nhật ký)" rules={[{ required: true, whitespace: true, message: 'Nhập lý do sửa đơn giá' }]}><Input /></Form.Item>
         </Form>
       </Modal>
 
@@ -385,7 +429,7 @@ export default function AdminPointsPage() {
 }
 
 /** Một bảng tổng hợp gọn (chế độ song song): mã, trạng thái và thao tác riêng của kỳ */
-function PeriodBoard({ code, onOpen, canEdit, canLock }: { code: string; onOpen: () => void; canEdit: boolean; canLock: boolean }) {
+function PeriodBoard({ code, onOpen, canEdit, canLock, canPay }: { code: string; onOpen: () => void; canEdit: boolean; canLock: boolean; canPay: boolean }) {
   const { message } = App.useApp();
   const [summary, setSummary] = useState<PeriodSummary | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -430,7 +474,7 @@ function PeriodBoard({ code, onOpen, canEdit, canLock }: { code: string; onOpen:
       <Space wrap className="mb-3">
         {!locked && canEdit && <Button size="small" icon={<CalculatorOutlined />} loading={busy === 'recalc'} onClick={() => run('recalc', () => pointApi.recalculate(code), `Đã tính lại PC-${code}`)}>Tính lại</Button>}
         {!locked && canLock && <Popconfirm title={`Chốt bảng PC-${code}?`} onConfirm={() => run('lock', () => pointApi.lock(code), `Đã chốt PC-${code}`)}><Button size="small" icon={<LockOutlined />} loading={busy === 'lock'}>Chốt kỳ</Button></Popconfirm>}
-        {locked && period?.status !== 'PAID' && canLock && <Popconfirm title={`Xác nhận đã chi bảng PC-${code}?`} onConfirm={() => run('paid', () => pointApi.paid(code), 'Đã đánh dấu chi trả')}><Button size="small" icon={<CheckCircleOutlined />}>Đã chi trả</Button></Popconfirm>}
+        {locked && period?.status !== 'PAID' && canPay && <Button size="small" icon={<CheckCircleOutlined />} onClick={onOpen}>Xác nhận đã chi…</Button>}
         <Button size="small" icon={<DownloadOutlined />} disabled={!locked && !canEdit && !canLock} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx', locked), 'Đã xuất file Excel')}>Xuất Excel</Button>
       </Space>
       <Table<SummaryRow>

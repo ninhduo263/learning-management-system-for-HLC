@@ -15,16 +15,26 @@ import { MemberExportService } from "./services/member-export.service";
 import { ProvinceService } from "./services/province.service";
 import { MemberExportController } from "./controllers/member-export.controller";
 import { ProvinceController } from "./controllers/province.controller";
+import { MemberAdminController } from "./controllers/member-admin.controller";
+import { MemberDirectoryController } from "./controllers/member-directory.controller";
+import { MemberAdminService } from "./services/member-admin.service";
 
 @Module({
     imports: [SequelizeModule.forFeature([MemberModel, MemberProfileLogModel])],
-    controllers: [MemberController, ProvinceController, MemberExportController],
+    controllers: [
+        MemberController,
+        ProvinceController,
+        MemberExportController,
+        MemberAdminController,
+        MemberDirectoryController,
+    ],
     providers: [
         MemberService,
         MemberToolsService,
         MemberProfileService,
         ProvinceService,
         MemberExportService,
+        MemberAdminService,
         RepositoryProvider(Entity.MEMBER, MemberSqlRepository),
         SqlTransaction,
         TransactionProvider(SqlTransaction),

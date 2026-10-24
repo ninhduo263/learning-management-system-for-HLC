@@ -71,6 +71,11 @@ export class Member implements BaseEntity {
 
     @IsString()
     @IsOptional()
+    @EntityDefinition.field({ label: "Số CCCD" })
+    nationalId?: string;
+
+    @IsString()
+    @IsOptional()
     @EntityDefinition.field({ label: "Ngành học" })
     major?: string;
 

@@ -1,3 +1,5 @@
+import { PeriodModel } from "@module/period/models/period.model";
+import { AllowanceSummaryModel } from "@module/point/models/allowance-summary.model";
 import { ActivityLogService } from "@module/activity-log/activity-log.service";
 import { isValidDateKey, vnDateKey, vnParts } from "@common/utils/vn-date.util";
 import { ApiError } from "@config/exception/api-error";
@@ -67,6 +69,10 @@ export class FundFlowService {
         private readonly sequelize: Sequelize,
         private readonly timeService: TimeService,
         private readonly periodFlow: PeriodFlowService,
+        @InjectModel(PeriodModel)
+        private readonly periodModel: typeof PeriodModel,
+        @InjectModel(AllowanceSummaryModel)
+        private readonly summaryModel: typeof AllowanceSummaryModel,
         private readonly attachments: AttachmentFlowService,
         private readonly groupAccess: GroupAccessService,
         private readonly activityLog: ActivityLogService,
@@ -978,14 +984,29 @@ export class FundFlowService {
     // Sổ thu chi chung (MTO + MTE + thầy cô), theo tháng và quý
     // ------------------------------------------------------------------
 
-    async ledger(query: { year?: number; quarter?: number; kind?: PayerKind }) {
+    /**
+     * Sổ thu chi / Dashboard (theo tháng hoặc quý của năm). Thu: minh chứng quỹ đã duyệt theo ngày đóng, tách
+     * nguồn nhóm MTE / nhóm HLC Fund của MTO / thầy cô ngoài danh sách. Chi: theo NGÀY CHI THỰC TẾ, tách chi
+     * phụ cấp (sinh tự động khi Xác nhận đã chi, gắn mã bảng PC-YYYY-MM) và các khoản chi khác.
+     * Lọc: kind (nguồn thu), groupKind (MENTEE = nhóm MTE; FUND = MTO + thầy cô), month, quarter.
+     */
+    async ledger(query: {
+        year?: number;
+        quarter?: number;
+        month?: number;
+        kind?: PayerKind;
+        groupKind?: string;
+    }) {
         const year = query.year || vnParts(this.timeService.now()).year;
-        const months = query.quarter
-            ? [0, 1, 2].map((index) => (query.quarter - 1) * 3 + 1 + index)
-            : Array.from({ length: 12 }, (_, index) => index + 1);
-        const from = `${year}-${String(months[0]).padStart(2, "0")}-01`;
+        const months = query.month
+            ? [query.month]
+            : query.quarter
+              ? [0, 1, 2].map((index) => (query.quarter - 1) * 3 + 1 + index)
+              : Array.from({ length: 12 }, (_, index) => index + 1);
+        const pad = (value: number) => String(value).padStart(2, "0");
+        const from = `${year}-${pad(months[0])}-01`;
         const lastMonth = months[months.length - 1];
-        const to = `${year}-${String(lastMonth).padStart(2, "0")}-${String(new Date(Date.UTC(year, lastMonth, 0)).getUTCDate()).padStart(2, "0")}`;
+        const to = `${year}-${pad(lastMonth)}-${pad(new Date(Date.UTC(year, lastMonth, 0)).getUTCDate())}`;
         const income = await this.contributionModel.findAll({
             where: {
                 status: FundContributionStatus.DONE,
@@ -993,11 +1014,13 @@ export class FundFlowService {
             },
             raw: true,
         });
-        const expenses = await this.expenseModel.findAll({
-            where: { expenseDate: { [Op.lte]: to } },
-            order: [["expenseDate", "DESC"]],
-            raw: true,
-        });
+        const expenses = (
+            await this.expenseModel.findAll({
+                where: { expenseDate: { [Op.lte]: to } },
+                order: [["expenseDate", "DESC"]],
+                raw: true,
+            })
+        ).map((row) => ({ ...row, amount: Number(row.amount) }));
         const members = new Map(
             (
                 await this.memberModel.findAll({
@@ -1021,11 +1044,31 @@ export class FundFlowService {
                 : members.get(row.memberId) === MemberType.MENTOR
                   ? "MTO"
                   : "MTE";
+        const groupKinds: Record<string, PayerKind[]> = {
+            MENTEE: ["MTE"],
+            FUND: ["MTO", "EXTERNAL"],
+        };
         const incomeRows = income.filter(
-            (row) => !query.kind || kindOf(row) === query.kind,
+            (row) =>
+                (!query.kind || kindOf(row) === query.kind) &&
+                (!query.groupKind ||
+                    (groupKinds[query.groupKind] ?? []).includes(kindOf(row))),
         );
+        const isAllowance = (row: { source?: string }) =>
+            row.source === "ALLOWANCE";
         const inRange = (date: string) => date >= from && date <= to;
         const monthOf = (date: string) => Number(date.slice(5, 7));
+        const byKind = (rows: FundContribution[]) => ({
+            total: sum(rows),
+            MTE: sum(rows.filter((row) => kindOf(row) === "MTE")),
+            MTO: sum(rows.filter((row) => kindOf(row) === "MTO")),
+            EXTERNAL: sum(rows.filter((row) => kindOf(row) === "EXTERNAL")),
+        });
+        const byType = (rows: typeof expenses) => ({
+            total: sum(rows),
+            ALLOWANCE: sum(rows.filter(isAllowance)),
+            OTHER: sum(rows.filter((row) => !isAllowance(row))),
+        });
         const byMonth = months.map((month) => {
             const monthIncome = incomeRows.filter(
                 (row) =>
@@ -1037,68 +1080,109 @@ export class FundFlowService {
                     inRange(row.expenseDate) &&
                     monthOf(row.expenseDate) === month,
             );
+            const expense = byType(monthExpense);
             return {
                 month,
-                code: `${year}-${String(month).padStart(2, "0")}`,
-                income: {
-                    total: sum(monthIncome),
-                    MTO: sum(
-                        monthIncome.filter((row) => kindOf(row) === "MTO"),
-                    ),
-                    MTE: sum(
-                        monthIncome.filter((row) => kindOf(row) === "MTE"),
-                    ),
-                    EXTERNAL: sum(
-                        monthIncome.filter((row) => kindOf(row) === "EXTERNAL"),
-                    ),
-                },
-                expense: sum(monthExpense),
+                code: `${year}-${pad(month)}`,
+                income: byKind(monthIncome),
+                expense: expense.total,
+                expenseByType: expense,
+                net: sum(monthIncome) - expense.total,
             };
         });
         const quarters = [1, 2, 3, 4]
-            .filter((item) => !query.quarter || item === query.quarter)
+            .filter((item) =>
+                months.some((month) => Math.ceil(month / 3) === item),
+            )
             .map((item) => {
                 const rows = byMonth.filter(
                     (row) => Math.ceil(row.month / 3) === item,
                 );
+                const incomeTotal = rows.reduce(
+                    (total, row) => total + row.income.total,
+                    0,
+                );
+                const expenseTotal = rows.reduce(
+                    (total, row) => total + row.expense,
+                    0,
+                );
                 return {
                     quarter: item,
-                    income: rows.reduce(
-                        (total, row) => total + row.income.total,
+                    income: incomeTotal,
+                    expense: expenseTotal,
+                    expenseAllowance: rows.reduce(
+                        (total, row) => total + row.expenseByType.ALLOWANCE,
                         0,
                     ),
-                    expense: rows.reduce(
-                        (total, row) => total + row.expense,
-                        0,
-                    ),
+                    net: incomeTotal - expenseTotal,
                 };
             });
-        const totalIncome = byMonth.reduce(
-            (total, row) => total + row.income.total,
-            0,
+        const rangeIncome = incomeRows.filter((row) =>
+            inRange(row.contributionDate),
         );
-        const totalExpense = byMonth.reduce(
-            (total, row) => total + row.expense,
-            0,
-        );
+        const rangeExpense = expenses.filter((row) => inRange(row.expenseDate));
+        const totalIncome = sum(rangeIncome);
+        const expenseSplit = byType(rangeExpense);
+        // Đối chiếu theo kỳ phụ cấp: bảng tổng hợp (điểm x đơn giá) với khoản chi đã ghi sổ
+        const periods = await this.periodModel.findAll({
+            where: { year, month: months },
+            order: [["code", "ASC"]],
+            raw: true,
+        });
+        const allowanceExpenses = expenses.filter(isAllowance);
+        const summaries = periods.length
+            ? await this.summaryModel.findAll({
+                  where: { periodId: periods.map((item) => item._id) },
+                  attributes: ["periodId", "amount"],
+                  raw: true,
+              })
+            : [];
+        const allowancePeriods = periods.map((period) => {
+            const expense = allowanceExpenses.find(
+                (row) => row.periodId === period._id,
+            );
+            const summaryAmount = Math.round(
+                summaries
+                    .filter((row) => row.periodId === period._id)
+                    .reduce((total, row) => total + Number(row.amount ?? 0), 0),
+            );
+            const detail = (expense?.detail ?? {}) as {
+                carryOverTotal?: number;
+            };
+            return {
+                periodCode: period.code,
+                sheetCode: `PC-${period.code}`,
+                status: period.status,
+                summaryAmount,
+                paidDate: period.paidDate ?? null,
+                recordedAmount: expense ? expense.amount : null,
+                expenseDate: expense?.expenseDate ?? null,
+                carryOverTotal: detail.carryOverTotal ?? 0,
+                /** Bảng đã sửa sau khi chi (mở khóa thử nghiệm): xử lý bằng bù chênh lệch tháng sau */
+                difference: expense ? summaryAmount - expense.amount : null,
+            };
+        });
         return {
             year,
             quarter: query.quarter ?? null,
+            month: query.month ?? null,
             kind: query.kind ?? null,
+            groupKind: query.groupKind ?? null,
             from,
             to,
             totals: {
                 income: totalIncome,
-                expense: totalExpense,
-                net: totalIncome - totalExpense,
+                incomeByKind: byKind(rangeIncome),
+                expense: expenseSplit.total,
+                expenseByType: expenseSplit,
+                net: totalIncome - expenseSplit.total,
                 /** Tồn quỹ cuối kỳ (mọi khoản thu đã duyệt - mọi khoản chi đến ngày cuối kỳ) */
                 balance: sum(income) - sum(expenses),
             },
             byMonth,
             byQuarter: quarters,
-            expenses: expenses
-                .filter((row) => inRange(row.expenseDate))
-                .map((row) => ({ ...row, amount: Number(row.amount) })),
+            allowancePeriods,
+            expenses: rangeExpense,
         };
     }
 
@@ -1123,6 +1207,10 @@ export class FundFlowService {
         if (id) {
             const row = await this.expenseModel.findByPk(id);
             if (!row) throw ApiError.NotFound("error-record-not-found");
+            if (row.source === "ALLOWANCE")
+                throw ApiError.BadRequest("error-expense-allowance-managed", {
+                    code: row.sheetCode,
+                });
             await row.update(values);
             return row.get({ plain: true });
         }
@@ -1132,6 +1220,11 @@ export class FundFlowService {
     }
 
     async removeExpense(id: string) {
+        const row = await this.expenseModel.findByPk(id, { raw: true });
+        if (row?.source === "ALLOWANCE")
+            throw ApiError.BadRequest("error-expense-allowance-managed", {
+                code: row.sheetCode,
+            });
         const deleted = await this.expenseModel.destroy({ where: { _id: id } });
         if (!deleted) throw ApiError.NotFound("error-record-not-found");
         return { deleted: true };

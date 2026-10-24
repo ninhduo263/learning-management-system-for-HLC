@@ -16,6 +16,18 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Request } from "express";
+import { SecurityConfigService } from "@module/setting/security-config.service";
+
+/** Khi bắt buộc đổi mật khẩu lần đầu: chỉ cho các API cần để đăng nhập và đổi mật khẩu */
+const PASSWORD_CHANGE_ALLOWED: [string, RegExp][] = [
+    ["GET", /\/user\/me$/],
+    ["PUT", /\/user\/me\/password$/],
+    ["GET", /\/access\/me$/],
+    ["GET", /\/system-config$/],
+    ["GET", /\/member\/me(\/profile)?$/],
+    ["GET", /\/time\/mock$/],
+    ["GET", /\/provinces$/],
+];
 
 @Injectable()
 export class SystemRoleGuard implements CanActivate {
@@ -24,9 +36,41 @@ export class SystemRoleGuard implements CanActivate {
         @Optional()
         @Inject(ADMIN_SCOPE_CHECKER)
         private readonly adminScopeChecker?: AdminScopeChecker,
+        @Optional()
+        private readonly securityConfig?: SecurityConfigService,
     ) {}
 
+    /**
+     * Công tắc "bắt buộc đổi mật khẩu lần đầu" đang bật và tài khoản (không phải Admin toàn cục) chưa tự đổi
+     * mật khẩu lần nào: chặn mọi API trừ các API đăng nhập / đổi mật khẩu.
+     */
+    private async assertPasswordChanged(request: Request) {
+        const auth = request.user;
+        if (!(auth instanceof RequestAuthData) || !this.securityConfig) return;
+        const user = await auth.getUser();
+        if (
+            !user ||
+            user.systemRole === SystemRole.ADMIN ||
+            user.passwordChangedAt
+        )
+            return;
+        const config = await this.securityConfig.get();
+        if (!config.forcePasswordChangeOnFirstLogin) return;
+        const path = (request.originalUrl || request.url || "").split("?")[0];
+        if (
+            PASSWORD_CHANGE_ALLOWED.some(
+                ([method, pattern]) =>
+                    request.method === method && pattern.test(path),
+            )
+        )
+            return;
+        throw ApiError.Forbidden("error-password-change-required");
+    }
+
     async canActivate(context: ExecutionContext): Promise<boolean> {
+        await this.assertPasswordChanged(
+            context.switchToHttp().getRequest<Request>(),
+        );
         const systemRoles =
             this.reflector.get<SystemRole[]>(
                 "system-roles",

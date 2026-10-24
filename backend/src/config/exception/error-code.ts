@@ -122,4 +122,13 @@ export type ErrorCode =
     | "error-module-audience-empty"
     | "error-member-needs-group"
     | "error-role-system"
+    | "error-password-change-required"
+    | "error-period-paid-unlock-disabled"
+    | "error-payout-date-invalid"
+    | "error-expense-allowance-managed"
+    | "error-member-possible-duplicate"
+    | "error-national-id-duplicate"
+    | "error-member-code-conflict"
+    | "error-member-group-required"
+    | "error-bank-name-invalid"
     | FileErrorCode;

@@ -8,11 +8,14 @@ import { SettingService } from "./setting.service";
 export const SECURITY_DEFAULTS: Required<SettingSecurity> = {
     forcePasswordChangeOnFirstLogin: false,
     memberCanEditProfileUrl: false,
+    allowUnlockPaidPeriod: true,
 };
 
 const LABELS: Record<keyof SettingSecurity, string> = {
     forcePasswordChangeOnFirstLogin: "Bắt buộc đổi mật khẩu lần đăng nhập đầu",
     memberCanEditProfileUrl: "MTE / MTO tự sửa link profile",
+    allowUnlockPaidPeriod:
+        "Mở khóa kỳ đã xác nhận đã chi (giai đoạn thử nghiệm)",
 };
 
 /** Công tắc cấu hình hệ thống (Admin toàn cục) */
@@ -23,11 +26,19 @@ export class SecurityConfigService {
         private readonly activityLog: ActivityLogService,
     ) {}
 
+    private cache: { at: number; value: Required<SettingSecurity> } | null =
+        null;
+
+    /** Đọc cấu hình (đệm 10 giây vì guard gọi ở mọi request) */
     async get(): Promise<Required<SettingSecurity>> {
+        if (this.cache && Date.now() - this.cache.at < 10_000)
+            return this.cache.value;
         const value = await this.settingService
             .getSettingValue(SettingKey.SECURITY)
             .catch(() => null);
-        return { ...SECURITY_DEFAULTS, ...(value ?? {}) };
+        const merged = { ...SECURITY_DEFAULTS, ...(value ?? {}) };
+        this.cache = { at: Date.now(), value: merged };
+        return merged;
     }
 
     async set(user: User, dto: SettingSecurity) {
@@ -42,6 +53,7 @@ export class SecurityConfigService {
             ),
         } as Required<SettingSecurity>;
         await this.settingService.setSettingValue(SettingKey.SECURITY, next);
+        this.cache = null;
         const changes = (
             Object.keys(SECURITY_DEFAULTS) as (keyof SettingSecurity)[]
         )

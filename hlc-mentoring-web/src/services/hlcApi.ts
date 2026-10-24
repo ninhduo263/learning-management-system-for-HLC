@@ -36,6 +36,8 @@ export interface PeriodView {
   payoutDate: string | null;
   lockedAt: string | null;
   isLocked: boolean;
+  /** Ngày chi thực tế (Xác nhận đã chi) */
+  paidDate?: string | null;
   /** Mã bảng tổng hợp: PC-YYYY-MM */
   sheetCode?: string;
 }
@@ -96,6 +98,8 @@ export interface SummaryRow {
 }
 
 export interface PeriodSummary {
+  /** Khoản chi đã ghi sổ quỹ (null nếu chưa xác nhận đã chi) */
+  payout?: PayoutExpense | null;
   period: PeriodView;
   pointTypes: PointTypeBrief[];
   rows: SummaryRow[];
@@ -169,7 +173,9 @@ export const pointApi = {
   logs: (code: string) => apiJson<PeriodLog[]>(`${period(code)}/logs`),
   carryOver: (code: string, body: { memberId: string; amount?: number; points?: number; reason: string }) =>
     apiJson<{ targetSheet: string }>(`${period(code)}/carry-over`, { method: 'POST', json: body }),
-  paid: (code: string) => apiJson<PeriodView>(`${period(code)}/paid`, { method: 'POST' }),
+  /** Xác nhận đã chi: ghi ngày chi thực tế và sinh 1 khoản chi trong sổ quỹ */
+  paid: (code: string, paidDate?: string) =>
+    apiJson<PeriodView & { expense: PayoutExpense | null; created: boolean; difference: number }>(`${period(code)}/paid`, { method: 'POST', json: { paidDate } }),
   summary: (code: string) => apiJson<PeriodSummary>(`${period(code)}/summary`),
   breakdown: (code: string, memberId: string) => apiJson<MemberBreakdown>(`${period(code)}/members/${memberId}`),
   adjustments: (code: string, status?: string) => apiJson<AdjustmentView[]>(`${period(code)}/adjustments${q({ status })}`),
@@ -244,6 +250,8 @@ export interface Member {
   bankName: string | null;
   address: string | null;
   hometown: string | null;
+  /** Số CCCD (đã che trong danh sách) */
+  nationalId?: string | null;
   /** Mã tỉnh, thành phố (danh mục 34 tỉnh) */
   hometownCode: string | null;
   addressCode: string | null;
@@ -318,14 +326,25 @@ export const PAYER_KIND_LABEL: Record<PayerKind, string> = { MTO: 'MTO', MTE: 'M
 
 export interface FundContributor { _id: string; fullName: string; organization: string | null; contact: string | null; groupId: string | null; note: string | null; isActive: boolean }
 
+type IncomeByKind = { total: number; MTO: number; MTE: number; EXTERNAL: number };
+type ExpenseByType = { total: number; ALLOWANCE: number; OTHER: number };
+export interface PayoutExpense {
+  _id: string; expenseDate: string; amount: number; description: string; category: string | null;
+  source?: 'MANUAL' | 'ALLOWANCE'; periodId?: string | null; sheetCode?: string | null;
+  detail?: { members?: number; carryOverTotal?: number; carryOvers?: { memberCode: string | null; fullName: string | null; amount: number; reason: string }[]; reconfirmations?: { at: string; summaryTotal: number; difference: number }[] } | null;
+}
 export interface FundLedger {
   year: number;
   quarter: number | null;
+  month: number | null;
   kind: PayerKind | null;
-  totals: { income: number; expense: number; net: number; balance: number };
-  byMonth: { month: number; code: string; income: { total: number; MTO: number; MTE: number; EXTERNAL: number }; expense: number }[];
-  byQuarter: { quarter: number; income: number; expense: number }[];
-  expenses: { _id: string; expenseDate: string; amount: number; description: string; category: string | null }[];
+  groupKind: GroupKind | null;
+  totals: { income: number; incomeByKind: IncomeByKind; expense: number; expenseByType: ExpenseByType; net: number; balance: number };
+  byMonth: { month: number; code: string; income: IncomeByKind; expense: number; expenseByType: ExpenseByType; net: number }[];
+  byQuarter: { quarter: number; income: number; expense: number; expenseAllowance: number; net: number }[];
+  /** Đối chiếu theo kỳ phụ cấp: bảng tổng hợp và khoản chi đã ghi sổ */
+  allowancePeriods: { periodCode: string; sheetCode: string; status: PeriodStatus; summaryAmount: number; paidDate: string | null; recordedAmount: number | null; expenseDate: string | null; carryOverTotal: number; difference: number | null }[];
+  expenses: PayoutExpense[];
 }
 
 export interface MyFund {
@@ -389,8 +408,8 @@ export const fundApi = {
   contributors: (groupId?: string) => apiJson<FundContributor[]>(`/fund/contributors${q({ groupId })}`),
   saveContributor: (body: Partial<FundContributor>, id?: string) =>
     apiJson<FundContributor>(id ? `/fund/contributors/${id}` : '/fund/contributors', { method: id ? 'PUT' : 'POST', json: body }),
-  ledger: (params: { year?: number; quarter?: number; kind?: PayerKind }) =>
-    apiJson<FundLedger>(`/fund/ledger${q({ year: params.year ? String(params.year) : undefined, quarter: params.quarter ? String(params.quarter) : undefined, kind: params.kind })}`),
+  ledger: (params: { year?: number; quarter?: number; month?: number; kind?: PayerKind; groupKind?: GroupKind }) =>
+    apiJson<FundLedger>(`/fund/ledger${q({ year: params.year ? String(params.year) : undefined, quarter: params.quarter ? String(params.quarter) : undefined, month: params.month ? String(params.month) : undefined, kind: params.kind, groupKind: params.groupKind })}`),
   saveExpense: (body: { expenseDate: string; amount: number; description: string; category?: string }, id?: string) =>
     apiJson(id ? `/fund/expenses/${id}` : '/fund/expenses', { method: id ? 'PUT' : 'POST', json: body }),
   removeExpense: (id: string) => apiJson(`/fund/expenses/${id}`, { method: 'DELETE' }),
@@ -693,7 +712,8 @@ export const ROLE_PERMISSION_LABEL: Record<string, string> = {
   SCORE_RECAP: 'Chấm recap MTE',
   REVIEW_FUND: 'Duyệt minh chứng quỹ',
   PROXY_FUND: 'Nộp hộ minh chứng quỹ',
-  LOCK_PERIOD: 'Chốt kỳ phụ cấp, đánh dấu đã chi',
+  LOCK_PERIOD: 'Chốt kỳ phụ cấp',
+  CONFIRM_PAYOUT: 'Xác nhận đã chi (ghi sổ quỹ)',
   EDIT_POINTS: 'Sửa đơn giá, cộng / trừ điểm thủ công',
   VIEW_PAYOUT: 'Xem, xuất bảng phụ cấp đã chốt (kế toán)',
   EXPORT_PERSONAL: 'Xuất dữ liệu cá nhân',
@@ -702,7 +722,7 @@ export const ROLE_PERMISSION_LABEL: Record<string, string> = {
 /** Quyền theo nhóm (tác động trong nhóm, hoặc mọi nhóm của loại được chọn với vai trò cấp ban) */
 export const GROUP_PERMISSIONS = ['VIEW_PROGRESS', 'SCORE_RECAP', 'REVIEW_FUND', 'PROXY_FUND'];
 /** Quyền cấp hệ thống (chỉ cho vai trò cấp ban) */
-export const GLOBAL_PERMISSIONS = ['LOCK_PERIOD', 'EDIT_POINTS', 'VIEW_PAYOUT', 'EXPORT_PERSONAL', 'VIEW_ACTIVITY_LOG'];
+export const GLOBAL_PERMISSIONS = ['LOCK_PERIOD', 'CONFIRM_PAYOUT', 'EDIT_POINTS', 'VIEW_PAYOUT', 'EXPORT_PERSONAL', 'VIEW_ACTIVITY_LOG'];
 export const ROLE_APPLIES_LABEL: Record<RoleAppliesTo, string> = { MENTEE: 'Nhóm MTE', FUND: 'Nhóm HLC Fund (MTO & thầy cô)', BAN: 'Chức vụ ban (không gắn nhóm)' };
 export const ADMIN_SCOPE_LABEL: Record<string, string> = {
   FUND: 'Toàn quyền HLC Fund (MTO và MTE)',
@@ -807,7 +827,7 @@ export const activityApi = {
 
 // ---------- Cấu hình hệ thống ----------
 
-export interface SystemConfig { forcePasswordChangeOnFirstLogin: boolean; memberCanEditProfileUrl: boolean }
+export interface SystemConfig { forcePasswordChangeOnFirstLogin: boolean; memberCanEditProfileUrl: boolean; allowUnlockPaidPeriod: boolean }
 export const systemConfigApi = {
   get: () => apiJson<SystemConfig>('/system-config'),
   save: (body: Partial<SystemConfig>) => apiJson<SystemConfig>('/system-config', { method: 'PUT', json: body })
@@ -819,6 +839,31 @@ export interface Province { _id: string; code: string; name: string; aliases: st
 export const provinceApi = {
   list: (all = false) => apiJson<Province[]>(`/provinces${all ? '?all=true' : ''}`),
   save: (body: Partial<Province>) => apiJson<Province>('/provinces', { method: 'PUT', json: body })
+};
+
+// ---------- Thêm thành viên (Admin toàn cục) ----------
+
+export interface NextMemberCode { code: string; method: 'COUNT' | 'MAX_PLUS_ONE'; total: number; maxSequence: number; warning: string | null }
+export interface DuplicateMember { _id: string; memberCode: string; fullName: string; memberType: string; dateOfBirth: string | null; status: string; phone: string | null; email: string | null }
+export interface NewMemberInput {
+  fullName: string; gender: string; dateOfBirth: string; memberType: 'MENTEE' | 'MENTOR'; hometownCode: string; addressCode: string;
+  phone: string; email: string; nationalId?: string; bankAccount?: string; bankName?: string; groupId?: string; confirmDuplicate?: boolean;
+}
+export const memberAdminApi = {
+  nextCode: (type: 'MENTEE' | 'MENTOR') => apiJson<NextMemberCode>(`/member-admin/next-code?type=${type}`),
+  banks: () => apiJson<string[]>('/member-admin/banks'),
+  precheck: (body: Partial<NewMemberInput>) => apiJson<{ next: NextMemberCode | null; duplicates: DuplicateMember[] }>('/member-admin/precheck', { method: 'POST', json: body }),
+  create: (body: NewMemberInput) =>
+    apiJson<{ member: Member; group: { _id: string; name: string } | null; codeMethod: string; codeWarning: string | null; account: { username: string; password: string } }>('/member-admin/members', { method: 'POST', json: body }),
+  /** Xem đầy đủ CCCD / số tài khoản (ghi nhật ký) */
+  sensitive: (id: string) => apiJson<{ nationalId: string | null; bankAccount: string | null; bankName: string | null }>(`/member-admin/members/${id}/sensitive`)
+};
+
+/** Danh bạ rút gọn (không có dữ liệu nhạy cảm) cho màn hình chọn người */
+export interface DirectoryMember { _id: string; memberCode: string; fullName: string; memberType: 'MENTEE' | 'MENTOR'; status: 'ACTIVE' | 'INACTIVE' }
+export const memberDirectoryApi = {
+  list: (type?: 'MENTEE' | 'MENTOR', all = false) => apiJson<DirectoryMember[]>(`/member-directory${q({ type, all: all ? 'true' : undefined })}`),
+  groups: () => apiJson<{ _id: string; code: string; name: string; groupKind: GroupKind }[]>('/member-directory/groups')
 };
 
 // ---------- Xuất danh sách thành viên ----------
@@ -891,7 +936,7 @@ export interface ProfileLog { _id: string; field: string; oldValue: string | nul
 export const PROFILE_FIELD_LABEL: Record<string, string> = {
   fullName: 'Họ tên', memberType: 'Vai trò', status: 'Trạng thái', dateOfBirth: 'Ngày sinh', gender: 'Giới tính', phone: 'Số điện thoại',
   email: 'Email', address: 'Địa chỉ cũ (nhập tự do)', hometown: 'Quê quán cũ (nhập tự do)', profileUrl: 'Link profile', bankAccount: 'Số tài khoản', bankName: 'Ngân hàng', joinedAt: 'Ngày tham gia',
-  hometownCode: 'Quê quán', addressCode: 'Địa chỉ (tỉnh, thành phố)', major: 'Ngành học', occupation: 'Ngành nghề'
+  hometownCode: 'Quê quán', addressCode: 'Địa chỉ (tỉnh, thành phố)', major: 'Ngành học', occupation: 'Ngành nghề', nationalId: 'Số CCCD'
 };
 
 export const passwordApi = {

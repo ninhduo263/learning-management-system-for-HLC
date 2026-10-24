@@ -448,8 +448,12 @@ export class GroupAccessService {
                 RolePermission.VIEW_PAYOUT,
             ])
                 actions.add(item);
+        // Trưởng ban HLC Fund (vai trò có phạm vi FUND) xác nhận đã chi
+        if (holders.some((row) => row.position.adminScope === AdminScope.FUND))
+            actions.add(RolePermission.CONFIRM_PAYOUT);
         // Có quyền thao tác trên bảng phụ cấp thì vào được màn hình điểm phụ cấp
         if (
+            actions.has(RolePermission.CONFIRM_PAYOUT) ||
             actions.has(RolePermission.LOCK_PERIOD) ||
             actions.has(RolePermission.EDIT_POINTS) ||
             actions.has(RolePermission.VIEW_PAYOUT)

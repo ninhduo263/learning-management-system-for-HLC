@@ -49,7 +49,8 @@ export class PointAdminController {
         const { actions } = await this.access.capabilities(user);
         if (
             actions.has(RolePermission.EDIT_POINTS) ||
-            actions.has(RolePermission.LOCK_PERIOD)
+            actions.has(RolePermission.LOCK_PERIOD) ||
+            actions.has(RolePermission.CONFIRM_PAYOUT)
         )
             return;
         const period = await this.flowService.getPeriodView(code);
@@ -100,9 +101,13 @@ export class PointAdminController {
     }
 
     @Post("periods/:code/paid")
-    async markPaid(@ReqUser() user: User, @Param("code") code: string) {
-        await this.access.assertCan(user, RolePermission.LOCK_PERIOD);
-        return this.flowService.markPaid(periodCode(code), user);
+    async markPaid(
+        @ReqUser() user: User,
+        @Param("code") code: string,
+        @Body("paidDate") paidDate?: string,
+    ) {
+        await this.access.assertCan(user, RolePermission.CONFIRM_PAYOUT);
+        return this.flowService.markPaid(periodCode(code), user, paidDate);
     }
 
     /** Dữ liệu báo cáo PDF mùng 10 (FE in ra PDF) */

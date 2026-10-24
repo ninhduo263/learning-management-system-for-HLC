@@ -6,6 +6,7 @@ import {
     Matches,
     Max,
     Min,
+    IsNotEmpty,
 } from "class-validator";
 
 export class PeriodSettingsDto {
@@ -30,8 +31,8 @@ export class PeriodSettingsDto {
     @IsOptional()
     payoutDate?: string;
 
-    /** Lý do sửa (ghi nhật ký) */
-    @IsString()
-    @IsOptional()
-    reason?: string;
+    /** Lý do sửa (bắt buộc, ghi nhật ký) */
+    @IsString({ message: "Cần nhập lý do sửa" })
+    @IsNotEmpty({ message: "Cần nhập lý do sửa đơn giá" })
+    reason: string;
 }

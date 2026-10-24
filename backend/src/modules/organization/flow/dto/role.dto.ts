@@ -38,6 +38,7 @@ export class RoleDto {
             "REVIEW_FUND",
             "PROXY_FUND",
             "LOCK_PERIOD",
+            "CONFIRM_PAYOUT",
             "EDIT_POINTS",
             "VIEW_PAYOUT",
             "EXPORT_PERSONAL",

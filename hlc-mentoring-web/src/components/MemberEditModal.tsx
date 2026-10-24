@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Alert, App, DatePicker, Form, Input, Modal, Select, Table, Tabs, Tag } from 'antd';
+import { Alert, App, Button, DatePicker, Form, Input, Modal, Select, Table, Tabs, Tag } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { apiJson, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
-import { PROFILE_FIELD_LABEL, profileApi, provinceNeedsReview, type Member, type ProfileLog } from '@/services/hlcApi';
+import { PROFILE_FIELD_LABEL, memberAdminApi, profileApi, provinceNeedsReview, type Member, type ProfileLog } from '@/services/hlcApi';
 import ProvinceSelect, { useProvinces } from '@/components/ProvinceSelect';
 
 type Values = Omit<Partial<Member>, 'dateOfBirth' | 'joinedAt'> & { dateOfBirth?: Dayjs; joinedAt?: Dayjs };
@@ -17,6 +17,18 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
   const [saving, setSaving] = useState(false);
   const [logs, setLogs] = useState<ProfileLog[]>([]);
   const [legacy, setLegacy] = useState<Member | null>(null);
+  const [revealed, setRevealed] = useState(false);
+  /** Xem đầy đủ CCCD / số tài khoản: chỉ Admin toàn cục, máy chủ ghi nhật ký */
+  const reveal = async () => {
+    if (!memberId) return;
+    try {
+      const data = await memberAdminApi.sensitive(memberId);
+      form.setFieldsValue({ bankAccount: data.bankAccount, nationalId: data.nationalId, bankName: data.bankName });
+      setRevealed(true);
+    } catch (error) {
+      message.error(errorMessage(error));
+    }
+  };
   const provinces = useProvinces();
   const provinceName = (code?: string | null) => provinces.find((item) => item.code === code)?.name ?? code ?? '—';
   const display = (row: ProfileLog, value: string | null) =>
@@ -30,6 +42,7 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
       .then((member) => {
         if (!active) return;
         setLegacy(member);
+        setRevealed(false);
         form.setFieldsValue({
           ...member,
           dateOfBirth: member.dateOfBirth ? dayjs(member.dateOfBirth) : undefined,
@@ -52,7 +65,8 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
         phone: nullable(values.phone),
         email: nullable(values.email),
         profileUrl: nullable(values.profileUrl),
-        bankAccount: nullable(values.bankAccount),
+        // Chưa bấm "Hiện" thì không gửi dữ liệu nhạy cảm (giá trị đang bị che)
+        ...(revealed && { bankAccount: nullable(values.bankAccount), nationalId: nullable(values.nationalId) }),
         bankName: nullable(values.bankName),
         hometownCode: values.hometownCode ?? null,
         addressCode: values.addressCode ?? null,
@@ -81,7 +95,7 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
           label: 'Thông tin',
           forceRender: true,
           children: (
-          <Form form={form} layout="vertical" onFinish={save}>
+          <Form form={form} name="editMember" layout="vertical" onFinish={save}>
             {legacy && provinceNeedsReview(legacy) && (
               <Alert className="!mb-3" type="warning" showIcon title="Cần chọn lại tỉnh, thành phố" description={`Dữ liệu cũ chưa quy đổi được: ${[legacy.hometown && `quê quán "${legacy.hometown}"`, legacy.address && `địa chỉ "${legacy.address}"`].filter(Boolean).join(', ')}.`} />
             )}
@@ -94,8 +108,13 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
               <Form.Item name="gender" label="Giới tính"><Select allowClear options={[{ value: 'MALE', label: 'Nam' }, { value: 'FEMALE', label: 'Nữ' }, { value: 'OTHER', label: 'Khác' }]} /></Form.Item>
               <Form.Item name="phone" label="Số điện thoại"><Input /></Form.Item>
               <Form.Item name="email" label="Email" rules={[{ type: 'email', message: 'Email không hợp lệ' }]}><Input /></Form.Item>
-              <Form.Item name="bankAccount" label="Số tài khoản"><Input /></Form.Item>
+              <Form.Item name="bankAccount" label="Số tài khoản" extra={revealed ? 'Đã hiện đầy đủ (có ghi nhật ký)' : <span>Đang che bớt. <Button size="small" type="link" className="!px-0" onClick={reveal}>Hiện CCCD và số tài khoản</Button></span>}>
+                <Input disabled={!revealed} />
+              </Form.Item>
               <Form.Item name="bankName" label="Ngân hàng"><Input /></Form.Item>
+              <Form.Item name="nationalId" label="Số CCCD" rules={revealed ? [{ pattern: /^\d{12}$/, message: 'CCCD gồm 12 chữ số' }] : []}>
+                <Input disabled={!revealed} />
+              </Form.Item>
               <Form.Item name="hometownCode" label="Quê quán (tỉnh, thành phố)"><ProvinceSelect /></Form.Item>
               <Form.Item name="addressCode" label="Địa chỉ (tỉnh, thành phố)"><ProvinceSelect /></Form.Item>
               <Form.Item name="major" label="Ngành học"><Input /></Form.Item>

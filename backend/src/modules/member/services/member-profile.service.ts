@@ -29,6 +29,7 @@ export const TRACKED_FIELDS = [
     "profileUrl",
     "bankAccount",
     "bankName",
+    "nationalId",
     "joinedAt",
 ] as const;
 /**
@@ -50,6 +51,7 @@ export const SELF_EDITABLE = [
 export const ADMIN_EDITABLE = [
     ...SELF_EDITABLE,
     "profileUrl",
+    "nationalId",
     "address",
     "hometown",
     "fullName",
@@ -67,6 +69,7 @@ export const SENSITIVE_FIELDS = [
     "hometown",
     "hometownCode",
     "addressCode",
+    "nationalId",
 ];
 
 const normalize = (value: unknown) =>
@@ -193,6 +196,20 @@ export class MemberProfileService {
     ) {
         const member = await this.memberModel.findByPk(memberId, { raw: true });
         if (!member) throw ApiError.NotFound("error-record-not-found");
+        // Giá trị đã che (•••) thì bỏ qua; CCCD không được trùng hồ sơ khác
+        for (const key of ["nationalId", "bankAccount"])
+            if (String(dto[key] ?? "").includes("•")) delete dto[key];
+        if (dto.nationalId) {
+            const other = await this.memberModel.findOne({
+                where: { nationalId: dto.nationalId as string },
+                raw: true,
+            });
+            if (other && other._id !== member._id)
+                throw ApiError.Conflict("error-national-id-duplicate", {
+                    code: other.memberCode,
+                    name: other.fullName,
+                });
+        }
         return this.save(
             member,
             await this.checkProvinces(this.pick(dto, ADMIN_EDITABLE)),

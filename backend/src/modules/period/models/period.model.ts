@@ -55,4 +55,11 @@ export class PeriodModel extends Model implements Period {
 
     @Column({ type: DataType.STRING(24), allowNull: true })
     lockedBy?: string;
+
+    /** Ngày chi thực tế (Xác nhận đã chi): mốc ghi khoản chi vào sổ quỹ */
+    @Column({ type: DataType.DATEONLY, allowNull: true })
+    paidDate?: string;
+
+    @Column({ type: DataType.STRING(24), allowNull: true })
+    paidBy?: string;
 }
