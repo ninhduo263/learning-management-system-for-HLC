@@ -50,6 +50,22 @@ export class MemberModel extends Model implements Member {
     @Column({ type: DataType.STRING(255), allowNull: true })
     hometown?: string;
 
+    /** Ngành học (MTE: ngành đang học; MTO: ngành đã học) - tiêu chí gợi ý ghép cặp */
+    @Column({ type: DataType.STRING(255), allowNull: true })
+    major?: string;
+
+    /** Ngành nghề / lĩnh vực công việc (MTE: định hướng; MTO: đang làm) */
+    @Column({ type: DataType.STRING(255), allowNull: true })
+    occupation?: string;
+
+    /** Quê quán: mã tỉnh trong danh mục 34 tỉnh, thành phố (Province.code) */
+    @Column({ type: DataType.STRING(30), allowNull: true })
+    hometownCode?: string;
+
+    /** Địa chỉ (nơi sống): mã tỉnh trong danh mục */
+    @Column({ type: DataType.STRING(30), allowNull: true })
+    addressCode?: string;
+
     @Column({ type: DataType.STRING(50), allowNull: true })
     bankAccount?: string;
 

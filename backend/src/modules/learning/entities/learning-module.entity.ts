@@ -112,4 +112,9 @@ export class LearningModule implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Người tạo" })
     createdBy?: string;
+
+    @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Đối tượng được gán" })
+    audienceMode?: string;
 }

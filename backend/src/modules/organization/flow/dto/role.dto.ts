@@ -31,9 +31,20 @@ export class RoleDto {
     appliesTo: "MENTEE" | "FUND" | "BAN";
 
     @IsArray()
-    @IsIn(["VIEW_PROGRESS", "SCORE_RECAP", "REVIEW_FUND", "PROXY_FUND"], {
-        each: true,
-    })
+    @IsIn(
+        [
+            "VIEW_PROGRESS",
+            "SCORE_RECAP",
+            "REVIEW_FUND",
+            "PROXY_FUND",
+            "LOCK_PERIOD",
+            "EDIT_POINTS",
+            "VIEW_PAYOUT",
+            "EXPORT_PERSONAL",
+            "VIEW_ACTIVITY_LOG",
+        ],
+        { each: true, message: "Quyền không hợp lệ" },
+    )
     @IsOptional()
     permissions?: string[];
 
@@ -51,10 +62,16 @@ export class RoleDto {
     @IsOptional()
     bonusPoints?: number;
 
-    /** Vai trò quản trị hệ thống: FUND | MENTORING | POINT */
-    @IsIn(["FUND", "MENTORING", "POINT", null, ""])
+    /** Vai trò quản trị hệ thống: FUND | MENTORING | POINT | LEARNING | MENTEE */
+    @IsIn(["FUND", "MENTORING", "POINT", "LEARNING", "MENTEE", null, ""])
     @IsOptional()
     adminScope?: string | null;
+
+    /** Vai trò cấp ban: quyền theo nhóm áp dụng cho mọi nhóm của các loại này */
+    @IsArray()
+    @IsIn(["MENTEE", "FUND"], { each: true })
+    @IsOptional()
+    scopeKinds?: string[];
 
     @IsString()
     @IsOptional()

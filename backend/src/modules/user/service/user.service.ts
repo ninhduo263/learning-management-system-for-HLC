@@ -191,8 +191,18 @@ export class UserService
         if (dto.newPass === dto.oldPass) {
             throw ApiError.BadRequest("error-duplicate-new-password");
         }
+        if (dto.confirmPass !== undefined && dto.confirmPass !== dto.newPass)
+            throw ApiError.BadRequest("error-password-confirm");
+        // Độ mạnh tối thiểu: từ 8 ký tự, có cả chữ và số
+        if (
+            dto.newPass.length < 8 ||
+            !/[A-Za-z]/.test(dto.newPass) ||
+            !/\d/.test(dto.newPass)
+        )
+            throw ApiError.BadRequest("error-password-weak");
         const res = await this.userRepository.updateById(user._id, {
             password: await createUserPassword(dto.newPass),
+            passwordChangedAt: new Date(),
         });
         return this.omitPassword(res);
     }

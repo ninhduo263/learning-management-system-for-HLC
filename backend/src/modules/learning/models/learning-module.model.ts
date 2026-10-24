@@ -73,6 +73,14 @@ export class LearningModuleModel extends Model implements LearningModule {
     @Column({ type: DataType.INTEGER, allowNull: false, defaultValue: 0 })
     sortOrder?: number;
 
+    /** ALL = mọi thành viên đúng đối tượng; SELECTED = chỉ người / nhóm được gán (ModuleAudience) */
+    @Column({
+        type: DataType.STRING(10),
+        allowNull: false,
+        defaultValue: "ALL",
+    })
+    audienceMode?: string;
+
     @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: true })
     isActive?: boolean;
 

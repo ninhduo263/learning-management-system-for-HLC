@@ -23,7 +23,8 @@ import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { apiFetch, apiJson, clearSession, getSessionUser } from '@/lib/api';
 import { getCurrentTime, syncServerTime } from '@/utils/time';
-import { accessApi, type AdminScope } from '@/services/hlcApi';
+import { type AdminScope } from '@/services/hlcApi';
+import { loadAccess } from '@/lib/useAccess';
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -40,6 +41,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [user, setUser] = useState<{ userId: string; fullName: string; role: 'ADMIN' | 'MENTOR' | 'MENTEE' } | null>(null);
   const [scopes, setScopes] = useState<AdminScope[]>([]);
   const [isGroupLeader, setIsGroupLeader] = useState(false);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
   const { message } = App.useApp();
   const router = useRouter();
   const pathname = usePathname();
@@ -97,13 +99,25 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     return () => { active = false; };
   }, [message, pathname, user]);
 
-  // Quyền quản trị theo phạm vi (mentee/mentor được giao duyệt quỹ, quản lý module...)
+  // Quyền quản trị theo phạm vi (mentee/mentor được giao duyệt quỹ, quản lý module, vai trò cấp ban, ủy quyền...)
   useEffect(() => {
     if (!user || user.role === 'ADMIN') return;
     let active = true;
-    accessApi.mine().then((access) => { if (active) { setScopes(access.scopes); setIsGroupLeader(access.leaderGroups.length > 0); } }).catch(() => undefined);
-    return () => { active = false; };
+    const refresh = () => loadAccess(true).then((access) => {
+      if (!active) return;
+      setScopes(access.scopes);
+      setIsGroupLeader(access.leaderGroups.length > 0);
+      setMustChangePassword(Boolean(access.mustChangePassword));
+    }).catch(() => undefined);
+    void refresh();
+    window.addEventListener('hlc-access-change', refresh);
+    return () => { active = false; window.removeEventListener('hlc-access-change', refresh); };
   }, [user]);
+
+  // Công tắc "bắt buộc đổi mật khẩu lần đầu" (Admin bật khi lên production): chỉ cho ở trang hồ sơ
+  useEffect(() => {
+    if (mustChangePassword && pathname !== '/profile') router.replace('/profile?doiMatKhau=1');
+  }, [mustChangePassword, pathname, router]);
 
   if (pathname === '/login') return <>{children}</>;
   if (!user) return null;
@@ -126,6 +140,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     scopes.includes('POINT') && { key: 'admin-points', icon: <TrophyOutlined />, label: 'Quản lý điểm' },
     scopes.includes('FUND') && { key: 'admin-fund', icon: <WalletOutlined />, label: 'Duyệt HLC Fund' },
     scopes.includes('LEARNING_MODULE') && { key: 'admin-modules', icon: <BookOutlined />, label: 'Quản lý module' },
+    scopes.includes('MENTEE') && { key: 'admin-organization', icon: <ApartmentOutlined />, label: 'Nhóm MTE' },
   ].filter((item): item is { key: string; icon: React.JSX.Element; label: string } => Boolean(item));
 
   const menteeMenuItems = [

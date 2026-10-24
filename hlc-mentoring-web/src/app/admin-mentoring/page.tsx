@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Card, Col, Descriptions, Form, Input, Modal, Row, Select, Space, Table, Tabs, Tag, Typography, Upload } from 'antd';
-import { CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
+import { BulbOutlined, CheckOutlined, DeleteOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, LoadingOutlined, LockOutlined, PlusOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
 import ProfileLink from '@/components/ProfileLink';
 import RecapCard from '@/components/RecapCard';
+import PairSuggestModal from '@/components/PairSuggestModal';
+import { useAccess } from '@/lib/useAccess';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import HistoryImportPanel from '@/components/HistoryImportPanel';
 import ProxyRecapModal from '@/components/ProxyRecapModal';
@@ -31,6 +33,7 @@ interface PairFormValues { month: number; mentorCode: string; menteeCode: string
 
 export default function AdminMentoringPage() {
   const { message } = App.useApp();
+  const access = useAccess();
   const [currentCode, setCurrentCode] = useState('');
   const [nextOpen, setNextOpen] = useState(false);
   const [readyCode, setReadyCode] = useState('');
@@ -99,9 +102,11 @@ export default function AdminMentoringPage() {
         </Card>
       )}
       {nextVisible && <QuarterPanel key={nextCode} quarterCode={nextCode} kind="next" />}
-      <Card className="overflow-hidden !rounded-xl !border-slate-200" title={<span className="font-semibold">Dữ liệu mentoring quý cũ</span>}>
-        <HistoryImportPanel />
-      </Card>
+      {access?.isSuperAdmin && (
+        <Card className="overflow-hidden !rounded-xl !border-slate-200" title={<span className="font-semibold">Dữ liệu mentoring quý cũ (chỉ Admin toàn cục)</span>}>
+          <HistoryImportPanel />
+        </Card>
+      )}
     </div>
   );
 }
@@ -120,6 +125,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
   const [mentees, setMentees] = useState<MemberView[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<'create' | 'edit' | 'detail' | null>(null);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [selected, setSelected] = useState<SessionView | null>(null);
   const [overriding, setOverriding] = useState<SessionView | null>(null);
   const [importing, setImporting] = useState(false);
@@ -398,6 +404,7 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
                 <Button icon={<InboxOutlined />} disabled={importing || locked}>Import file</Button>
               </Upload>
               <Button type="primary" icon={<PlusOutlined />} disabled={!canPair} onClick={() => { setTimeout(() => createForm.setFieldsValue({ month: months[0] }), 0); setModal('create'); }}>Thêm mới</Button>
+              <Button icon={<BulbOutlined />} disabled={!canPair} onClick={() => setSuggestOpen(true)}>Gợi ý ghép cặp</Button>
               <Button icon={<DownloadOutlined />} onClick={() => mentoringApi.exportSchedules(quarterCode).catch((error) => message.error(errorMessage(error)))}>Xuất lịch .xlsx</Button>
               <Upload accept=".xlsx" showUploadList={false} disabled={scheduleBusy || locked} beforeUpload={(file) => { void checkScheduleFile(file); return Upload.LIST_IGNORE; }}>
                 <Button icon={<UploadOutlined />} loading={scheduleBusy} disabled={locked}>Nhập lịch .xlsx</Button>
@@ -453,6 +460,16 @@ function QuarterPanel({ quarterCode, kind }: { quarterCode: string; kind: 'curre
         </Card>
       )}
 
+      <PairSuggestModal
+        quarterCode={quarterCode}
+        open={suggestOpen}
+        onClose={() => setSuggestOpen(false)}
+        onPick={(mentorCode, menteeCode) => {
+          setSuggestOpen(false);
+          setTimeout(() => createForm.setFieldsValue({ month: months[0], mentorCode, menteeCode }), 0);
+          setModal('create');
+        }}
+      />
       <Modal title="Thêm cặp mentoring" open={modal === 'create'} onCancel={() => setModal(null)} footer={null} forceRender destroyOnHidden>
         <PairForm form={createForm} months={months} mentorOptions={mentorOptions} menteeOptions={menteeOptions(true)} onFinish={submitCreate} hint="Hệ thống tạo buổi mentoring từ tháng đã chọn đến tháng cuối của quý. Mentor có nguyện vọng của mentee được xếp lên đầu." />
       </Modal>

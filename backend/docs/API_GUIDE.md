@@ -913,6 +913,102 @@ Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi 
 - `DELETE /mentoring/sessions/{id}` xóa sạch cặp ở tháng này và các tháng sau **chưa chốt**: lịch, recap, điểm chấm, ảnh, giải và dòng điểm phụ cấp phát sinh. Tháng đã chốt hoặc đã chi được giữ nguyên (xử lý bằng bù chênh lệch). Điểm các tháng bị tác động được tính lại; nhật ký lịch được giữ lại.
 - `GET /mentoring/pair-logs?quarter=2026Q4`: nhật ký ghép và xóa gồm ai, cặp nào, từ tháng nào, các tháng bị tác động và số bản ghi.
 
+### 11.15 Cập nhật vòng 4 (phân quyền theo chức vụ, xóa nhóm, gán module, hồ sơ, gợi ý ghép cặp)
+
+**Điểm phụ cấp: mỗi chức vụ chỉ sinh một khoản điểm (phương án B)**
+- Điểm chức vụ và thưởng đạt tỷ lệ chỉ cấu hình ở **Vai trò & điểm**.
+- Hệ thống chỉ dùng 2 rule `POSITION_ALLOWANCE` và `POSITION_COMPLETION_BONUS` (lấy điểm từ cấu hình vai trò). Mọi rule khác có nguồn `MEMBER_POSITION` hoặc `GROUP_COMPLETION` bị tắt khi khởi động và bị bỏ qua khi tính điểm. Bản sửa chỉ áp dụng từ các kỳ chưa chốt.
+- `/point-rule`:
+  - `POST` và `DELETE` trả `400 error-rule-create-disabled`.
+  - `PUT` chỉ nhận `name`, `pointTypeId`, `points`, `targetMemberType`, `isActive`, `maxPointsPerPeriod`, `effectiveFrom`, `effectiveTo`. Điều kiện là logic hệ thống nên bị bỏ qua.
+  - Rule chức vụ trả `400 error-rule-managed-by-role`.
+
+**Quyền theo chức vụ, phạm vi và hành động**
+- Phạm vi quản trị mới:
+  - `MENTEE`: Trưởng ban MTE, bao gồm cả `POINT`, `LEARNING` và mọi nhóm MTE với đủ quyền nhóm.
+  - `LEARNING`: Trưởng ban học tập, quản lý mọi module.
+- Quyền cấp hệ thống (chỉ gán cho vai trò cấp ban): `LOCK_PERIOD`, `EDIT_POINTS`, `VIEW_PAYOUT`, `EXPORT_PERSONAL`, `VIEW_ACTIVITY_LOG`.
+- Vai trò cấp ban có thêm `scopeKinds` (`MENTEE`, `FUND`): quyền theo nhóm áp dụng cho **mọi** nhóm thuộc các loại đó.
+- Vai trò mặc định mới:
+
+  | Mã | Vai trò | Quyền |
+  |---|---|---|
+  | `TRUONG_BAN_MTE` | Trưởng ban MTE | phạm vi `MENTEE` + chốt kỳ, sửa điểm, xem bảng chi trả |
+  | `PHO_BAN_MTE` | Phó ban MTE | chấm, duyệt mọi nhóm MTE |
+  | `PHO_BAN_HLC_FUND` | Phó ban HLC Fund | duyệt minh chứng quỹ mọi nhóm |
+  | `TRUONG_BAN_HOC_TAP` | Trưởng ban Học tập | phạm vi `LEARNING` |
+  | `KE_TOAN` | Kế toán | `VIEW_PAYOUT` |
+
+  `ADMIN_HLC_FUND` và `ADMIN_MENTORING` được đổi tên thành Trưởng ban HLC Fund và Trưởng ban Mentoring.
+- `GET /access/me` trả thêm `actions[]`, `mustChangePassword`, `profileUrlEditable`. `leaderGroups[].delegatedFrom` cho biết quyền nào có được nhờ ủy quyền.
+- Điểm phụ cấp:
+  - Cần `EDIT_POINTS`: đơn giá, tính lại, cộng/trừ điểm, bù chênh lệch, sửa rule.
+  - Cần `LOCK_PERIOD`: chốt kỳ, đánh dấu đã chi.
+  - Mở khóa kỳ: chỉ Admin toàn cục (`403 error-super-admin-only`).
+  - Người chỉ có `VIEW_PAYOUT` chỉ xuất được kỳ đã chốt.
+- Chỉ Admin toàn cục được: xóa nhóm, xóa vai trò, mở khóa kỳ, nhập và hoàn tác dữ liệu quý cũ, sửa cấu hình hệ thống.
+- **Không tự chấm, tự duyệt cho mình** (`403 error-self-review` hoặc `error-recap-score-conflict`): recap của cặp mình tham gia, khoản quỹ của mình, bài học tập của mình, cộng/trừ điểm cho mình. Áp dụng cả với người có quyền toàn cục là thành viên.
+
+**Ủy quyền tạm thời**
+- `GET /delegations?groupId=`: danh sách ủy quyền. Admin xem tất cả; người khác xem ủy quyền mình giao hoặc được nhận.
+- `POST /delegations` với `{ groupId, toMemberId, permissions[], startDate, endDate, reason?, fromMemberId? (chỉ Admin) }`.
+  - Chỉ giao được quyền theo nhóm mà người ủy quyền đang có ở nhóm đó. Không ủy quyền lại cho người khác.
+  - Ủy quyền tự hết hiệu lực khi hết hạn.
+- `PUT /delegations/{id}/revoke`: người ủy quyền hoặc Admin thu hồi.
+- Khi chấm recap, duyệt quỹ hoặc nộp hộ bằng quyền được ủy quyền, nhật ký ghi `onBehalfOf` ("làm thay cho").
+
+**Nhóm: xóa 2 bước, mỗi thành viên luôn có 1 nhóm**
+- `GET /groups/{id}/delete-preview` trả `{ counts: { members, contributors, membershipHistory, roleAssignments, activeRoles, moduleAudiences, finalizedPointEntries, finalizedContributions }, canDelete, mode: HARD | DEACTIVATE, targets[] }`.
+- `POST /groups/{id}/transfer` với `{ targetGroupId, memberIds? }`: chuyển hàng loạt sang nhóm cùng loại. Bỏ trống `memberIds` thì chuyển toàn bộ, kể cả thầy cô.
+- `DELETE /groups/{id}` với `{ reason? }` (chỉ Admin toàn cục):
+  - Nhóm còn người thì nhận `400 error-group-not-empty`.
+  - Nhóm có dữ liệu đã chốt thì chỉ chuyển sang **ngừng hoạt động**, không xóa cứng.
+- `DELETE /groups/{id}/members/{memberId}` chỉ dùng cho thành viên đã ngừng hoạt động. Thành viên đang hoạt động nhận `400 error-member-needs-group`: hãy chuyển nhóm.
+- `PUT /groups/assignments/{id}/end` với `{ endDate, reason? }`: gỡ chức vụ bằng cách ghi ngày kết thúc hiệu lực, có nhật ký.
+- `DELETE /roles/{id}`:
+  - Còn người đang giữ: `400 error-role-in-use` (kèm số người).
+  - Đã từng gán: chuyển sang ngừng dùng.
+  - Chưa từng gán: xóa hẳn.
+  - Leader / Phó nhóm mặc định: `error-role-system`.
+- Trưởng ban MTE (phạm vi `MENTEE`) dùng được các API `/groups` cho **nhóm MTE**.
+
+**Nhật ký thao tác và cấu hình**
+- `GET /activity-logs?module=&action=&from=&to=&keyword=&limit=`: dành cho Admin toàn cục hoặc người có `VIEW_ACTIVITY_LOG`.
+- `GET /system-config` (mọi tài khoản) và `PUT /system-config` (Admin toàn cục) với `{ forcePasswordChangeOnFirstLogin, memberCanEditProfileUrl }`. Cả hai mặc định tắt.
+
+**Hồ sơ cá nhân**
+- `PUT /user/me/password` với `{ oldPass, newPass, confirmPass }`.
+  - Mật khẩu mới tối thiểu 8 ký tự, có cả chữ và số (`error-password-weak`), và khác mật khẩu hiện tại.
+  - Xác nhận không khớp trả `error-password-confirm`.
+  - Đổi thành công thì ghi `passwordChangedAt`.
+- Link profile: thành viên tự sửa trả `403 error-profile-url-admin-only`, trừ khi công tắc `memberCanEditProfileUrl` đang bật. Admin sửa thì được ghi lịch sử, có `changedByName`.
+- Quê quán và địa chỉ dùng `hometownCode` / `addressCode` (mã trong danh mục), kèm `major` / `occupation` để gợi ý ghép cặp.
+- Danh mục tỉnh: `GET /provinces?all=` và `PUT /provinces` (Admin) với `{ code, name, aliases[], mergedInto?, isActive? }`.
+  - Danh mục mặc định có 34 tỉnh, thành phố, kèm tên 63 tỉnh cũ làm cách viết khác.
+  - Dữ liệu nhập tự do được quy đổi khi khởi động và mỗi lần lưu danh mục. Hồ sơ không khớp được đánh dấu "Cần chọn lại tỉnh".
+
+**Xuất danh sách thành viên**
+- `GET /member-export/members.xlsx?type=MENTEE|MENTOR` xuất hồ sơ, nhóm MTE, nhóm HLC Fund, chức vụ đang giữ và trạng thái.
+- Thông tin cá nhân (ngày sinh, SĐT, email, quê quán, địa chỉ, số tài khoản) chỉ có khi người xuất là Admin hoặc có `EXPORT_PERSONAL`. Trưởng ban MTE không có quyền này sẽ nhận bản cơ bản.
+- Mỗi lần xuất được ghi nhật ký.
+
+**Học tập: gán module cho người cụ thể**
+- `GET` / `PUT /learning/modules/{id}/audience` với `{ mode: ALL | SELECTED, memberIds[], groupIds[] }`.
+- Module chế độ `SELECTED`:
+  - Chỉ người được gán (trực tiếp hoặc qua nhóm) mới thấy và nộp bài.
+  - Người không được gán không bị tính thiếu bài khi tính tỷ lệ hoàn thành, thưởng và màn hình Leader.
+  - Bài đã nộp được giữ khi bớt người.
+
+**Mentoring: gợi ý**
+- `GET /mentoring/quarters/{code}/pair-suggestions?criteria=major,occupation,location,hometown,preference&menteeId=&limit=5`: điểm tương đồng kèm lý do cho từng MTO gợi ý.
+  - MTO đã có cặp bị giảm thứ hạng, kèm `warning` "MTO này đã có X cặp". Hệ thống không chặn ghép.
+  - Thời gian tính khoảng 20 ms với quy mô hiện tại, nên vẫn tính tức thời và chưa cần tách thành dịch vụ riêng.
+- `GET /mentoring/group-plan?kind=MENTEE`: phương án chia nhóm cân bằng số người và mức hoạt động (điểm 3 tháng gần nhất). Người giữ vai trò giữ nguyên nhóm.
+- `POST /mentoring/group-plan/apply` với `{ kind, assignments: [{ memberId, groupId }] }`: áp dụng phương án sau khi Admin chỉnh tay.
+
+**Nhóm HLC Fund của thầy cô / MTO**
+- `/leader/overview` trả `groupKind`. Nhóm `FUND` chỉ có dữ liệu quỹ; `mentoring` và `learning` để trống.
+
 ---
 
 ## 12. Danh mục resource

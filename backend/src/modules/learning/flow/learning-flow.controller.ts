@@ -1,3 +1,5 @@
+import { ModuleAudienceDto } from "./dto/module-audience.dto";
+import { ModuleAudienceService } from "./module-audience.service";
 import {
     AllowAdminScope,
     AllowSystemRoles,
@@ -42,6 +44,7 @@ export class LearningFlowController {
     constructor(
         private readonly flowService: LearningFlowService,
         private readonly libraryExcel: LibraryExcelService,
+        private readonly audience: ModuleAudienceService,
     ) {}
 
     // ---- Thành viên ----
@@ -96,6 +99,7 @@ export class LearningFlowController {
 
     @Post("modules")
     @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING)
     createModule(@ReqUser() user: User, @Body() dto: ModuleConfigDto) {
         return this.flowService.createModule(user, dto);
     }
@@ -116,6 +120,27 @@ export class LearningFlowController {
         @Body() dto: ModuleConfigDto,
     ) {
         return this.flowService.updateModule(user, id, dto);
+    }
+
+    /** Người / nhóm được gán module */
+    @Get("modules/:id/audience")
+    @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING_MODULE)
+    async getAudience(@ReqUser() user: User, @Param("id") id: string) {
+        await this.flowService.assertCanManage(user, id);
+        return this.audience.get(id);
+    }
+
+    @Put("modules/:id/audience")
+    @AllowSystemRoles(SystemRole.ADMIN)
+    @AllowAdminScope(AdminScope.LEARNING_MODULE)
+    async saveAudience(
+        @ReqUser() user: User,
+        @Param("id") id: string,
+        @Body() dto: ModuleAudienceDto,
+    ) {
+        await this.flowService.assertCanManage(user, id);
+        return this.audience.save(user, id, dto);
     }
 
     /** ?status=PENDING&cycleKey=2026-W43&period=2026-10 */

@@ -6,7 +6,17 @@ import { User } from "@module/user/entities/user.entity";
 import { Injectable } from "@nestjs/common";
 import { InjectModel } from "@nestjs/sequelize";
 import { Op } from "sequelize";
-import { DepartmentType, GroupKind, RolePermission } from "../common/constant";
+import { ApiError } from "@config/exception/api-error";
+import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
+import { AdminScope, SCOPE_IMPLIES } from "@module/permission/common/constant";
+import {
+    DepartmentType,
+    GLOBAL_PERMISSIONS,
+    GROUP_PERMISSIONS,
+    GroupKind,
+    RolePermission,
+} from "../common/constant";
+import { GroupDelegationModel } from "../models/group-delegation.model";
 import { DepartmentModel } from "../models/department.model";
 import { GroupMembershipModel } from "../models/group-membership.model";
 import { MemberPositionModel } from "../models/member-position.model";
@@ -37,6 +47,20 @@ export interface LeaderGroup {
     permissions: string[];
     /** Có quyền chấm/duyệt (SCORE_RECAP hoặc REVIEW_FUND) */
     canReview: boolean;
+    /** Quyền chỉ có nhờ ủy quyền: quyền -> người ủy quyền (thao tác ghi "làm thay cho") */
+    delegatedFrom?: Record<string, { memberId: string; name: string }>;
+    /** Nguồn quyền: GROUP (vai trò trong nhóm), BAN (vai trò cấp ban theo loại nhóm), DELEGATION */
+    source?: "GROUP" | "BAN" | "DELEGATION";
+}
+
+/** Quyền tổng hợp của 1 tài khoản */
+export interface Capabilities {
+    superAdmin: boolean;
+    memberId: string | null;
+    /** Phạm vi quản trị (đã gồm phạm vi được bao hàm) */
+    scopes: Set<string>;
+    /** Hành động cấp hệ thống (GLOBAL_PERMISSIONS) */
+    actions: Set<string>;
 }
 
 /** Phạm vi người duyệt: isAdmin = toàn quyền */
@@ -45,6 +69,22 @@ export interface ReviewerScope {
     memberId: string | null;
     groupIds: string[];
     memberIds: Set<string>;
+    /** Nhóm có quyền (kèm nguồn quyền, ủy quyền) */
+    groups?: LeaderGroup[];
+}
+
+/** Thao tác dùng quyền được ủy quyền ở nhóm: trả người ủy quyền để ghi "làm thay cho" */
+export function onBehalfOf(
+    scope: ReviewerScope,
+    groupId: string | null | undefined,
+    permission: string,
+) {
+    if (!groupId) return null;
+    return (
+        scope.groups?.find((group) => group._id === groupId)?.delegatedFrom?.[
+            permission
+        ] ?? null
+    );
 }
 
 /**
@@ -65,6 +105,10 @@ export class GroupAccessService {
         private readonly membershipModel: typeof GroupMembershipModel,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
+        @InjectModel(AdminPermissionModel)
+        private readonly permissionModel: typeof AdminPermissionModel,
+        @InjectModel(GroupDelegationModel)
+        private readonly delegationModel: typeof GroupDelegationModel,
     ) {}
 
     today() {
@@ -203,55 +247,146 @@ export class GroupAccessService {
         return group?._id ?? null;
     }
 
-    /** Nhóm mà thành viên đang giữ vai trò (kèm quyền hạn theo cấu hình vai trò) */
-    async leadershipOf(memberId: string): Promise<LeaderGroup[]> {
+    /**
+     * Nhóm mà thành viên có quyền, gộp từ 3 nguồn (mỗi nguồn chỉ tác động trong phạm vi của nó):
+     * 1. Vai trò trong nhóm (Leader, Phó nhóm...) - đúng loại nhóm của vai trò;
+     * 2. Vai trò cấp ban có scopeKinds (ví dụ Phó ban MTE: mọi nhóm MTE), Trưởng ban MTE (adminScope MENTEE:
+     *    mọi nhóm MTE, đủ quyền nhóm);
+     * 3. Ủy quyền tạm thời còn hiệu lực: tập con quyền của người ủy quyền trong nhóm đó.
+     */
+    async leadershipOf(
+        memberId: string,
+        includeDelegations = true,
+    ): Promise<LeaderGroup[]> {
         const holders = await this.activeHolders({ memberId });
-        if (!holders.length) return [];
-        const groups = new Map(
-            (
-                await this.departmentModel.findAll({
-                    where: {
-                        _id: holders.map((row) => row.departmentId),
-                        type: DepartmentType.GROUP,
-                        isActive: true,
-                    },
-                    raw: true,
-                })
-            ).map((group) => [group._id, group]),
-        );
         const result = new Map<string, LeaderGroup>();
-        for (const holder of holders) {
-            const group = groups.get(holder.departmentId);
-            if (!group) continue;
+        const allGroups = await this.departmentModel.findAll({
+            where: { type: DepartmentType.GROUP, isActive: true },
+            order: [["code", "ASC"]],
+            raw: true,
+        });
+        const groups = new Map(allGroups.map((group) => [group._id, group]));
+        const merge = (
+            group: DepartmentModel,
+            role: { code: string; name: string },
+            permissions: string[],
+            source: "GROUP" | "BAN" | "DELEGATION",
+            delegator?: { memberId: string; name: string },
+        ) => {
             const kind = (group.groupKind ?? GroupKind.MENTEE) as GroupKind;
-            // Vai trò phải thuộc đúng loại nhóm
-            if (holder.position.groupKind && holder.position.groupKind !== kind)
-                continue;
-            const permissions = (holder.position.permissions ?? []) as string[];
+            const groupPerms = permissions.filter(
+                (item) =>
+                    GROUP_PERMISSIONS.includes(item) &&
+                    // Chấm recap chỉ có ở nhóm MTE
+                    (item !== RolePermission.SCORE_RECAP ||
+                        kind === GroupKind.MENTEE),
+            );
+            if (!groupPerms.length && source !== "GROUP") return;
             const existing = result.get(group._id);
-            const role = LEADER_CODES.includes(holder.position.code)
+            const roleKey = LEADER_CODES.includes(role.code)
                 ? "LEADER"
-                : DEPUTY_CODES.includes(holder.position.code)
+                : DEPUTY_CODES.includes(role.code)
                   ? "DEPUTY"
-                  : holder.position.code;
+                  : role.code;
+            const delegatedFrom = { ...(existing?.delegatedFrom ?? {}) };
+            for (const item of groupPerms) {
+                if (source === "DELEGATION" && delegator) {
+                    if (!existing?.permissions.includes(item))
+                        delegatedFrom[item] = delegator;
+                } else delete delegatedFrom[item];
+            }
             const merged = [
-                ...new Set([...(existing?.permissions ?? []), ...permissions]),
+                ...new Set([...(existing?.permissions ?? []), ...groupPerms]),
             ];
             result.set(group._id, {
                 _id: group._id,
                 code: group.code,
                 name: group.name,
-                role: existing && existing.role === "LEADER" ? "LEADER" : role,
-                roleCode: existing?.roleCode ?? holder.position.code,
+                role:
+                    existing && existing.role === "LEADER"
+                        ? "LEADER"
+                        : (existing?.role ?? roleKey),
+                roleCode: existing?.roleCode ?? role.code,
                 roleName: existing
-                    ? `${existing.roleName}, ${holder.position.name}`
-                    : holder.position.name,
+                    ? existing.roleName.includes(role.name)
+                        ? existing.roleName
+                        : `${existing.roleName}, ${role.name}`
+                    : role.name,
                 groupKind: kind,
                 permissions: merged,
                 canReview:
                     merged.includes(RolePermission.SCORE_RECAP) ||
                     merged.includes(RolePermission.REVIEW_FUND),
+                ...(Object.keys(delegatedFrom).length && { delegatedFrom }),
+                source:
+                    existing?.source === "GROUP" || source === "GROUP"
+                        ? "GROUP"
+                        : (existing?.source ?? source),
             });
+        };
+        for (const holder of holders) {
+            const group = groups.get(holder.departmentId);
+            const permissions = (holder.position.permissions ?? []) as string[];
+            if (group) {
+                const kind = group.groupKind ?? GroupKind.MENTEE;
+                // Vai trò phải thuộc đúng loại nhóm
+                if (
+                    holder.position.groupKind &&
+                    holder.position.groupKind !== kind
+                )
+                    continue;
+                merge(group, holder.position, permissions, "GROUP");
+                continue;
+            }
+            // Vai trò cấp ban
+            const kinds = new Set<string>(
+                (holder.position.scopeKinds ?? []) as string[],
+            );
+            let perms = permissions;
+            if (holder.position.adminScope === AdminScope.MENTEE) {
+                kinds.add(GroupKind.MENTEE);
+                perms = [...new Set([...perms, ...GROUP_PERMISSIONS])];
+            }
+            if (!kinds.size) continue;
+            for (const group of allGroups)
+                if (kinds.has(group.groupKind ?? GroupKind.MENTEE))
+                    merge(group, holder.position, perms, "BAN");
+        }
+        if (includeDelegations) {
+            const today = this.today();
+            const delegations = await this.delegationModel.findAll({
+                where: {
+                    toMemberId: memberId,
+                    revokedAt: null,
+                    startDate: { [Op.lte]: today },
+                    endDate: { [Op.gte]: today },
+                },
+                raw: true,
+            });
+            for (const row of delegations) {
+                const group = groups.get(row.groupId);
+                if (!group) continue;
+                // Chỉ trong phạm vi quyền hiện có của người ủy quyền ở nhóm đó (không ủy quyền lại)
+                const own = (
+                    await this.leadershipOf(row.fromMemberId, false)
+                ).find((item) => item._id === row.groupId);
+                if (!own) continue;
+                const from = await this.memberModel.findByPk(row.fromMemberId, {
+                    raw: true,
+                });
+                merge(
+                    group,
+                    { code: "DELEGATE", name: "Được ủy quyền" },
+                    (row.permissions ?? []).filter((item) =>
+                        own.permissions.includes(item),
+                    ),
+                    "DELEGATION",
+                    {
+                        memberId: row.fromMemberId,
+                        name: from?.fullName ?? row.fromMemberId,
+                    },
+                );
+            }
         }
         return [...result.values()];
     }
@@ -265,6 +400,82 @@ export class GroupAccessService {
                     .filter(Boolean),
             ),
         ] as string[];
+    }
+
+    /**
+     * Quyền tổng hợp: phạm vi quản trị (cấp trực tiếp hoặc từ vai trò, kèm phạm vi bao hàm) và hành động
+     * cấp hệ thống (từ vai trò). Quyền POINT cấp trực tiếp (Admin điểm) và Trưởng ban MTE có đủ
+     * quyền chốt kỳ / sửa điểm / xem bảng chi trả.
+     */
+    async capabilities(user: Pick<User, "_id" | "systemRole">) {
+        const all = Object.values(AdminScope) as string[];
+        if (user.systemRole === SystemRole.ADMIN)
+            return {
+                superAdmin: true,
+                memberId: null,
+                scopes: new Set(all),
+                actions: new Set(GLOBAL_PERMISSIONS),
+            } as Capabilities;
+        const grants = await this.permissionModel.findAll({
+            where: { userId: user._id },
+            raw: true,
+        });
+        const member = await this.memberOfUser(user);
+        const holders = member
+            ? await this.activeHolders({ memberId: member._id })
+            : [];
+        const scopes = new Set<string>([
+            ...grants.map((row) => row.scope as string),
+            ...holders.map((row) => row.position.adminScope).filter(Boolean),
+        ]);
+        for (const scope of [...scopes])
+            for (const implied of SCOPE_IMPLIES[scope] ?? [])
+                scopes.add(implied);
+        const actions = new Set<string>(
+            holders.flatMap((row) =>
+                ((row.position.permissions ?? []) as string[]).filter((item) =>
+                    GLOBAL_PERMISSIONS.includes(item),
+                ),
+            ),
+        );
+        if (
+            grants.some((row) => row.scope === AdminScope.POINT) ||
+            scopes.has(AdminScope.MENTEE)
+        )
+            for (const item of [
+                RolePermission.LOCK_PERIOD,
+                RolePermission.EDIT_POINTS,
+                RolePermission.VIEW_PAYOUT,
+            ])
+                actions.add(item);
+        // Có quyền thao tác trên bảng phụ cấp thì vào được màn hình điểm phụ cấp
+        if (
+            actions.has(RolePermission.LOCK_PERIOD) ||
+            actions.has(RolePermission.EDIT_POINTS) ||
+            actions.has(RolePermission.VIEW_PAYOUT)
+        )
+            scopes.add(AdminScope.POINT);
+        return {
+            superAdmin: false,
+            memberId: member?._id ?? null,
+            scopes,
+            actions,
+        } as Capabilities;
+    }
+
+    async can(user: User, action: RolePermission | string) {
+        return (await this.capabilities(user)).actions.has(action);
+    }
+
+    async assertCan(user: User, action: RolePermission | string) {
+        if (!(await this.can(user, action)))
+            throw ApiError.Forbidden("error-action-forbidden");
+    }
+
+    /** Chỉ Admin toàn cục (xóa nhóm, xóa vai trò, mở khóa kỳ, nhập dữ liệu quý cũ) */
+    assertSuperAdmin(user: Pick<User, "systemRole">) {
+        if (user.systemRole !== SystemRole.ADMIN)
+            throw ApiError.Forbidden("error-super-admin-only");
     }
 
     async memberOfUser(user: Pick<User, "_id">) {
@@ -322,6 +533,12 @@ export class GroupAccessService {
                 : []
             ).map((row) => row.memberId),
         );
-        return { isAdmin: false, memberId: member._id, groupIds, memberIds };
+        return {
+            isAdmin: false,
+            memberId: member._id,
+            groupIds,
+            memberIds,
+            groups,
+        };
     }
 }

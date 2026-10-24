@@ -1,3 +1,4 @@
+import { ActivityLogService } from "@module/activity-log/activity-log.service";
 import { isValidDateKey, vnDateKey, vnParts } from "@common/utils/vn-date.util";
 import { ApiError } from "@config/exception/api-error";
 import { AttachmentFlowService } from "@module/attachment/attachment-flow.service";
@@ -68,6 +69,7 @@ export class FundFlowService {
         private readonly periodFlow: PeriodFlowService,
         private readonly attachments: AttachmentFlowService,
         private readonly groupAccess: GroupAccessService,
+        private readonly activityLog: ActivityLogService,
         @InjectModel(AdminPermissionModel)
         private readonly permissionModel: typeof AdminPermissionModel,
         @InjectModel(FundContributionModel)
@@ -374,14 +376,11 @@ export class FundFlowService {
     // Quyền: Admin HLC Fund / Leader nhóm
     // ------------------------------------------------------------------
 
-    /** Admin toàn cục hoặc quyền FUND: xem/duyệt/nộp hộ toàn bộ */
+    /** Admin toàn cục hoặc phạm vi FUND (cấp trực tiếp / Trưởng ban HLC Fund): xem/duyệt/nộp hộ toàn bộ */
     async isFundAdmin(user: User) {
         if (user.systemRole === SystemRole.ADMIN) return true;
-        return Boolean(
-            await this.permissionModel.findOne({
-                where: { userId: user._id, scope: AdminScope.FUND },
-                raw: true,
-            }),
+        return (await this.groupAccess.capabilities(user)).scopes.has(
+            AdminScope.FUND,
         );
     }
 
@@ -395,6 +394,7 @@ export class FundFlowService {
         if (!leading.length) throw ApiError.Forbidden("error-forbidden");
         return {
             selfId: member._id,
+            leading,
             view: new Set(leading.map((item) => item._id)),
             review: new Set(
                 leading
@@ -413,38 +413,60 @@ export class FundFlowService {
         };
     }
 
-    /** Leader/Phó: chỉ thành viên (hoặc thầy cô) của nhóm mình, không tự duyệt khoản của chính mình */
+    /**
+     * Leader/Phó: chỉ thành viên (hoặc thầy cô) của nhóm mình. Không ai tự duyệt khoản của chính mình
+     * (kể cả Admin là thành viên). Trả người ủy quyền nếu thao tác dùng quyền được ủy quyền.
+     */
     async assertCanReview(
         user: User,
         rows: Pick<FundContribution, "memberId" | "contributorId">[],
         mode: "review" | "proxy" = "review",
-    ) {
+    ): Promise<{ behalf: { memberId: string; name: string } | null }> {
+        const self = await this.groupAccess.memberOfUser(user);
+        if (
+            mode === "review" &&
+            self &&
+            rows.some((row) => row.memberId === self._id)
+        )
+            throw ApiError.Forbidden("error-self-review");
         const managed = await this.managedGroups(user).catch(() => {
             throw ApiError.Forbidden("error-forbidden");
         });
-        if (!managed) return;
+        if (!managed) return { behalf: null };
         const allowedGroups = [
             ...(mode === "proxy" ? managed.proxy : managed.review),
         ];
         const memberships =
             await this.groupAccess.currentMemberships(allowedGroups);
-        const memberIds = new Set(memberships.map((row) => row.memberId));
-        const contributorIds = new Set(
+        const groupOf = new Map(
+            memberships.map((row) => [row.memberId, row.groupId]),
+        );
+        const contributors = new Map(
             (
                 await this.contributorModel.findAll({
                     where: { groupId: allowedGroups },
-                    attributes: ["_id"],
+                    attributes: ["_id", "groupId"],
                     raw: true,
                 })
-            ).map((item) => item._id),
+            ).map((item) => [item._id, item.groupId]),
         );
+        const permission =
+            mode === "proxy"
+                ? RolePermission.PROXY_FUND
+                : RolePermission.REVIEW_FUND;
+        let behalf: { memberId: string; name: string } | null = null;
         for (const row of rows) {
-            const allowed = row.contributorId
-                ? contributorIds.has(row.contributorId)
-                : memberIds.has(row.memberId) &&
-                  row.memberId !== managed.selfId;
-            if (!allowed) throw ApiError.Forbidden("error-forbidden");
+            const groupId = row.contributorId
+                ? contributors.get(row.contributorId)
+                : row.memberId !== managed.selfId
+                  ? groupOf.get(row.memberId)
+                  : undefined;
+            if (!groupId) throw ApiError.Forbidden("error-forbidden");
+            behalf ??=
+                managed.leading.find((item) => item._id === groupId)
+                    ?.delegatedFrom?.[permission] ?? null;
         }
+        return { behalf };
     }
 
     // ------------------------------------------------------------------
@@ -664,7 +686,7 @@ export class FundFlowService {
         ) {
             throw ApiError.NotFound("error-record-not-found");
         }
-        await this.assertCanReview(
+        const { behalf } = await this.assertCanReview(
             user,
             [{ memberId: input.memberId, contributorId: input.contributorId }],
             "proxy",
@@ -697,6 +719,14 @@ export class FundFlowService {
         const [view] = await this.views([
             await this.contributionModel.findByPk(id, { raw: true }),
         ]);
+        if (behalf)
+            await this.activityLog.log(user, {
+                module: "FUND",
+                action: "FUND_PROXY_DELEGATED",
+                targetId: id,
+                summary: `Nộp hộ minh chứng quỹ (làm thay cho ${behalf.name})`,
+                onBehalfOf: behalf,
+            });
         return view;
     }
 
@@ -814,7 +844,16 @@ export class FundFlowService {
         });
         if (rows.length !== new Set(ids).size)
             throw ApiError.NotFound("error-record-not-found");
-        await this.assertCanReview(user, rows);
+        const { behalf } = await this.assertCanReview(user, rows);
+        if (behalf)
+            await this.activityLog.log(user, {
+                module: "FUND",
+                action: "FUND_REVIEW_DELEGATED",
+                targetId: ids[0],
+                summary: `${status === "DONE" ? "Duyệt" : "Không duyệt"} ${ids.length} minh chứng quỹ (làm thay cho ${behalf.name})`,
+                detail: { ids },
+                onBehalfOf: behalf,
+            });
         for (const periodId of new Set(rows.map((row) => row.periodId)))
             this.periodFlow.assertWritable(
                 await this.periodFlow.getById(periodId),

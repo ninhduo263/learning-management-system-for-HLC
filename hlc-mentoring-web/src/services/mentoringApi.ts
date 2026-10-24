@@ -186,7 +186,42 @@ export interface PairLogView {
   createdAt: string;
 }
 
+/** Gợi ý ghép cặp theo hồ sơ (chỉ gợi ý, Admin quyết định) */
+export interface SuggestPerson { _id: string; memberCode: string; fullName: string; major: string | null; occupation: string | null; address: string | null; hometown: string | null }
+export interface PairSuggestions {
+  quarter: { _id: string; code: string };
+  criteria: string[];
+  mentors: number;
+  mentees: number;
+  elapsedMs: number;
+  rows: {
+    mentee: SuggestPerson;
+    pairedMentorIds: string[];
+    missingProfile: string[];
+    candidates: { mentor: SuggestPerson; score: number; rankScore: number; reasons: string[]; existingPairs: number; warning: string | null }[];
+  }[];
+}
+export const SUGGEST_CRITERIA_LABEL: Record<string, string> = {
+  major: 'Ngành học', occupation: 'Ngành nghề', location: 'Cùng khu vực sống', hometown: 'Cùng quê', preference: 'Nguyện vọng của MTE'
+};
+export interface GroupPlan {
+  kind: 'MENTEE' | 'FUND';
+  periods: string[];
+  groups: { _id: string; code: string; name: string; count: number; activity: number }[];
+  members: { member: { _id: string; memberCode: string; fullName: string }; activity: number; currentGroupId: string | null; proposedGroupId: string; pinned: boolean }[];
+}
+
 export const mentoringApi = {
+  pairSuggestions: (code: string, params: { criteria?: string[]; menteeId?: string; limit?: number } = {}) => {
+    const search = new URLSearchParams();
+    if (params.criteria?.length) search.set('criteria', params.criteria.join(','));
+    if (params.menteeId) search.set('menteeId', params.menteeId);
+    if (params.limit) search.set('limit', String(params.limit));
+    return apiJson<PairSuggestions>(`/mentoring/quarters/${encodeURIComponent(code)}/pair-suggestions${search.size ? `?${search}` : ''}`);
+  },
+  groupPlan: (kind: 'MENTEE' | 'FUND' = 'MENTEE') => apiJson<GroupPlan>(`/mentoring/group-plan?kind=${kind}`),
+  applyGroupPlan: (kind: 'MENTEE' | 'FUND', assignments: { memberId: string; groupId: string }[]) =>
+    apiJson<{ moved: number }>('/mentoring/group-plan/apply', { method: 'POST', json: { kind, assignments } }),
   // admin
   ensureQuarter: (code: string) => apiJson<QuarterView>('/mentoring/quarters/ensure', { method: 'POST', json: { code } }),
   board: (code: string) => apiJson<QuarterBoard>(`/mentoring/quarters/${encodeURIComponent(code)}/board`),

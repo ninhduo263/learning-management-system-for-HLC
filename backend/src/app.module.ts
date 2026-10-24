@@ -16,6 +16,7 @@ import { PermissionModule } from "./modules/permission/permission.module";
 import { TimeModule } from "./modules/time/time.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { LeaderModule } from "./modules/leader/leader.module";
+import { ActivityLogModule } from "./modules/activity-log/activity-log.module";
 import { AppController } from "./app.controller";
 import { RootController } from "./root.controller";
 import { AuthModule } from "./modules/auth/auth.module";
@@ -70,6 +71,7 @@ import { WebSocketModule } from "./modules/websocket/websocket.module";
         TimeModule,
         DashboardModule,
         LeaderModule,
+        ActivityLogModule,
     ],
     providers: [...DefaultProviders],
     controllers: [AppController, RootController],

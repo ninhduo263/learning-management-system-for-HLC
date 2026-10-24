@@ -7,6 +7,8 @@ import { GroupAccessService } from "./flow/group-access.service";
 import { GroupController } from "./flow/group.controller";
 import { GroupFlowService } from "./flow/group-flow.service";
 import { RoleController } from "./flow/role.controller";
+import { DelegationController } from "./flow/delegation.controller";
+import { DelegationService } from "./flow/delegation.service";
 import { RoleService } from "./flow/role.service";
 import { GroupMembershipModel } from "./models/group-membership.model";
 import { SequelizeModule } from "@nestjs/sequelize";
@@ -36,6 +38,7 @@ import { MemberPositionService } from "./services/member-position.service";
     controllers: [
         GroupController,
         RoleController,
+        DelegationController,
         DepartmentController,
         PositionController,
         MemberPositionController,
@@ -44,6 +47,7 @@ import { MemberPositionService } from "./services/member-position.service";
         GroupAccessService,
         GroupFlowService,
         RoleService,
+        DelegationService,
         DepartmentService,
         PositionService,
         MemberPositionService,

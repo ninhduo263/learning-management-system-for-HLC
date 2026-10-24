@@ -1,11 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { App, DatePicker, Form, Input, Modal, Select, Table, Tabs, Tag } from 'antd';
+import { Alert, App, DatePicker, Form, Input, Modal, Select, Table, Tabs, Tag } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import { apiJson, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
-import { PROFILE_FIELD_LABEL, profileApi, type Member, type ProfileLog } from '@/services/hlcApi';
+import { PROFILE_FIELD_LABEL, profileApi, provinceNeedsReview, type Member, type ProfileLog } from '@/services/hlcApi';
+import ProvinceSelect, { useProvinces } from '@/components/ProvinceSelect';
 
 type Values = Omit<Partial<Member>, 'dateOfBirth' | 'joinedAt'> & { dateOfBirth?: Dayjs; joinedAt?: Dayjs };
 
@@ -15,6 +16,11 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
   const [form] = Form.useForm<Values>();
   const [saving, setSaving] = useState(false);
   const [logs, setLogs] = useState<ProfileLog[]>([]);
+  const [legacy, setLegacy] = useState<Member | null>(null);
+  const provinces = useProvinces();
+  const provinceName = (code?: string | null) => provinces.find((item) => item.code === code)?.name ?? code ?? '—';
+  const display = (row: ProfileLog, value: string | null) =>
+    value && (row.field === 'hometownCode' || row.field === 'addressCode') ? provinceName(value) : value ?? '—';
 
   useEffect(() => {
     if (!memberId) return;
@@ -23,6 +29,7 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
     apiJson<Member>(`/member/${memberId}`)
       .then((member) => {
         if (!active) return;
+        setLegacy(member);
         form.setFieldsValue({
           ...member,
           dateOfBirth: member.dateOfBirth ? dayjs(member.dateOfBirth) : undefined,
@@ -47,8 +54,10 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
         profileUrl: nullable(values.profileUrl),
         bankAccount: nullable(values.bankAccount),
         bankName: nullable(values.bankName),
-        address: nullable(values.address),
-        hometown: nullable(values.hometown),
+        hometownCode: values.hometownCode ?? null,
+        addressCode: values.addressCode ?? null,
+        major: nullable(values.major),
+        occupation: nullable(values.occupation),
         gender: values.gender ?? null,
         note: nullable(values.note),
         dateOfBirth: values.dateOfBirth ? values.dateOfBirth.format('YYYY-MM-DD') : null,
@@ -73,6 +82,9 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
           forceRender: true,
           children: (
           <Form form={form} layout="vertical" onFinish={save}>
+            {legacy && provinceNeedsReview(legacy) && (
+              <Alert className="!mb-3" type="warning" showIcon title="Cần chọn lại tỉnh, thành phố" description={`Dữ liệu cũ chưa quy đổi được: ${[legacy.hometown && `quê quán "${legacy.hometown}"`, legacy.address && `địa chỉ "${legacy.address}"`].filter(Boolean).join(', ')}.`} />
+            )}
             <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
               <Form.Item name="memberCode" label="Mã thành viên"><Input disabled /></Form.Item>
               <Form.Item name="fullName" label="Họ và tên" rules={[{ required: true }]}><Input /></Form.Item>
@@ -84,9 +96,11 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
               <Form.Item name="email" label="Email" rules={[{ type: 'email', message: 'Email không hợp lệ' }]}><Input /></Form.Item>
               <Form.Item name="bankAccount" label="Số tài khoản"><Input /></Form.Item>
               <Form.Item name="bankName" label="Ngân hàng"><Input /></Form.Item>
-              <Form.Item name="address" label="Địa chỉ hiện tại"><Input /></Form.Item>
-              <Form.Item name="hometown" label="Quê quán"><Input /></Form.Item>
-              <Form.Item name="profileUrl" label="Link profile"><Input /></Form.Item>
+              <Form.Item name="hometownCode" label="Quê quán (tỉnh, thành phố)"><ProvinceSelect /></Form.Item>
+              <Form.Item name="addressCode" label="Địa chỉ (tỉnh, thành phố)"><ProvinceSelect /></Form.Item>
+              <Form.Item name="major" label="Ngành học"><Input /></Form.Item>
+              <Form.Item name="occupation" label="Ngành nghề"><Input /></Form.Item>
+              <Form.Item name="profileUrl" label="Link profile" extra="Tạm thời chỉ Admin sửa; mọi thay đổi được ghi nhật ký."><Input /></Form.Item>
               <Form.Item name="joinedAt" label="Ngày tham gia"><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
             </div>
             <Form.Item name="note" label="Ghi chú"><Input.TextArea rows={2} /></Form.Item>
@@ -100,9 +114,9 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
             <Table<ProfileLog> rowKey="_id" size="small" dataSource={logs} pagination={{ pageSize: 8 }} scroll={{ x: 'max-content' }} locale={{ emptyText: 'Chưa có thay đổi' }} columns={[
               { title: 'Thời gian', render: (_: unknown, row: ProfileLog) => formatDateTime(row.createdAt) },
               { title: 'Thông tin', render: (_: unknown, row: ProfileLog) => <span className={row.field.startsWith('bank') ? 'font-semibold text-red-600' : ''}>{PROFILE_FIELD_LABEL[row.field] ?? row.field}</span> },
-              { title: 'Cũ', dataIndex: 'oldValue', render: (value: string | null) => value ?? '—' },
-              { title: 'Mới', dataIndex: 'newValue', render: (value: string | null) => value ?? '—' },
-              { title: 'Người sửa', dataIndex: 'changedByRole', render: (value: string) => <Tag color={value === 'ADMIN' ? 'purple' : 'blue'}>{value === 'ADMIN' ? 'Admin' : 'Thành viên'}</Tag> }
+              { title: 'Cũ', render: (_: unknown, row: ProfileLog) => display(row, row.oldValue) },
+              { title: 'Mới', render: (_: unknown, row: ProfileLog) => display(row, row.newValue) },
+              { title: 'Người sửa', render: (_: unknown, row: ProfileLog) => <Tag color={row.changedByRole === 'ADMIN' ? 'purple' : 'blue'}>{row.changedByRole === 'ADMIN' ? 'Admin' : 'Thành viên'}{row.changedByName ? ` · ${row.changedByName}` : ''}</Tag> }
             ]} />
           )
         }

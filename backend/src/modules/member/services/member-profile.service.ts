@@ -7,6 +7,9 @@ import { Sequelize } from "sequelize-typescript";
 import { Member } from "../entities/member.entity";
 import { MemberProfileLogModel } from "../models/member-profile-log.model";
 import { MemberModel } from "../models/member.model";
+import { SecurityConfigService } from "@module/setting/security-config.service";
+import { ProvinceService } from "./province.service";
+import { UserModel } from "@module/repository/sequelize/model/user.model";
 
 /** Trường được ghi lịch sử khi thay đổi */
 export const TRACKED_FIELDS = [
@@ -19,24 +22,36 @@ export const TRACKED_FIELDS = [
     "email",
     "address",
     "hometown",
+    "hometownCode",
+    "addressCode",
+    "major",
+    "occupation",
     "profileUrl",
     "bankAccount",
     "bankName",
     "joinedAt",
 ] as const;
+/**
+ * Thành viên tự sửa. Quê quán / địa chỉ chọn từ danh mục tỉnh (hometownCode / addressCode), không nhập tự do.
+ * Link profile tạm thời chỉ Admin sửa (mở lại bằng công tắc "memberCanEditProfileUrl").
+ */
 export const SELF_EDITABLE = [
     "dateOfBirth",
     "gender",
     "phone",
     "email",
-    "address",
-    "hometown",
-    "profileUrl",
+    "hometownCode",
+    "addressCode",
+    "major",
+    "occupation",
     "bankAccount",
     "bankName",
 ];
 export const ADMIN_EDITABLE = [
     ...SELF_EDITABLE,
+    "profileUrl",
+    "address",
+    "hometown",
     "fullName",
     "memberType",
     "status",
@@ -50,6 +65,8 @@ export const SENSITIVE_FIELDS = [
     "address",
     "dateOfBirth",
     "hometown",
+    "hometownCode",
+    "addressCode",
 ];
 
 const normalize = (value: unknown) =>
@@ -65,6 +82,10 @@ export class MemberProfileService {
         private readonly memberModel: typeof MemberModel,
         @InjectModel(MemberProfileLogModel)
         private readonly logModel: typeof MemberProfileLogModel,
+        private readonly provinces: ProvinceService,
+        @InjectModel(UserModel)
+        private readonly userModel: typeof UserModel,
+        private readonly securityConfig: SecurityConfigService,
     ) {}
 
     private async ownMember(user: User) {
@@ -135,9 +156,34 @@ export class MemberProfileService {
         return this.memberModel.findByPk(member._id, { raw: true });
     }
 
+    /** Kiểm tra mã tỉnh trong danh mục */
+    private async checkProvinces(update: Record<string, unknown>) {
+        for (const field of ["hometownCode", "addressCode"])
+            if (field in update)
+                update[field] = await this.provinces.assertCode(
+                    update[field] as string,
+                );
+        return update;
+    }
+
     async updateOwn(user: User, dto: Record<string, unknown>) {
         const member = await this.ownMember(user);
-        return this.save(member, this.pick(dto, SELF_EDITABLE), user, "SELF");
+        const { memberCanEditProfileUrl } = await this.securityConfig.get();
+        const allowed = memberCanEditProfileUrl
+            ? [...SELF_EDITABLE, "profileUrl"]
+            : SELF_EDITABLE;
+        if (
+            !memberCanEditProfileUrl &&
+            dto.profileUrl !== undefined &&
+            normalize(dto.profileUrl) !== normalize(member.profileUrl)
+        )
+            throw ApiError.Forbidden("error-profile-url-admin-only");
+        return this.save(
+            member,
+            await this.checkProvinces(this.pick(dto, allowed)),
+            user,
+            "SELF",
+        );
     }
 
     async updateByAdmin(
@@ -147,16 +193,38 @@ export class MemberProfileService {
     ) {
         const member = await this.memberModel.findByPk(memberId, { raw: true });
         if (!member) throw ApiError.NotFound("error-record-not-found");
-        return this.save(member, this.pick(dto, ADMIN_EDITABLE), user, "ADMIN");
+        return this.save(
+            member,
+            await this.checkProvinces(this.pick(dto, ADMIN_EDITABLE)),
+            user,
+            "ADMIN",
+        );
     }
 
+    /** Lịch sử sửa hồ sơ kèm tên người sửa */
     async logs(memberId: string) {
-        return this.logModel.findAll({
+        const rows = await this.logModel.findAll({
             where: { memberId },
             order: [["createdAt", "DESC"]],
             limit: 200,
             raw: true,
         });
+        const ids = [
+            ...new Set(rows.map((row) => row.changedBy).filter(Boolean)),
+        ];
+        const users = new Map(
+            (ids.length
+                ? await this.userModel.findAll({
+                      where: { _id: ids },
+                      raw: true,
+                  })
+                : []
+            ).map((item) => [item._id, item.fullname || item.username]),
+        );
+        return rows.map((row) => ({
+            ...row,
+            changedByName: users.get(row.changedBy) ?? row.changedBy ?? "",
+        }));
     }
 
     async ownLogs(user: User) {

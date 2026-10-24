@@ -1,8 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, App, Button, Card, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
-import { CrownOutlined, HistoryOutlined, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Card, DatePicker, Empty, Form, Input, Modal, Select, Space, Switch, Table, Tabs, Tag, Typography } from 'antd';
+import { ClusterOutlined, CrownOutlined, DeleteOutlined, HistoryOutlined, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
+import dayjs from 'dayjs';
+import GroupDeleteModal from '@/components/GroupDeleteModal';
+import GroupPlanModal from '@/components/GroupPlanModal';
 import type { Dayjs } from 'dayjs';
 import { errorMessage } from '@/lib/api';
 import {
@@ -18,7 +21,7 @@ const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'gre
  * - Nhóm HLC Fund: thành viên là MTO và thầy cô ngoài HLC; Leader/Phó (MTE) chỉ quản lý, không là thành viên.
  * Gán vai trò = gán chức vụ kèm quyền hạn và điểm theo cấu hình vai trò, có thời gian hiệu lực.
  */
-export default function GroupManager({ kind }: { kind: GroupKind }) {
+export default function GroupManager({ kind, canDelete = true }: { kind: GroupKind; canDelete?: boolean }) {
   const { message } = App.useApp();
   const [groups, setGroups] = useState<GroupView[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -32,6 +35,12 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
   const [assigning, setAssigning] = useState<GroupView | null>(null);
   const [contributor, setContributor] = useState<{ group: GroupView; item?: FundContributor } | null>(null);
   const [history, setHistory] = useState<{ group: GroupView; data: GroupHistory } | null>(null);
+  const [deleting, setDeleting] = useState<GroupView | null>(null);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [moving, setMoving] = useState<{ group: GroupView; member: GroupMember } | null>(null);
+  const [moveTarget, setMoveTarget] = useState<string | undefined>();
+  const [ending, setEnding] = useState<{ group: GroupView; row: GroupRoleAssignment } | null>(null);
+  const [endForm] = Form.useForm<{ endDate?: Dayjs; reason?: string }>();
   const [form] = Form.useForm();
   const [assignForm] = Form.useForm<{ memberId: string; positionId: string; startDate?: Dayjs; endDate?: Dayjs; note?: string }>();
   const [contributorForm] = Form.useForm();
@@ -44,7 +53,7 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
         groupApi.list(),
         memberCrudApi.many({ status: 'ACTIVE' }, { memberCode: 1 }),
         groupApi.unassigned(),
-        roleApi.list(),
+        roleApi.list().catch(() => [] as RoleView[]),
         isFund ? fundApi.contributors() : Promise.resolve([] as FundContributor[])
       ]);
       setGroups(list.filter((group) => group.groupKind === kind));
@@ -85,7 +94,7 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
     { title: 'Hiệu lực', render: (_: unknown, row: GroupRoleAssignment) => <span>{formatDate(row.startDate)} → {row.endDate ? formatDate(row.endDate) : 'nay'}{!row.isActive && <Tag className="ml-1">Sắp hiệu lực</Tag>}</span> },
     {
       title: '', render: (_: unknown, row: GroupRoleAssignment) => !row.endDate ? (
-        <Popconfirm title="Kết thúc vai trò hôm nay?" onConfirm={() => run(() => groupApi.endAssignment(row.assignmentId), `Đã kết thúc vai trò ở ${group.name}`)}><Button size="small" type="link" danger>Kết thúc</Button></Popconfirm>
+        <Button size="small" type="link" danger onClick={() => { endForm.setFieldsValue({ endDate: dayjs(), reason: '' }); setEnding({ group, row }); }}>Gỡ chức vụ</Button>
       ) : null
     }
   ];
@@ -102,7 +111,10 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Typography.Text type="secondary">{groups.length} nhóm · {unassigned.length} {isFund ? 'MTO' : 'MTE'} chưa có nhóm</Typography.Text>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ deputyCanReview: true }); setEditing('new'); }}>Tạo nhóm mới</Button>
+        <Space wrap>
+          <Button icon={<ClusterOutlined />} onClick={() => setPlanOpen(true)}>Gợi ý chia nhóm cân bằng</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ deputyCanReview: true }); setEditing('new'); }}>Tạo nhóm mới</Button>
+        </Space>
       </div>
       {unassigned.length > 0 && <Alert type="warning" showIcon title={`Chưa có nhóm: ${unassigned.slice(0, 12).map((item) => item.fullName).join(', ')}${unassigned.length > 12 ? '…' : ''}`} />}
       {!loading && !groups.length && <Empty description="Chưa có nhóm nào" />}
@@ -118,6 +130,7 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
                 <Space size="small">
                   <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
                   <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, isActive: group.isActive }); setEditing(group); }}>Sửa</Button>
+                  {canDelete && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setDeleting(group)}>Xóa</Button>}
                 </Space>
               )}
             >
@@ -140,7 +153,7 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
                   { title: 'Thành viên', render: (_: unknown, row: GroupMember) => <span>{row.fullName} <span className="text-xs text-gray-400">{row.memberCode}</span></span> },
                   { title: 'Loại', render: (_: unknown, row: GroupMember) => typeTag(row.memberType) },
                   { title: 'Vào nhóm', dataIndex: 'joinedGroupAt', render: (value: string) => formatDate(value) },
-                  { title: '', render: (_: unknown, row: GroupMember) => <Popconfirm title="Đưa khỏi nhóm?" onConfirm={() => run(() => groupApi.removeMember(group._id, row._id), 'Đã đưa khỏi nhóm')}><Button size="small" type="link" danger>Rời nhóm</Button></Popconfirm> }
+                  { title: '', render: (_: unknown, row: GroupMember) => <Button size="small" type="link" onClick={() => { setMoveTarget(undefined); setMoving({ group, member: row }); }}>Chuyển nhóm</Button> }
                 ]}
               />
               {isFund && (
@@ -226,6 +239,27 @@ export default function GroupManager({ kind }: { kind: GroupKind }) {
           <Form.Item name="contact" label="Liên hệ"><Input /></Form.Item>
           {contributor?.item && <Form.Item name="groupId" label="Nhóm"><Select options={groups.map((group) => ({ value: group._id, label: group.name }))} /></Form.Item>}
           {contributor?.item && <Form.Item name="isActive" label="Đang đóng quỹ" valuePropName="checked"><Switch /></Form.Item>}
+        </Form>
+      </Modal>
+
+      <GroupDeleteModal group={deleting} onClose={() => setDeleting(null)} onDone={() => void load()} />
+      <GroupPlanModal kind={kind} open={planOpen} onClose={() => setPlanOpen(false)} onApplied={() => void load()} />
+
+      <Modal title={moving ? `Chuyển ${moving.member.fullName} sang nhóm khác` : ''} open={Boolean(moving)} onCancel={() => setMoving(null)} okText="Chuyển" okButtonProps={{ disabled: !moveTarget }} destroyOnHidden
+        onOk={async () => { if (moving && moveTarget && await run(() => groupApi.addMembers(moveTarget, [moving.member._id]), 'Đã chuyển nhóm')) setMoving(null); }}>
+        <Typography.Paragraph type="secondary">Mỗi thành viên luôn thuộc đúng một nhóm: chọn nhóm mới thay vì gỡ khỏi nhóm. Vai trò đang giữ ở nhóm cũ được kết thúc hôm nay.</Typography.Paragraph>
+        <Select className="w-full" placeholder="Chọn nhóm mới" value={moveTarget} onChange={setMoveTarget} options={groups.filter((item) => item._id !== moving?.group._id && item.isActive).map((item) => ({ value: item._id, label: item.name }))} />
+      </Modal>
+
+      <Modal title={ending ? `Gỡ chức vụ ${ending.row.roleName} · ${ending.row.fullName}` : ''} open={Boolean(ending)} onCancel={() => setEnding(null)} onOk={() => endForm.submit()} okText="Gỡ chức vụ" okButtonProps={{ danger: true }} destroyOnHidden>
+        <Form form={endForm} layout="vertical" onFinish={async (values) => {
+          if (!ending) return;
+          const ok = await run(() => groupApi.endAssignment(ending.row.assignmentId, values.endDate?.format('YYYY-MM-DD'), values.reason), `Đã gỡ chức vụ ở ${ending.group.name}`);
+          if (ok) setEnding(null);
+        }}>
+          <Typography.Paragraph type="secondary">Ghi ngày kết thúc hiệu lực (không xóa lịch sử) để phụ cấp của kỳ vẫn tính đúng theo thời gian giữ chức. Thao tác được ghi nhật ký.</Typography.Paragraph>
+          <Form.Item name="endDate" label="Hiệu lực đến hết ngày" rules={[{ required: true, message: 'Chọn ngày kết thúc' }]}><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
+          <Form.Item name="reason" label="Lý do"><Input /></Form.Item>
         </Form>
       </Modal>
 

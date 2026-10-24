@@ -15,6 +15,7 @@ import { ApiTags } from "@nestjs/swagger";
 import { Op } from "sequelize";
 import { AdminScope } from "../common/constant";
 import { AdminPermissionModel } from "../models/admin-permission.model";
+import { SecurityConfigService } from "@module/setting/security-config.service";
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import { GrantPermissionDto } from "./grant-permission.dto";
 
@@ -32,6 +33,7 @@ export class AccessController {
         @InjectModel(LearningModuleModel)
         private readonly moduleModel: typeof LearningModuleModel,
         private readonly groupAccess: GroupAccessService,
+        private readonly securityConfig: SecurityConfigService,
     ) {}
 
     /** Quyền của người đang đăng nhập: FE dùng để hiện menu */
@@ -44,22 +46,28 @@ export class AccessController {
                   where: { userId: user._id },
                   raw: true,
               });
+        const capabilities = await this.groupAccess.capabilities(user);
+        const config = await this.securityConfig.get();
         return {
             systemRole: user.systemRole,
             isSuperAdmin,
-            scopes: isSuperAdmin
-                ? Object.values(AdminScope)
-                : [
-                      ...new Set([
-                          ...rows.map((row) => row.scope),
-                          ...(await this.roleScopesOf(user)),
-                      ]),
-                  ],
-            moduleIds: rows
-                .filter((row) => row.scope === AdminScope.LEARNING_MODULE)
-                .map((row) => row.moduleId),
-            /** Nhóm đang làm Leader / Phó nhóm: menu "Nhóm của tôi" */
+            scopes: [...capabilities.scopes],
+            /** Hành động cấp hệ thống: chốt kỳ, sửa điểm, xem bảng chi trả, xuất dữ liệu cá nhân, xem nhật ký */
+            actions: [...capabilities.actions],
+            /** null = mọi module (Admin tổng, Trưởng ban học tập / MTE) */
+            moduleIds: capabilities.scopes.has(AdminScope.LEARNING)
+                ? null
+                : rows
+                      .filter((row) => row.scope === AdminScope.LEARNING_MODULE)
+                      .map((row) => row.moduleId),
+            /** Nhóm có quyền (vai trò trong nhóm, vai trò cấp ban, ủy quyền): menu "Nhóm của tôi" */
             leaderGroups: await this.leaderGroupsOf(user),
+            /** Công tắc "bắt buộc đổi mật khẩu lần đầu" đang bật và tài khoản chưa tự đổi lần nào */
+            mustChangePassword:
+                !isSuperAdmin &&
+                config.forcePasswordChangeOnFirstLogin &&
+                !user.passwordChangedAt,
+            profileUrlEditable: config.memberCanEditProfileUrl,
         };
     }
 

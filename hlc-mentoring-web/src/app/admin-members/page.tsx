@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Alert, App, Button, Card, Form, Input, Modal, Space, Spin, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd';
-import { InboxOutlined, UserAddOutlined } from '@ant-design/icons';
+import { Alert, App, Button, Card, Dropdown, Form, Input, Modal, Space, Spin, Switch, Table, Tabs, Tag, Typography, Upload } from 'antd';
+import { DownloadOutlined, InboxOutlined, UserAddOutlined } from '@ant-design/icons';
 import MemberEditModal from '@/components/MemberEditModal';
 import ProfileLink from '@/components/ProfileLink';
-import { memberCrudApi } from '@/services/hlcApi';
+import { memberCrudApi, memberExportApi, provinceNeedsReview, type Member } from '@/services/hlcApi';
 import { errorMessage } from '@/lib/api';
 import {
   ROLE_STATUS_COLOR,
@@ -182,6 +182,7 @@ export default function AdminMembersPage() {
           )
         },
         { title: 'PROFILE', dataIndex: 'profileUrl', render: (value?: string) => <ProfileLink url={value} /> },
+        { title: 'TỈNH, THÀNH', render: (_: unknown, member: MemberView) => provinceNeedsReview(member as unknown as Member) ? <Tag color="orange">Cần chọn lại tỉnh</Tag> : null },
         { title: '', render: (_: unknown, member: MemberView) => <Button size="small" onClick={() => setEditingMember(member._id)}>Sửa hồ sơ</Button> }
       ]}
     />
@@ -233,6 +234,25 @@ export default function AdminMembersPage() {
               <Button icon={<InboxOutlined />} loading={importing}>Import Excel thành viên</Button>
             </Upload>
             <Button icon={<UserAddOutlined />} onClick={() => setAccountModalOpen(true)}>Tạo tài khoản</Button>
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'MENTEE', label: 'Xuất danh sách Mentee (MTE)' },
+                  { key: 'MENTOR', label: 'Xuất danh sách Mentor (MTO)' },
+                  { key: 'ALL', label: 'Xuất cả MTE và MTO' }
+                ],
+                onClick: async ({ key }) => {
+                  try {
+                    await memberExportApi.download(key === 'ALL' ? undefined : (key as 'MENTEE' | 'MENTOR'));
+                    message.success('Đã xuất file. Việc xuất được ghi vào nhật ký.');
+                  } catch (error) {
+                    message.error(errorMessage(error, 'Không xuất được danh sách'));
+                  }
+                }
+              }}
+            >
+              <Button icon={<DownloadOutlined />}>Xuất xlsx đầy đủ</Button>
+            </Dropdown>
             <Button type="primary" onClick={() => { const next = !membersVisible; setMembersVisible(next); if (next) void loadMembers(); }}>
               {membersVisible ? 'Ẩn danh sách thành viên' : 'Xem danh sách thành viên'}
             </Button>

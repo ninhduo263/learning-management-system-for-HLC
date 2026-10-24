@@ -1,3 +1,5 @@
+import { ModuleAudienceService } from "@module/learning/flow/module-audience.service";
+import { GroupKind } from "@module/organization/common/constant";
 import { vnParts } from "@common/utils/vn-date.util";
 import { ApiError } from "@config/exception/api-error";
 import {
@@ -14,7 +16,6 @@ import {
 import { cycleKeyOf } from "@module/learning/flow/learning-flow.service";
 import { LearningModuleModel } from "@module/learning/models/learning-module.model";
 import { SubmissionModel } from "@module/learning/models/submission.model";
-import { TargetMemberType } from "@module/member/common/constant";
 import { MemberModel } from "@module/member/models/member.model";
 import {
     MentoringPairStatus,
@@ -58,6 +59,7 @@ export class LeaderService {
         private readonly submissionModel: typeof SubmissionModel,
         @InjectModel(FundContributionModel)
         private readonly fundModel: typeof FundContributionModel,
+        private readonly audience: ModuleAudienceService,
     ) {}
 
     /** Nhóm mà người dùng được xem (Admin: mọi nhóm) */
@@ -178,6 +180,7 @@ export class LeaderService {
               })
             : [];
 
+        const targets = await this.audience.resolver();
         const brief = (id?: string | null) => {
             const member = id ? members.get(id) : null;
             return member
@@ -191,7 +194,8 @@ export class LeaderService {
                   }
                 : null;
         };
-        const memberRow = (memberId: string) => {
+        // Nhóm HLC Fund (MTO, thầy cô) chỉ có minh chứng nộp quỹ: không trả mentoring / học tập
+        const memberRow = (memberId: string, fundOnly = false) => {
             const member = members.get(memberId);
             const myPairs = pairs.filter(
                 (pair) =>
@@ -236,14 +240,7 @@ export class LeaderService {
                     };
                 });
             const learning = modules
-                .filter((module) => {
-                    const target =
-                        module.targetMemberType ?? TargetMemberType.MENTEE;
-                    return (
-                        target === TargetMemberType.ALL ||
-                        (target as string) === member?.memberType
-                    );
-                })
+                .filter((module) => targets(module, member))
                 .map((module) => {
                     const count = submissions.filter(
                         (row) =>
@@ -269,8 +266,8 @@ export class LeaderService {
             }));
             return {
                 member: brief(memberId),
-                mentoring,
-                learning,
+                mentoring: fundOnly ? [] : mentoring,
+                learning: fundOnly ? [] : learning,
                 fund: {
                     weeks: fundWeeks,
                     doneWeeks: fundWeeks.filter(
@@ -293,9 +290,12 @@ export class LeaderService {
             weeks,
             groups: groups.map((group) => {
                 const roles = leaders.get(group._id);
+                const groupKind = group.groupKind ?? GroupKind.MENTEE;
                 const rows = memberships
                     .filter((row) => row.groupId === group._id)
-                    .map((row) => memberRow(row.memberId))
+                    .map((row) =>
+                        memberRow(row.memberId, groupKind === GroupKind.FUND),
+                    )
                     .filter((row) => row.member);
                 rows.sort(
                     (a, b) =>
@@ -308,6 +308,7 @@ export class LeaderService {
                     _id: group._id,
                     code: group.code,
                     name: group.name,
+                    groupKind,
                     myRole: group.role,
                     canReview: group.canReview,
                     leader: brief(roles?.leaderId),

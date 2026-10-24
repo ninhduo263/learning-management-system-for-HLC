@@ -1,3 +1,4 @@
+import { MentoringSuggestService } from "./flow/mentoring-suggest.service";
 import { Entity } from "@module/repository";
 import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
@@ -71,6 +72,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
         MentoringAwardController,
     ],
     providers: [
+        MentoringSuggestService,
         MentoringFlowService,
         RecapScoreService,
         MentoringHistoryService,

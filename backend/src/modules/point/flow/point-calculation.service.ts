@@ -1,3 +1,4 @@
+import { ModuleAudienceService } from "@module/learning/flow/module-audience.service";
 import { vnDateKey, vnParts } from "@common/utils/vn-date.util";
 import {
     coveredWeeks,
@@ -114,6 +115,7 @@ export class PointCalculationService {
         private readonly contributorModel: typeof FundContributorModel,
         @InjectModel(GroupKindConfigModel)
         private readonly kindConfigModel: typeof GroupKindConfigModel,
+        private readonly audience: ModuleAudienceService,
     ) {}
 
     /** Rule đang bật và có hiệu lực ít nhất 1 ngày trong kỳ */
@@ -542,9 +544,17 @@ export class PointCalculationService {
             ReturnType<PointCalculationService["positionHolders"]>
         >,
     ) {
-        const positionRules = rules.filter(
-            (rule) => rule.sourceType === PointSourceType.MEMBER_POSITION,
-        );
+        const positionRules = rules
+            .filter(
+                // Chỉ 1 rule hệ thống theo cấu hình vai trò: một chức vụ sinh đúng 1 khoản điểm / tháng
+                (rule) =>
+                    rule.sourceType === PointSourceType.MEMBER_POSITION &&
+                    Boolean(
+                        (rule.conditions as Record<string, unknown>)
+                            ?.fromRoleConfig,
+                    ),
+            )
+            .slice(0, 1);
         const entries: DesiredEntry[] = [];
         for (const holder of holders) {
             if (!this.roleMatchesGroup(holder)) continue;
@@ -646,16 +656,13 @@ export class PointCalculationService {
                   transaction: t,
               })
             : [];
+        // Chỉ tính module mà thành viên là đối tượng (loại thành viên + danh sách được gán)
+        const targets = await this.audience.resolver(t);
         const learningDone = (memberId: string, memberType: string) =>
             modules
-                .filter((module) => {
-                    const target =
-                        module.targetMemberType ?? TargetMemberType.MENTEE;
-                    return (
-                        target === TargetMemberType.ALL ||
-                        (target as string) === memberType
-                    );
-                })
+                .filter((module) =>
+                    targets(module, { _id: memberId, memberType }),
+                )
                 .every((module) => {
                     const keys =
                         module.cycleType === CycleType.MONTHLY
@@ -800,9 +807,17 @@ export class PointCalculationService {
         completion: Map<string, { done: number; total: number }>,
         thresholds: Record<string, number>,
     ) {
-        const bonusRules = rules.filter(
-            (rule) => rule.sourceType === PointSourceType.GROUP_COMPLETION,
-        );
+        const bonusRules = rules
+            .filter(
+                // Chỉ 1 rule hệ thống theo cấu hình vai trò: một chức vụ sinh đúng 1 khoản điểm / tháng
+                (rule) =>
+                    rule.sourceType === PointSourceType.GROUP_COMPLETION &&
+                    Boolean(
+                        (rule.conditions as Record<string, unknown>)
+                            ?.fromRoleConfig,
+                    ),
+            )
+            .slice(0, 1);
         const entries: DesiredEntry[] = [];
         for (const holder of holders) {
             const stats = completion.get(holder.departmentId);

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
+  Alert, App, Button, Card, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
 } from 'antd';
 import { PrinterOutlined, CalculatorOutlined, DownloadOutlined, LockOutlined, PlusOutlined, SettingOutlined, UnlockOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
@@ -14,6 +14,15 @@ import {
   type AdjustmentView, type Member, type MemberBreakdown, type PeriodExportView, type PeriodSummary, type PointRule, type PointType, type SummaryRow
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
+import { can, useAccess } from '@/lib/useAccess';
+
+/** Mã tháng trước của 'YYYY-MM' */
+const previousCode = (code: string) => {
+  const [year, month] = code.split('-').map(Number);
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+};
+/** Ngày trong tháng theo giờ Việt Nam */
+const vnDay = (date: Date) => new Date(date.getTime() + 7 * 3600_000).getUTCDate();
 
 const ADJ_STATUS: Record<string, { label: string; color: string }> = {
   PENDING: { label: 'Chờ duyệt', color: 'gold' },
@@ -23,7 +32,13 @@ const ADJ_STATUS: Record<string, { label: string; color: string }> = {
 
 export default function AdminPointsPage() {
   const { message, modal } = App.useApp();
+  const access = useAccess();
+  const canEdit = can(access, 'EDIT_POINTS');
+  const canLock = can(access, 'LOCK_PERIOD');
   const [code, setCode] = useState(() => currentPeriodCode(getCurrentTime()));
+  // Ngày 1-10: bảng tháng trước còn chờ chi -> mặc định xem song song 2 bảng
+  const [view, setView] = useState<'single' | 'dual'>(() => vnDay(getCurrentTime()) <= 10 ? 'dual' : 'single');
+  const [dualTick, setDualTick] = useState(0);
   const [summary, setSummary] = useState<PeriodSummary | null>(null);
   const [adjustments, setAdjustments] = useState<AdjustmentView[]>([]);
   const [exports, setExports] = useState<PeriodExportView[]>([]);
@@ -155,7 +170,7 @@ export default function AdminPointsPage() {
   const adjustmentTab = (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button type="primary" icon={<PlusOutlined />} disabled={locked} onClick={() => { adjustForm.resetFields(); setAdjustOpen(true); }}>Cộng / trừ điểm</Button>
+        {canEdit && <Button type="primary" icon={<PlusOutlined />} disabled={locked} onClick={() => { adjustForm.resetFields(); setAdjustOpen(true); }}>Cộng / trừ điểm</Button>}
       </div>
       <Table<AdjustmentView>
         rowKey="_id"
@@ -171,7 +186,7 @@ export default function AdminPointsPage() {
           { title: 'Lý do', render: (_: unknown, row: AdjustmentView) => <div className="max-w-md whitespace-pre-wrap">{row.reason}{row.reviewNote && <div className="text-xs text-gray-500">Ghi chú: {row.reviewNote}</div>}</div> },
           { title: 'Trạng thái', width: 120, render: (_: unknown, row: AdjustmentView) => <Tag color={ADJ_STATUS[row.status].color}>{ADJ_STATUS[row.status].label}</Tag> },
           {
-            title: '', width: 150, render: (_: unknown, row: AdjustmentView) => locked ? null : row.status === 'PENDING'
+            title: '', width: 150, render: (_: unknown, row: AdjustmentView) => locked || !canEdit ? null : row.status === 'PENDING'
               ? <Button size="small" type="primary" onClick={() => { reviewForm.setFieldsValue({ points: row.points, note: '' }); setReview(row); }}>Xử lý</Button>
               : row.status === 'APPROVED'
                 ? <Popconfirm title="Hủy điều chỉnh này?" onConfirm={() => run(`cancel-${row._id}`, () => pointApi.cancelAdjustment(row._id), 'Đã hủy điều chỉnh')}><Button size="small" danger>Hủy</Button></Popconfirm>
@@ -186,9 +201,9 @@ export default function AdminPointsPage() {
     <div className="space-y-3">
       <Alert type="info" showIcon title={locked ? `Xuất bảng ${period?.sheetCode} để gửi bộ phận chi trả.` : `Kỳ chưa chốt: file xuất là bản tạm tính (${period?.sheetCode}-tam-tinh). Chốt kỳ để lưu cố định tên và số tài khoản.`} />
       <Space wrap>
-        <Button type="primary" icon={<DownloadOutlined />} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx', locked), 'Đã xuất file Excel')}>Xuất Excel</Button>
-        <Button icon={<DownloadOutlined />} loading={busy === 'csv'} onClick={() => run('csv', () => pointApi.exportFile(code, 'csv', locked), 'Đã xuất file CSV')}>Xuất CSV</Button>
-        {locked && <Button onClick={() => { carryForm.resetFields(); setCarryOpen(true); }}>Bù chênh lệch sang tháng sau</Button>}
+        <Button type="primary" icon={<DownloadOutlined />} disabled={!locked && !canEdit && !canLock} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx', locked), 'Đã xuất file Excel')}>Xuất Excel</Button>
+        <Button icon={<DownloadOutlined />} disabled={!locked && !canEdit && !canLock} loading={busy === 'csv'} onClick={() => run('csv', () => pointApi.exportFile(code, 'csv', locked), 'Đã xuất file CSV')}>Xuất CSV</Button>
+        {locked && canEdit && <Button onClick={() => { carryForm.resetFields(); setCarryOpen(true); }}>Bù chênh lệch sang tháng sau</Button>}
         <Button icon={<PrinterOutlined />} onClick={() => window.open(`/admin-points/report?period=${code}`, '_blank')}>Báo cáo PDF mùng 10</Button>
       </Space>
       <Table<PeriodExportView>
@@ -206,21 +221,47 @@ export default function AdminPointsPage() {
     </div>
   );
 
+  const viewSwitch = (
+    <Segmented<'single' | 'dual'>
+      value={view}
+      onChange={(value) => { setView(value); setDualTick((tick) => tick + 1); }}
+      options={[{ value: 'single', label: 'Một bảng' }, { value: 'dual', label: 'Hai bảng song song' }]}
+    />
+  );
+
+  if (view === 'dual') {
+    const current = currentPeriodCode(getCurrentTime());
+    const open = (target: string) => { setCode(target); setView('single'); };
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Typography.Title level={3} className="!mb-0">Điểm phụ cấp</Typography.Title>
+          {viewSwitch}
+        </div>
+        {vnDay(getCurrentTime()) <= 10 && <Alert type="info" showIcon title={`Từ ngày 1 đến 10: bảng PC-${previousCode(current)} đang chờ chi, bảng PC-${current} đang tích lũy. Thao tác ở bảng nào chỉ áp dụng cho bảng đó.`} />}
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {[previousCode(current), current].map((target) => <PeriodBoard key={`${target}-${dualTick}`} code={target} onOpen={() => open(target)} canEdit={canEdit} canLock={canLock} />)}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           <Typography.Title level={3} className="!mb-0">Điểm phụ cấp</Typography.Title>
+          {viewSwitch}
           <MonthPicker value={code} onChange={setCode} />
           <Tag color="geekblue" className="!text-sm">Bảng {period?.sheetCode ?? `PC-${code}`}</Tag>
           {period && <Tag color={PERIOD_STATUS_COLOR[period.status]}>{PERIOD_STATUS_LABEL[period.status]}</Tag>}
         </div>
         <Space wrap>
-          <Button icon={<SettingOutlined />} disabled={locked} onClick={() => { settingsForm.setFieldsValue({ pointRate: Number(period?.pointRate ?? 0), baseAllowance: Number(period?.baseAllowance ?? 0), payoutDate: period?.payoutDate ?? '', reason: '' }); setSettingsOpen(true); }}>Đơn giá</Button>
-          <Button type="primary" icon={<CalculatorOutlined />} disabled={locked} loading={busy === 'recalc'} onClick={recalc}>Tính lại</Button>
-          {!locked && <Popconfirm title={`Chốt ${periodLabel(code)}?`} description="Sau khi chốt không thể tính lại hay điều chỉnh điểm." onConfirm={() => run('lock', () => pointApi.lock(code), 'Đã chốt kỳ')}><Button icon={<LockOutlined />} loading={busy === 'lock'}>Chốt kỳ</Button></Popconfirm>}
-          {locked && period?.status !== 'PAID' && <Button icon={<UnlockOutlined />} loading={busy === 'unlock'} onClick={() => { setUnlockReason(''); setUnlockOpen(true); }}>Mở khóa</Button>}
-          {locked && period?.status !== 'PAID' && <Popconfirm title="Xác nhận đã chi trả kỳ này?" onConfirm={() => run('paid', () => pointApi.paid(code), 'Đã đánh dấu chi trả')}><Button icon={<CheckCircleOutlined />}>Đã chi trả</Button></Popconfirm>}
+          {canEdit && <Button icon={<SettingOutlined />} disabled={locked} onClick={() => { settingsForm.setFieldsValue({ pointRate: Number(period?.pointRate ?? 0), baseAllowance: Number(period?.baseAllowance ?? 0), payoutDate: period?.payoutDate ?? '', reason: '' }); setSettingsOpen(true); }}>Đơn giá</Button>}
+          {canEdit && <Button type="primary" icon={<CalculatorOutlined />} disabled={locked} loading={busy === 'recalc'} onClick={recalc}>Tính lại</Button>}
+          {!locked && canLock && <Popconfirm title={`Chốt ${periodLabel(code)}?`} description="Sau khi chốt không thể tính lại hay điều chỉnh điểm." onConfirm={() => run('lock', () => pointApi.lock(code), 'Đã chốt kỳ')}><Button icon={<LockOutlined />} loading={busy === 'lock'}>Chốt kỳ</Button></Popconfirm>}
+          {locked && period?.status !== 'PAID' && access?.isSuperAdmin && <Button icon={<UnlockOutlined />} loading={busy === 'unlock'} onClick={() => { setUnlockReason(''); setUnlockOpen(true); }}>Mở khóa</Button>}
+          {locked && period?.status !== 'PAID' && canLock && <Popconfirm title="Xác nhận đã chi trả kỳ này?" onConfirm={() => run('paid', () => pointApi.paid(code), 'Đã đánh dấu chi trả')}><Button icon={<CheckCircleOutlined />}>Đã chi trả</Button></Popconfirm>}
         </Space>
       </div>
 
@@ -244,7 +285,7 @@ export default function AdminPointsPage() {
           { key: 'adjust', label: `Điều chỉnh & khiếu nại${pending.length ? ` (${pending.length})` : ''}`, children: adjustmentTab },
           { key: 'export', label: 'Xuất file chi trả', children: exportTab },
           { key: 'logs', label: 'Nhật ký kỳ', children: <PeriodLogPanel code={code} /> },
-          { key: 'config', label: 'Cấu hình loại điểm & quy tắc', children: <PointConfig /> }
+          ...(canEdit ? [{ key: 'config', label: 'Cấu hình loại điểm & quy tắc', children: <PointConfig /> }] : [])
         ]} />
       </Card>
 
@@ -343,13 +384,76 @@ export default function AdminPointsPage() {
   );
 }
 
-const CONDITION_HINT: Record<string, string> = {
-  MENTORING_RECAP: '{"recapRole":"MENTEE","submittedDayFrom":1,"submittedDayTo":7}',
-  MENTORING_AWARD: '{"rank":1}',
-  FUND_MONTHLY: '{"minApprovedAmount":150000}',
-  MEMBER_POSITION: '{"positionCode":"LEADER"}',
-  SUBMISSION: '{"moduleCode":"READING","minScore":50}'
-};
+/** Một bảng tổng hợp gọn (chế độ song song): mã, trạng thái và thao tác riêng của kỳ */
+function PeriodBoard({ code, onOpen, canEdit, canLock }: { code: string; onOpen: () => void; canEdit: boolean; canLock: boolean }) {
+  const { message } = App.useApp();
+  const [summary, setSummary] = useState<PeriodSummary | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      await pointApi.ensure(code);
+      setSummary(await pointApi.summary(code));
+    } catch (error) {
+      message.error(errorMessage(error, `Không tải được bảng PC-${code}`));
+    }
+  }, [code, message]);
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => { if (active) void load(); });
+    return () => { active = false; };
+  }, [load]);
+  const run = async (key: string, action: () => Promise<unknown>, success: string) => {
+    setBusy(key);
+    try {
+      await action();
+      message.success(success);
+      await load();
+    } catch (error) {
+      message.error(errorMessage(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const period = summary?.period;
+  const locked = Boolean(period?.isLocked);
+  return (
+    <Card
+      size="small"
+      title={<Space wrap><Tag color="geekblue" className="!text-sm">{period?.sheetCode ?? `PC-${code}`}</Tag>{period && <Tag color={PERIOD_STATUS_COLOR[period.status]}>{PERIOD_STATUS_LABEL[period.status]}</Tag>}<span className="text-gray-500">{periodLabel(code)}</span></Space>}
+      extra={<Button size="small" onClick={onOpen}>Mở chi tiết</Button>}
+    >
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        <Statistic title="Thành viên" value={summary?.totals.members ?? 0} />
+        <Statistic title="Tổng điểm" value={summary?.totals.points ?? 0} />
+        <Statistic title="Tổng chi trả" value={money(summary?.totals.amount)} />
+      </div>
+      <Space wrap className="mb-3">
+        {!locked && canEdit && <Button size="small" icon={<CalculatorOutlined />} loading={busy === 'recalc'} onClick={() => run('recalc', () => pointApi.recalculate(code), `Đã tính lại PC-${code}`)}>Tính lại</Button>}
+        {!locked && canLock && <Popconfirm title={`Chốt bảng PC-${code}?`} onConfirm={() => run('lock', () => pointApi.lock(code), `Đã chốt PC-${code}`)}><Button size="small" icon={<LockOutlined />} loading={busy === 'lock'}>Chốt kỳ</Button></Popconfirm>}
+        {locked && period?.status !== 'PAID' && canLock && <Popconfirm title={`Xác nhận đã chi bảng PC-${code}?`} onConfirm={() => run('paid', () => pointApi.paid(code), 'Đã đánh dấu chi trả')}><Button size="small" icon={<CheckCircleOutlined />}>Đã chi trả</Button></Popconfirm>}
+        <Button size="small" icon={<DownloadOutlined />} disabled={!locked && !canEdit && !canLock} loading={busy === 'xlsx'} onClick={() => run('xlsx', () => pointApi.exportFile(code, 'xlsx', locked), 'Đã xuất file Excel')}>Xuất Excel</Button>
+      </Space>
+      <Table<SummaryRow>
+        rowKey="_id"
+        size="small"
+        loading={!summary}
+        dataSource={summary?.rows ?? []}
+        pagination={{ pageSize: 10, size: 'small' }}
+        scroll={{ x: 'max-content' }}
+        columns={[
+          { title: 'Thành viên', render: (_: unknown, row: SummaryRow) => <div><strong>{row.member?.fullName}</strong><div className="text-xs text-gray-500">{row.member?.memberCode}</div></div> },
+          { title: 'Tổng điểm', align: 'right' as const, render: (_: unknown, row: SummaryRow) => points(row.totalPoints) },
+          { title: 'Bù chênh lệch', align: 'right' as const, render: (_: unknown, row: SummaryRow) => Number(row.adjustmentAmount ?? 0) ? money(row.adjustmentAmount) : '' },
+          { title: 'Thành tiền', align: 'right' as const, render: (_: unknown, row: SummaryRow) => <strong>{money(row.amount)}</strong> }
+        ]}
+      />
+    </Card>
+  );
+}
+
+/** Nguồn điểm chức vụ: cấu hình ở Tổ chức > Vai trò & điểm (một nơi duy nhất) */
+const TARGET_LABEL: Record<string, string> = { MENTEE: 'Mentee', MENTOR: 'Mentor', ALL: 'Tất cả' };
+const ROLE_MANAGED_SOURCES = ['MEMBER_POSITION', 'GROUP_COMPLETION'];
 
 /** Cấu hình loại điểm (cột bảng tổng hợp) và quy tắc tính tự động */
 function PointConfig() {
@@ -379,13 +483,11 @@ function PointConfig() {
   }, [load]);
 
   const saveRule = async (values: Record<string, unknown>) => {
+    if (!editingRule?._id) return;
     setSaving(true);
     try {
-      let conditions: unknown = {};
-      try { conditions = values.conditions ? JSON.parse(String(values.conditions)) : {}; } catch { throw new Error('Điều kiện phải là JSON hợp lệ'); }
-      const body = { ...values, conditions } as Partial<PointRule>;
-      if (editingRule?._id) await pointRuleApi.update(editingRule._id, body);
-      else await pointRuleApi.create(body);
+      const { name, pointTypeId, points: value, targetMemberType, isActive } = values as Partial<PointRule>;
+      await pointRuleApi.update(editingRule._id, { name, pointTypeId, points: value, targetMemberType, isActive });
       message.success('Đã lưu quy tắc');
       setEditingRule(null);
       await load();
@@ -416,11 +518,12 @@ function PointConfig() {
   return (
     <div className="space-y-4">
       <Alert type="info" showIcon title="Thay đổi quy tắc có hiệu lực ở lần “Tính lại” tiếp theo của kỳ chưa chốt. Quy tắc điểm 0 hoặc đang tắt sẽ không tính." />
-      <Card size="small" title="Quy tắc điểm" extra={<Button size="small" icon={<PlusOutlined />} onClick={() => { ruleForm.resetFields(); ruleForm.setFieldsValue({ targetMemberType: 'MENTEE', ruleKind: 'AUTO', isActive: true, priority: 0, conditions: '{}' }); setEditingRule({}); }}>Thêm quy tắc</Button>}>
+      <Alert type="warning" showIcon title="Điểm phụ cấp chức vụ (Leader, Phó nhóm, trưởng ban…) và thưởng đạt tỷ lệ hoàn thành chỉ cấu hình ở Tổ chức › Vai trò & điểm. Màn hình này chỉ cấu hình quy tắc thưởng theo kết quả (mentoring sớm, giải nhất/nhì/ba, đóng quỹ, học tập…). Điều kiện tính là logic hệ thống, chỉ sửa tên, số điểm, đối tượng và bật/tắt." />
+      <Card size="small" title="Quy tắc thưởng">
         <Table<PointRule>
           rowKey="_id"
           size="small"
-          dataSource={rules}
+          dataSource={rules.filter((rule) => !ROLE_MANAGED_SOURCES.includes(rule.sourceType))}
           scroll={{ x: 'max-content' }}
           pagination={false}
           columns={[
@@ -428,11 +531,10 @@ function PointConfig() {
             { title: 'Tên', dataIndex: 'name' },
             { title: 'Loại điểm', render: (_: unknown, row: PointRule) => typeName(row.pointTypeId) },
             { title: 'Nguồn', render: (_: unknown, row: PointRule) => SOURCE_TYPE_LABEL[row.sourceType] ?? row.sourceType },
-            { title: 'Đối tượng', dataIndex: 'targetMemberType' },
+            { title: 'Đối tượng', dataIndex: 'targetMemberType', render: (value: string) => TARGET_LABEL[value] ?? value },
             { title: 'Điểm', dataIndex: 'points', align: 'right' as const, render: (value: number) => points(value) },
-            { title: 'Điều kiện', render: (_: unknown, row: PointRule) => <code className="text-xs">{JSON.stringify(row.conditions)}</code> },
             { title: 'Bật', render: (_: unknown, row: PointRule) => <Switch size="small" checked={row.isActive} onChange={async (checked) => { try { await pointRuleApi.update(row._id, { isActive: checked }); await load(); } catch (error) { message.error(errorMessage(error)); } }} /> },
-            { title: '', render: (_: unknown, row: PointRule) => <Button size="small" onClick={() => { ruleForm.setFieldsValue({ ...row, conditions: JSON.stringify(row.conditions ?? {}) }); setEditingRule(row); }}>Sửa</Button> }
+            { title: '', render: (_: unknown, row: PointRule) => <Button size="small" onClick={() => { ruleForm.setFieldsValue(row); setEditingRule(row); }}>Sửa</Button> }
           ]}
         />
       </Card>
@@ -453,23 +555,14 @@ function PointConfig() {
         />
       </Card>
 
-      <Modal title={editingRule?._id ? 'Sửa quy tắc' : 'Thêm quy tắc'} open={Boolean(editingRule)} onCancel={() => setEditingRule(null)} onOk={() => ruleForm.submit()} confirmLoading={saving} width={640} destroyOnHidden>
+      <Modal title="Sửa quy tắc thưởng" open={Boolean(editingRule)} onCancel={() => setEditingRule(null)} onOk={() => ruleForm.submit()} confirmLoading={saving} destroyOnHidden>
         <Form form={ruleForm} layout="vertical" onFinish={saveRule}>
+          <Form.Item name="name" label="Tên quy tắc" rules={[{ required: true, message: 'Nhập tên' }]}><Input /></Form.Item>
+          <Form.Item name="pointTypeId" label="Loại điểm (cột bảng tổng hợp)" rules={[{ required: true, message: 'Chọn loại điểm' }]}><Select options={types.map((type) => ({ value: type._id, label: type.name }))} /></Form.Item>
           <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
-            <Form.Item name="code" label="Mã" rules={[{ required: true }]}><Input disabled={Boolean(editingRule?._id)} /></Form.Item>
-            <Form.Item name="name" label="Tên" rules={[{ required: true }]}><Input /></Form.Item>
-            <Form.Item name="pointTypeId" label="Loại điểm" rules={[{ required: true }]}><Select options={types.map((type) => ({ value: type._id, label: type.name }))} /></Form.Item>
-            <Form.Item name="sourceType" label="Nguồn dữ liệu" rules={[{ required: true }]}>
-              <Select options={Object.entries(SOURCE_TYPE_LABEL).filter(([key]) => key !== 'POINT_ADJUSTMENT').map(([value, label]) => ({ value, label }))} onChange={(value: string) => ruleForm.setFieldValue('conditions', CONDITION_HINT[value] ?? '{}')} />
-            </Form.Item>
-            <Form.Item name="ruleKind" label="Kiểu"><Select options={['AUTO', 'RANKING', 'POSITION', 'MANUAL'].map((value) => ({ value, label: value }))} /></Form.Item>
-            <Form.Item name="targetMemberType" label="Áp dụng cho"><Select options={[{ value: 'MENTEE', label: 'Mentee' }, { value: 'MENTOR', label: 'Mentor' }, { value: 'ALL', label: 'Tất cả' }]} /></Form.Item>
-            <Form.Item name="points" label="Điểm" rules={[{ required: true }]}><InputNumber className="w-full" step={0.5} /></Form.Item>
-            <Form.Item name="maxPointsPerPeriod" label="Tối đa / kỳ (tùy chọn)"><InputNumber className="w-full" min={0} /></Form.Item>
-            <Form.Item name="exclusiveGroup" label="Nhóm loại trừ (chỉ nhận 1 rule)"><Input /></Form.Item>
-            <Form.Item name="priority" label="Ưu tiên (cao thắng)"><InputNumber className="w-full" /></Form.Item>
+            <Form.Item name="points" label="Số điểm" rules={[{ required: true, message: 'Nhập số điểm' }]}><InputNumber className="w-full" step={0.5} /></Form.Item>
+            <Form.Item name="targetMemberType" label="Áp dụng cho"><Select options={Object.entries(TARGET_LABEL).map(([value, label]) => ({ value, label }))} /></Form.Item>
           </div>
-          <Form.Item name="conditions" label="Điều kiện (JSON)"><Input.TextArea rows={3} className="font-mono" /></Form.Item>
           <Form.Item name="isActive" label="Đang bật" valuePropName="checked"><Switch /></Form.Item>
         </Form>
       </Modal>

@@ -5,6 +5,7 @@ import {
   Alert, App, Button, Card, Divider, Empty, Form, Input, InputNumber, Modal, Popconfirm, Progress, Select, Space, Switch, Table, Tabs, Tag, Typography, Upload
 } from 'antd';
 import { DeleteOutlined, DownloadOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons';
+import ModuleAudienceModal from '@/components/ModuleAudienceModal';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import SubmissionData from '@/components/SubmissionData';
 import { errorMessage } from '@/lib/api';
@@ -20,7 +21,8 @@ export default function AdminModulesPage() {
   const { message } = App.useApp();
   const [modules, setModules] = useState<LearningModule[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [canCreate, setCanCreate] = useState(false);
+  const [audienceOf, setAudienceOf] = useState<LearningModule | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('review');
   const [moduleId, setModuleId] = useState<string>('');
@@ -32,7 +34,7 @@ export default function AdminModulesPage() {
     try {
       const [list, access] = await Promise.all([learningApi.modules(), accessApi.mine()]);
       setModules(list);
-      setIsSuperAdmin(access.isSuperAdmin);
+      setCanCreate(access.isSuperAdmin || access.scopes.includes('LEARNING'));
       setModuleId((current) => current || list.find((item) => item.pendingReviews)?._id || list[0]?._id || '');
       if (access.isSuperAdmin) setDepartments(await departmentApi.many());
     } catch (error) {
@@ -87,7 +89,7 @@ export default function AdminModulesPage() {
 
   const moduleTab = (
     <div className="space-y-3">
-      {isSuperAdmin && <div className="flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>Tạo module</Button></div>}
+      {canCreate && <div className="flex justify-end"><Button type="primary" icon={<PlusOutlined />} onClick={() => openEditor()}>Tạo module</Button></div>}
       <Table<LearningModule>
         rowKey="_id"
         size="small"
@@ -99,7 +101,20 @@ export default function AdminModulesPage() {
           { title: 'Mã', dataIndex: 'code', width: 150 },
           { title: 'Tên module', render: (_: unknown, row: LearningModule) => <div><strong>{row.name}</strong>{row.isRecapModule && <Tag color="purple" className="ml-2">Liên kết recap mentoring</Tag>}{row.description && <div className="text-xs text-gray-500 line-clamp-1">{row.description}</div>}</div> },
           { title: 'Chu kỳ', render: (_: unknown, row: LearningModule) => `${CYCLE_LABEL[row.cycleType]}${row.minSubmissionsPerCycle ? ` · tối thiểu ${row.minSubmissionsPerCycle}` : ''}${row.maxSubmissionsPerCycle ? ` · tối đa ${row.maxSubmissionsPerCycle}` : ''}` },
-          { title: 'Đối tượng', render: (_: unknown, row: LearningModule) => TARGET_LABEL[row.targetMemberType] },
+          {
+            title: 'Đối tượng', render: (_: unknown, row: LearningModule) => (
+              <div>
+                {TARGET_LABEL[row.targetMemberType]}
+                {!row.isRecapModule && (
+                  <div>
+                    <Button size="small" type="link" className="!px-0" onClick={() => setAudienceOf(row)}>
+                      {row.audienceMode === 'SELECTED' ? <Tag color="orange">Chỉ người được gán</Tag> : 'Gán cho người cụ thể'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )
+          },
           { title: 'Trường', render: (_: unknown, row: LearningModule) => <div className="flex max-w-xs flex-wrap gap-1">{row.fields.map((field) => <Tag key={field._id}>{field.label}</Tag>)}</div> },
           { title: 'Chấm điểm', render: (_: unknown, row: LearningModule) => row.enableScoring ? `Thang ${row.maxScore}${row.criteria.length ? ` · ${row.criteria.length} tiêu chí` : ''}` : 'Không' },
           { title: 'Chờ duyệt', dataIndex: 'pendingReviews', render: (value: number, row: LearningModule) => value ? <Button size="small" type="link" onClick={() => { setModuleId(row._id); setTab('review'); }}>{value} bài</Button> : 0 },
@@ -137,6 +152,7 @@ export default function AdminModulesPage() {
         </Card>
       )}
 
+      <ModuleAudienceModal module={audienceOf} onClose={() => setAudienceOf(null)} onSaved={() => void load()} />
       <Modal title={editing && editing !== 'new' ? `Sửa module ${editing.code}` : 'Tạo module mới'} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => form.submit()} confirmLoading={saving} width={820} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={saveModule}>
           <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">

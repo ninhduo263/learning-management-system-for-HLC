@@ -28,6 +28,9 @@ import { UnlockPeriodDto } from "./dto/unlock-period.dto";
 import { CarryOverDto } from "./dto/carry-over.dto";
 import { ReviewAdjustmentDto } from "./dto/review-adjustment.dto";
 import { PointFlowService } from "./point-flow.service";
+import { ApiError } from "@config/exception/api-error";
+import { RolePermission } from "@module/organization/common/constant";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
 
 /** Điểm phụ cấp: Admin tổng hoặc người có quyền POINT */
 @Controller("points")
@@ -36,7 +39,23 @@ import { PointFlowService } from "./point-flow.service";
 @AllowSystemRoles(SystemRole.ADMIN)
 @AllowAdminScope(AdminScope.POINT)
 export class PointAdminController {
-    constructor(private readonly flowService: PointFlowService) {}
+    constructor(
+        private readonly flowService: PointFlowService,
+        private readonly access: GroupAccessService,
+    ) {}
+
+    /** Kế toán (chỉ VIEW_PAYOUT): chỉ xuất bảng đã chốt */
+    private async assertExport(user: User, code: string) {
+        const { actions } = await this.access.capabilities(user);
+        if (
+            actions.has(RolePermission.EDIT_POINTS) ||
+            actions.has(RolePermission.LOCK_PERIOD)
+        )
+            return;
+        const period = await this.flowService.getPeriodView(code);
+        if (!period.isLocked)
+            throw ApiError.Forbidden("error-action-forbidden");
+    }
 
     @Get("periods")
     listPeriods() {
@@ -49,35 +68,40 @@ export class PointAdminController {
     }
 
     @Put("periods/:code/settings")
-    updateSettings(
+    async updateSettings(
         @ReqUser() user: User,
         @Param("code") code: string,
         @Body() dto: PeriodSettingsDto,
     ) {
+        await this.access.assertCan(user, RolePermission.EDIT_POINTS);
         return this.flowService.updateSettings(periodCode(code), dto, user);
     }
 
     @Post("periods/:code/recalculate")
-    recalculate(@ReqUser() user: User, @Param("code") code: string) {
+    async recalculate(@ReqUser() user: User, @Param("code") code: string) {
+        await this.access.assertCan(user, RolePermission.EDIT_POINTS);
         return this.flowService.recalculate(periodCode(code), user);
     }
 
     @Post("periods/:code/lock")
-    lock(@ReqUser() user: User, @Param("code") code: string) {
+    async lock(@ReqUser() user: User, @Param("code") code: string) {
+        await this.access.assertCan(user, RolePermission.LOCK_PERIOD);
         return this.flowService.lock(periodCode(code), user);
     }
 
     @Post("periods/:code/unlock")
-    unlock(
+    async unlock(
         @ReqUser() user: User,
         @Param("code") code: string,
         @Body() dto: UnlockPeriodDto,
     ) {
+        this.access.assertSuperAdmin(user);
         return this.flowService.unlock(periodCode(code), user, dto.reason);
     }
 
     @Post("periods/:code/paid")
-    markPaid(@ReqUser() user: User, @Param("code") code: string) {
+    async markPaid(@ReqUser() user: User, @Param("code") code: string) {
+        await this.access.assertCan(user, RolePermission.LOCK_PERIOD);
         return this.flowService.markPaid(periodCode(code), user);
     }
 
@@ -90,11 +114,12 @@ export class PointAdminController {
 
     /** Bù chênh lệch cho kỳ đã chốt/đã chi: ghi dòng điều chỉnh ở kỳ kế tiếp */
     @Post("periods/:code/carry-over")
-    carryOver(
+    async carryOver(
         @ReqUser() user: User,
         @Param("code") code: string,
         @Body() dto: CarryOverDto,
     ) {
+        await this.access.assertCan(user, RolePermission.EDIT_POINTS);
         return this.flowService.carryOver(periodCode(code), dto, user);
     }
 
@@ -130,20 +155,22 @@ export class PointAdminController {
     }
 
     @Post("periods/:code/adjustments")
-    createAdjustment(
+    async createAdjustment(
         @ReqUser() user: User,
         @Param("code") code: string,
         @Body() dto: AdjustmentDto,
     ) {
+        await this.access.assertCan(user, RolePermission.EDIT_POINTS);
         return this.flowService.createAdjustment(periodCode(code), dto, user);
     }
 
     @Put("adjustments/:id/review")
-    reviewAdjustment(
+    async reviewAdjustment(
         @ReqUser() user: User,
         @Param("id") id: string,
         @Body() dto: ReviewAdjustmentDto,
     ) {
+        await this.access.assertCan(user, RolePermission.EDIT_POINTS);
         return this.flowService.reviewAdjustment(
             id,
             dto.status === "APPROVED",
@@ -154,7 +181,8 @@ export class PointAdminController {
     }
 
     @Delete("adjustments/:id")
-    cancelAdjustment(@ReqUser() user: User, @Param("id") id: string) {
+    async cancelAdjustment(@ReqUser() user: User, @Param("id") id: string) {
+        await this.access.assertCan(user, RolePermission.EDIT_POINTS);
         return this.flowService.cancelAdjustment(id, user);
     }
 
@@ -170,6 +198,7 @@ export class PointAdminController {
         @Param("format") format: string,
         @Res() res: Response,
     ) {
+        await this.assertExport(user, periodCode(code));
         const file = await this.flowService.exportAllowance(
             periodCode(code),
             format === "csv" ? "csv" : "xlsx",

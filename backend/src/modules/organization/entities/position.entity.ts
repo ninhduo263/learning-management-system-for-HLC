@@ -62,4 +62,9 @@ export class Position implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Mô tả" })
     description?: string;
+
+    @IsArray()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Phạm vi loại nhóm" })
+    scopeKinds?: string[];
 }

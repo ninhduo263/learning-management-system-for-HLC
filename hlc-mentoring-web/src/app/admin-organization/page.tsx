@@ -6,10 +6,14 @@ import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import GroupManager from '@/components/GroupManager';
 import RolesPanel from '@/components/RolesPanel';
+import ActivityLogPanel from '@/components/ActivityLogPanel';
+import DelegationPanel from '@/components/DelegationPanel';
+import SystemConfigPanel from '@/components/SystemConfigPanel';
+import { useAccess } from '@/lib/useAccess';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
-  SCOPE_LABEL, accessApi, departmentApi, formatDate, learningApi, memberCrudApi, memberPositionApi, positionApi,
+  SCOPE_LABEL, accessApi, departmentApi, formatDate, groupApi, learningApi, memberCrudApi, memberPositionApi, positionApi,
   type AdminScope, type Department, type LearningModule, type Member, type MemberPosition, type PermissionView, type Position
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
@@ -18,6 +22,7 @@ const DEPARTMENT_TYPE: Record<string, string> = { ACADEMIC: 'Học tập', FUND:
 
 export default function AdminOrganizationPage() {
   const { message } = App.useApp();
+  const access = useAccess();
   const [departments, setDepartments] = useState<Department[]>([]);
   const groupIds = new Set(departments.filter((item) => item.type === 'GROUP').map((item) => item._id));
   const [positions, setPositions] = useState<Position[]>([]);
@@ -28,6 +33,7 @@ export default function AdminOrganizationPage() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    if (!access?.isSuperAdmin) return;
     try {
       const [nextDepartments, nextPositions, nextAssignments, nextMembers, nextPermissions, nextModules] = await Promise.all([
         departmentApi.many(undefined, { code: 1 }),
@@ -48,7 +54,7 @@ export default function AdminOrganizationPage() {
     } finally {
       setLoading(false);
     }
-  }, [message]);
+  }, [message, access]);
 
   useEffect(() => {
     let active = true;
@@ -56,17 +62,30 @@ export default function AdminOrganizationPage() {
     return () => { active = false; };
   }, [load]);
 
+  if (!access) return null;
+  // Trưởng ban MTE: chỉ quản lý các nhóm MTE (không xóa nhóm, không phân quyền)
+  if (!access.isSuperAdmin)
+    return (
+      <div className="space-y-4">
+        <Typography.Title level={3} className="!mb-0">Nhóm MTE</Typography.Title>
+        <Card><GroupManager kind="MENTEE" canDelete={false} /></Card>
+      </div>
+    );
+
   return (
     <div className="space-y-4">
       <Typography.Title level={3} className="!mb-0">Tổ chức & phân quyền</Typography.Title>
       <Card loading={loading}>
         <Tabs items={[
           { key: 'mte', label: 'Nhóm MTE', children: <GroupManager kind="MENTEE" /> },
-          { key: 'fund', label: 'Nhóm HLC Fund (MTO & thầy cô)', children: <GroupManager kind="FUND" /> },
+          { key: 'fund', label: 'Nhóm HLC Fund', children: <GroupManager kind="FUND" /> },
           { key: 'roles', label: 'Vai trò & điểm', children: <RolesPanel /> },
           { key: 'assign', label: 'Chức vụ ban', children: <AssignmentPanel assignments={assignments.filter((row) => !groupIds.has(row.departmentId))} members={members} departments={departments.filter((item) => item.type !== 'GROUP')} positions={positions.filter((item) => !(item as Position & { groupKind?: string | null }).groupKind)} onChanged={load} /> },
-          { key: 'permission', label: 'Quyền theo module học tập', children: <PermissionPanel permissions={permissions} members={members} modules={modules} onChanged={load} /> },
-          { key: 'catalog', label: 'Danh sách ban', children: <CatalogPanel departments={departments.filter((item) => item.type !== 'GROUP')} onChanged={load} /> }
+          { key: 'permission', label: 'Quyền module', children: <PermissionPanel permissions={permissions} members={members} modules={modules} onChanged={load} /> },
+          { key: 'catalog', label: 'Danh sách ban', children: <CatalogPanel departments={departments.filter((item) => item.type !== 'GROUP')} onChanged={load} /> },
+          { key: 'delegation', label: 'Ủy quyền', children: <DelegationPanel mode="admin" /> },
+          { key: 'logs', label: 'Nhật ký', children: <ActivityLogPanel /> },
+          { key: 'config', label: 'Cấu hình', children: <SystemConfigPanel /> }
         ]} />
       </Card>
     </div>
@@ -79,6 +98,8 @@ function AssignmentPanel({ assignments, members, departments, positions, onChang
   const { message } = App.useApp();
   const [editing, setEditing] = useState<MemberPosition | 'new' | null>(null);
   const [showEnded, setShowEnded] = useState(false);
+  const [ending, setEnding] = useState<MemberPosition | null>(null);
+  const [endForm] = Form.useForm<{ endDate: Dayjs; reason?: string }>();
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
   const memberMap = useMemo(() => new Map(members.map((item) => [item._id, item])), [members]);
@@ -104,7 +125,7 @@ function AssignmentPanel({ assignments, members, departments, positions, onChang
 
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Chức vụ của ban (không gắn nhóm), ví dụ Trưởng ban, Admin HLC Fund. Quyền hạn và điểm phụ cấp lấy từ cấu hình vai trò (tab Vai trò & điểm). Leader / Phó nhóm gán ở màn hình từng loại nhóm." />
+      <Alert type="info" showIcon title="Chức vụ của ban (không gắn nhóm), ví dụ Trưởng ban MTE, Trưởng ban HLC Fund, Kế toán. Quyền hạn và điểm phụ cấp lấy từ cấu hình vai trò (tab Vai trò & điểm). Leader / Phó nhóm gán ở màn hình từng loại nhóm." />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Space><Switch checked={showEnded} onChange={setShowEnded} /> Hiện cả chức vụ đã kết thúc</Space>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); form.setFieldsValue({ startDate: dayjs(getCurrentTime()) }); setEditing('new'); }}>Gán chức vụ</Button>
@@ -125,13 +146,29 @@ function AssignmentPanel({ assignments, members, departments, positions, onChang
             title: '', render: (_: unknown, row: MemberPosition) => (
               <Space>
                 <Button size="small" onClick={() => { form.setFieldsValue({ ...row, startDate: dayjs(row.startDate), endDate: row.endDate ? dayjs(row.endDate) : undefined }); setEditing(row); }}>Sửa</Button>
-                {!row.endDate && <Button size="small" onClick={async () => { try { await memberPositionApi.update(row._id, { endDate: today }); await onChanged(); } catch (error) { message.error(errorMessage(error)); } }}>Kết thúc hôm nay</Button>}
-                <Popconfirm title="Xóa bản ghi chức vụ?" onConfirm={async () => { try { await memberPositionApi.remove(row._id); await onChanged(); } catch (error) { message.error(errorMessage(error)); } }}><Button size="small" danger>Xóa</Button></Popconfirm>
+                {(!row.endDate || row.endDate >= today) && <Button size="small" danger onClick={() => { endForm.setFieldsValue({ endDate: dayjs(getCurrentTime()), reason: '' }); setEnding(row); }}>Gỡ chức vụ</Button>}
               </Space>
             )
           }
         ]}
       />
+      <Modal title="Gỡ chức vụ" open={Boolean(ending)} onCancel={() => setEnding(null)} onOk={() => endForm.submit()} okText="Gỡ chức vụ" okButtonProps={{ danger: true }} destroyOnHidden>
+        <Form form={endForm} layout="vertical" onFinish={async (values) => {
+          if (!ending) return;
+          try {
+            await groupApi.endAssignment(ending._id, values.endDate.format('YYYY-MM-DD'), values.reason);
+            message.success('Đã gỡ chức vụ (có nhật ký)');
+            setEnding(null);
+            await onChanged();
+          } catch (error) {
+            message.error(errorMessage(error));
+          }
+        }}>
+          <Typography.Paragraph type="secondary">Ghi ngày kết thúc hiệu lực, không xóa lịch sử, để phụ cấp của kỳ vẫn tính đúng theo thời gian giữ chức.</Typography.Paragraph>
+          <Form.Item name="endDate" label="Hiệu lực đến hết ngày" rules={[{ required: true, message: 'Chọn ngày' }]}><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
+          <Form.Item name="reason" label="Lý do"><Input /></Form.Item>
+        </Form>
+      </Modal>
       <Modal title={editing && editing !== 'new' ? 'Sửa chức vụ' : 'Gán chức vụ'} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => form.submit()} confirmLoading={saving} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={save}>
           <Form.Item name="memberId" label="Thành viên" rules={[{ required: true }]}>

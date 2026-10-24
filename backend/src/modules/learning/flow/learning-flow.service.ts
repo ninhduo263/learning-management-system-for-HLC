@@ -1,3 +1,5 @@
+import { ModuleAudienceService } from "./module-audience.service";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import {
     vnDateKey,
     vnIsoWeekKey,
@@ -102,6 +104,8 @@ export class LearningFlowService {
         private readonly memberModel: typeof MemberModel,
         @InjectModel(AdminPermissionModel)
         private readonly permissionModel: typeof AdminPermissionModel,
+        private readonly groupAccess: GroupAccessService,
+        private readonly audience: ModuleAudienceService,
     ) {}
 
     // ------------------------------------------------------------------
@@ -111,6 +115,13 @@ export class LearningFlowService {
     /** null = quản lý mọi module (Admin tổng) */
     async manageableModuleIds(user: User): Promise<string[] | null> {
         if (user.systemRole === SystemRole.ADMIN) return null;
+        // Trưởng ban học tập / Trưởng ban MTE: mọi module
+        if (
+            (await this.groupAccess.capabilities(user)).scopes.has(
+                AdminScope.LEARNING,
+            )
+        )
+            return null;
         const rows = await this.permissionModel.findAll({
             where: { userId: user._id, scope: AdminScope.LEARNING_MODULE },
             raw: true,
@@ -142,12 +153,9 @@ export class LearningFlowService {
         return member as Member;
     }
 
-    private targets(module: LearningModule, member: Member) {
-        const target = module.targetMemberType ?? TargetMemberType.MENTEE;
-        return (
-            target === TargetMemberType.ALL ||
-            (target as string) === member.memberType
-        );
+    /** Đối tượng của module (loại thành viên + danh sách được gán) */
+    private async targetsFn() {
+        return this.audience.resolver();
     }
 
     // ------------------------------------------------------------------
@@ -612,7 +620,7 @@ export class LearningFlowService {
         // Recap mentoring nộp ở trang mentoring, không nộp qua module
         if (!module.isActive || module.code === RECAP_MODULE_CODE)
             throw ApiError.Conflict("error-learning-module-inactive");
-        if (!this.targets(module, member))
+        if (!(await this.targetsFn())(module, member))
             throw ApiError.Forbidden("error-learning-module-not-target");
         const fields = (await this.fieldModel.findAll({
             where: { moduleId, isActive: true },
@@ -864,6 +872,7 @@ export class LearningFlowService {
     async getMine(user: User) {
         const member = await this.memberOf(user);
         const now = this.timeService.now();
+        const targets = await this.targetsFn();
         const modules = (
             await this.moduleModel.findAll({
                 where: { isActive: true },
@@ -875,8 +884,7 @@ export class LearningFlowService {
             })
         ).filter(
             (module) =>
-                module.code !== RECAP_MODULE_CODE &&
-                this.targets(module, member),
+                module.code !== RECAP_MODULE_CODE && targets(module, member),
         );
         const details = await this.moduleDetails(modules);
         const submissions = await this.submissionModel.findAll({
@@ -963,13 +971,14 @@ export class LearningFlowService {
         const module = await this.getModule(moduleId);
         const key =
             cycleKey || cycleKeyOf(module.cycleType, this.timeService.now());
+        const targets = await this.targetsFn();
         const members = (
             await this.memberModel.findAll({
                 where: { status: { [Op.ne]: MemberStatus.INACTIVE } },
                 order: [["memberCode", "ASC"]],
                 raw: true,
             })
-        ).filter((member) => this.targets(module, member));
+        ).filter((member) => targets(module, member));
         const rows = await this.submissionModel.findAll({
             where: {
                 moduleId,
@@ -1015,6 +1024,10 @@ export class LearningFlowService {
         const row = await this.submissionModel.findByPk(id, { raw: true });
         if (!row) throw ApiError.NotFound("error-record-not-found");
         await this.assertCanManage(user, row.moduleId);
+        // Không tự duyệt / chấm bài của chính mình
+        const self = await this.groupAccess.memberOfUser(user);
+        if (self && self._id === row.memberId)
+            throw ApiError.Forbidden("error-self-review");
         if (row.status !== SubmissionStatus.SUBMITTED)
             throw ApiError.Conflict("error-submission-not-submitted");
         this.periodFlow.assertWritable(

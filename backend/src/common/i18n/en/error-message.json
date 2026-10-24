@@ -82,5 +82,21 @@
     "error-carry-over-source-open": "Period {code} is still open",
     "error-carry-over-value-required": "Enter an amount or points",
     "error-role-kind-mismatch": "Role {role} does not apply to this group type",
-    "error-pair-month-locked": "Month {month} is locked"
+    "error-pair-month-locked": "Month {month} is locked",
+    "error-rule-managed-by-role": "Position and completion points are configured in Organization > Roles",
+    "error-rule-create-disabled": "Rule conditions are system logic; only edit existing rules",
+    "error-action-forbidden": "You are not allowed to perform this action",
+    "error-super-admin-only": "Only the global admin can do this",
+    "error-group-not-empty": "Group still has {count} members",
+    "error-group-target-invalid": "Invalid target group",
+    "error-role-in-use": "Role {role} is held by {count} people",
+    "error-self-review": "You cannot review your own work",
+    "error-delegation-invalid": "Invalid delegation",
+    "error-password-weak": "Password must be at least 8 characters with letters and digits",
+    "error-password-confirm": "Password confirmation does not match",
+    "error-province-invalid": "Unknown province",
+    "error-profile-url-admin-only": "Profile link can only be edited by admin",
+    "error-module-audience-empty": "Select at least one member or group",
+    "error-member-needs-group": "{name} is active and must belong to a group",
+    "error-role-system": "{role} is a system role"
 }

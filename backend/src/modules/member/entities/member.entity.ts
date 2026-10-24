@@ -70,6 +70,26 @@ export class Member implements BaseEntity {
     hometown?: string;
 
     @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Ngành học" })
+    major?: string;
+
+    @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Ngành nghề" })
+    occupation?: string;
+
+    @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Quê quán (tỉnh, thành phố)" })
+    hometownCode?: string;
+
+    @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Địa chỉ (tỉnh, thành phố)" })
+    addressCode?: string;
+
+    @IsString()
     @MaxLength(50)
     @IsOptional()
     @EntityDefinition.field({ label: "Số tài khoản" })

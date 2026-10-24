@@ -155,7 +155,7 @@ async function bootstrap() {
         swaggerCustomOptions,
     );
 
-    app.enableCors();
+    app.enableCors({ exposedHeaders: ["Content-Disposition"] });
     app.useGlobalPipes(
         new ValidationPipe({
             whitelist: true,

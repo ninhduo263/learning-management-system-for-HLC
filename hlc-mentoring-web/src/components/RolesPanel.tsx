@@ -1,10 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, App, Button, Card, Checkbox, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import { errorMessage } from '@/lib/api';
-import { ADMIN_SCOPE_LABEL, ROLE_APPLIES_LABEL, ROLE_PERMISSION_LABEL, roleApi, type GroupKind, type RoleAppliesTo, type RoleView } from '@/services/hlcApi';
+import { ADMIN_SCOPE_LABEL, GLOBAL_PERMISSIONS, GROUP_KIND_LABEL, GROUP_PERMISSIONS, ROLE_APPLIES_LABEL, ROLE_PERMISSION_LABEL, roleApi, type GroupKind, type RoleAppliesTo, type RoleView } from '@/services/hlcApi';
 
 /**
  * Vai trò = chức vụ + quyền hạn + điểm phụ cấp + điểm thưởng.
@@ -18,6 +18,7 @@ export default function RolesPanel() {
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
   const appliesTo = Form.useWatch('appliesTo', form) as RoleAppliesTo | undefined;
+  const scopeKinds = (Form.useWatch('scopeKinds', form) as GroupKind[] | undefined) ?? [];
 
   const load = useCallback(async () => {
     try {
@@ -35,10 +36,16 @@ export default function RolesPanel() {
     return () => { active = false; };
   }, [load]);
 
-  const save = async (values: Partial<RoleView>) => {
+  const save = async (values: Partial<RoleView> & { globalPermissions?: string[] }) => {
     setSaving(true);
     try {
-      await roleApi.save(values, editing && editing !== 'new' ? editing._id : undefined);
+      const { globalPermissions, ...rest } = values;
+      const body = {
+        ...rest,
+        permissions: [...(rest.permissions ?? []), ...(rest.appliesTo === 'BAN' ? globalPermissions ?? [] : [])],
+        scopeKinds: rest.appliesTo === 'BAN' ? rest.scopeKinds ?? [] : []
+      };
+      await roleApi.save(body, editing && editing !== 'new' ? editing._id : undefined);
       message.success('Đã lưu vai trò');
       setEditing(null);
       await load();
@@ -58,9 +65,22 @@ export default function RolesPanel() {
     }
   };
 
-  const permissionOptions = Object.entries(ROLE_PERMISSION_LABEL)
-    .filter(([value]) => appliesTo === 'MENTEE' || value !== 'SCORE_RECAP')
-    .map(([value, label]) => ({ value, label }));
+  // Vai trò trong nhóm: chỉ quyền theo nhóm (chấm recap chỉ nhóm MTE).
+  // Vai trò cấp ban: quyền cấp hệ thống + quyền theo nhóm áp dụng cho mọi nhóm của loại được chọn
+  const groupPermissionOptions = GROUP_PERMISSIONS
+    .filter((value) => (appliesTo === 'BAN' ? scopeKinds.includes('MENTEE') : appliesTo === 'MENTEE') || value !== 'SCORE_RECAP')
+    .map((value) => ({ value, label: ROLE_PERMISSION_LABEL[value] }));
+  const globalPermissionOptions = GLOBAL_PERMISSIONS.map((value) => ({ value, label: ROLE_PERMISSION_LABEL[value] }));
+
+  const remove = async (row: RoleView) => {
+    try {
+      const result = await roleApi.remove(row._id);
+      message.success(result.mode === 'DELETE' ? `Đã xóa vai trò ${row.name}` : `Vai trò ${row.name} đã từng được gán: chuyển sang ngừng dùng để giữ lịch sử phụ cấp`);
+      await load();
+    } catch (error) {
+      message.error(errorMessage(error));
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -82,12 +102,38 @@ export default function RolesPanel() {
           columns={[
             { title: 'Vai trò', render: (_: unknown, row: RoleView) => <div><strong>{row.name}</strong><div className="text-xs text-gray-400">{row.code}</div></div> },
             { title: 'Áp dụng cho', dataIndex: 'appliesTo', render: (value: RoleAppliesTo) => <Tag color={value === 'FUND' ? 'gold' : value === 'MENTEE' ? 'purple' : 'default'}>{ROLE_APPLIES_LABEL[value]}</Tag> },
-            { title: 'Quyền hạn', render: (_: unknown, row: RoleView) => <div className="flex max-w-xs flex-wrap gap-1">{row.permissions.map((item) => <Tag key={item}>{ROLE_PERMISSION_LABEL[item] ?? item}</Tag>)}{row.adminScope && <Tag color="red">{ADMIN_SCOPE_LABEL[row.adminScope] ?? row.adminScope}</Tag>}</div> },
+            {
+              title: 'Phạm vi · quyền hạn', render: (_: unknown, row: RoleView) => (
+                <div className="flex max-w-md flex-wrap gap-1">
+                  {row.appliesTo !== 'BAN' && <Tag color="cyan">Trong nhóm của mình</Tag>}
+                  {row.appliesTo === 'BAN' && (row.scopeKinds ?? []).map((kind) => <Tag key={kind} color="cyan">Mọi {GROUP_KIND_LABEL[kind].toLowerCase()}</Tag>)}
+                  {row.permissions.map((item) => <Tag key={item} color={GLOBAL_PERMISSIONS.includes(item) ? 'magenta' : undefined}>{ROLE_PERMISSION_LABEL[item] ?? item}</Tag>)}
+                  {row.adminScope && <Tag color="red">{ADMIN_SCOPE_LABEL[row.adminScope] ?? row.adminScope}</Tag>}
+                </div>
+              )
+            },
             { title: 'Phụ cấp', dataIndex: 'allowancePoints', align: 'right' as const, render: (value: number) => `${value} điểm` },
             { title: 'Thưởng', dataIndex: 'bonusPoints', align: 'right' as const, render: (value: number, row: RoleView) => row.appliesTo === 'BAN' ? '—' : `${value} điểm` },
-            { title: 'Đang dùng', dataIndex: 'assignmentCount' },
+            { title: 'Đang giữ', render: (_: unknown, row: RoleView) => <span>{row.activeHolderCount ?? 0} người<div className="text-xs text-gray-400">{row.assignmentCount} lần gán</div></span> },
             { title: '', dataIndex: 'isActive', render: (value: boolean) => value ? null : <Tag>Tắt</Tag> },
-            { title: '', render: (_: unknown, row: RoleView) => <Button size="small" onClick={() => { form.setFieldsValue({ ...row, adminScope: row.adminScope ?? undefined }); setEditing(row); }}>Sửa</Button> }
+            {
+              title: '', render: (_: unknown, row: RoleView) => (
+                <Space size="small">
+                  <Button size="small" onClick={() => { form.setFieldsValue({
+                    ...row,
+                    adminScope: row.adminScope ?? undefined,
+                    scopeKinds: row.scopeKinds ?? [],
+                    permissions: row.permissions.filter((item) => GROUP_PERMISSIONS.includes(item)),
+                    globalPermissions: row.permissions.filter((item) => GLOBAL_PERMISSIONS.includes(item))
+                  }); setEditing(row); }}>Sửa</Button>
+                  {!row.isSystem && (
+                    row.activeHolderCount
+                      ? <Button size="small" danger disabled title={`Còn ${row.activeHolderCount} người đang giữ: gỡ chức vụ trước`}>Xóa</Button>
+                      : <Popconfirm title={`Xóa vai trò ${row.name}?`} description={row.assignmentCount ? 'Đã từng gán: vai trò chuyển sang ngừng dùng để giữ lịch sử.' : 'Chưa từng gán: xóa hẳn.'} onConfirm={() => remove(row)}><Button size="small" danger>Xóa</Button></Popconfirm>
+                  )}
+                </Space>
+              )
+            }
           ]}
         />
       </Card>
@@ -100,8 +146,20 @@ export default function RolesPanel() {
           <Form.Item name="appliesTo" label="Loại nhóm áp dụng (bắt buộc)" rules={[{ required: true, message: 'Chọn loại nhóm' }]} extra="Vai trò của nhóm MTE không dùng được cho nhóm HLC Fund và ngược lại.">
             <Select disabled={editing !== 'new' && Boolean((editing as RoleView | null)?.assignmentCount)} options={Object.entries(ROLE_APPLIES_LABEL).map(([value, label]) => ({ value, label }))} />
           </Form.Item>
-          {appliesTo !== 'BAN' && (
-            <Form.Item name="permissions" label="Quyền hạn trong nhóm"><Checkbox.Group options={permissionOptions} /></Form.Item>
+          {appliesTo === 'BAN' && (
+            <Form.Item name="scopeKinds" label="Phạm vi theo loại nhóm (tùy chọn)" extra="Chọn loại nhóm thì quyền theo nhóm bên dưới áp dụng cho MỌI nhóm của loại đó (ví dụ Phó ban MTE duyệt mọi nhóm MTE). Chức vụ thuộc nhóm MTE không tự có quyền ở nhóm HLC Fund và ngược lại.">
+              <Checkbox.Group options={(['MENTEE', 'FUND'] as GroupKind[]).map((kind) => ({ value: kind, label: `Mọi ${GROUP_KIND_LABEL[kind].toLowerCase()}` }))} />
+            </Form.Item>
+          )}
+          {(appliesTo !== 'BAN' || scopeKinds.length > 0) && (
+            <Form.Item name="permissions" label={appliesTo === 'BAN' ? 'Quyền theo nhóm (trong phạm vi đã chọn)' : 'Quyền hạn trong nhóm của mình'}>
+              <Checkbox.Group options={groupPermissionOptions} />
+            </Form.Item>
+          )}
+          {appliesTo === 'BAN' && (
+            <Form.Item name="globalPermissions" label="Quyền tách riêng cấp hệ thống" extra="Chốt kỳ và sửa điểm luôn ghi nhật ký; không ai tự chấm / duyệt điểm của chính mình.">
+              <Checkbox.Group options={globalPermissionOptions} />
+            </Form.Item>
           )}
           <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-2">
             <Form.Item name="allowancePoints" label="Điểm phụ cấp mặc định / tháng"><InputNumber<number> className="w-full" min={0} max={100} step={0.5} /></Form.Item>

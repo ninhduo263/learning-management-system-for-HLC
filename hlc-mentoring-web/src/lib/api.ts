@@ -128,7 +128,9 @@ export async function downloadFile(path: string, fileName: string, options: Requ
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = fileName;
+  // Ưu tiên tên file máy chủ đặt (nếu trình duyệt đọc được header)
+  const served = /filename="?([^";]+)"?/.exec(response.headers.get('content-disposition') ?? '')?.[1];
+  link.download = served || fileName;
   document.body.appendChild(link);
   link.click();
   link.remove();

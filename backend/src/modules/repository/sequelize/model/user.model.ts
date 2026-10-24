@@ -49,4 +49,8 @@ export class UserModel extends Model implements User {
 
     @Column({})
     dataPartitionCode?: string;
+
+    /** Lần tự đổi mật khẩu gần nhất (null = chưa đổi từ khi được cấp) */
+    @Column({ type: DataType.DATE, allowNull: true })
+    passwordChangedAt?: Date;
 }

@@ -117,6 +117,11 @@ const rule = (
     priority,
     isActive,
 });
+/** Rule hệ thống lấy điểm từ cấu hình vai trò (Tổ chức > Vai trò & điểm) */
+export const ROLE_RULE_CODES = [
+    "POSITION_ALLOWANCE",
+    "POSITION_COMPLETION_BONUS",
+];
 const RULES = [
     rule(
         "MENTORING_EARLY_D1_7",
@@ -473,7 +478,80 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                 adminScope: "MENTORING",
                 sortOrder: 11,
             },
+            // Vai trò cấp ban theo bảng quyền tạm (vòng 4); Admin chỉnh được ở Vai trò & điểm
+            {
+                code: "TRUONG_BAN_MTE",
+                name: "Trưởng ban MTE",
+                groupKind: null,
+                permissions: [
+                    GROUP_PERMS.LOCK_PERIOD,
+                    GROUP_PERMS.EDIT_POINTS,
+                    GROUP_PERMS.VIEW_PAYOUT,
+                ],
+                scopeKinds: [GroupKind.MENTEE],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                adminScope: "MENTEE",
+                sortOrder: 12,
+            },
+            {
+                code: "PHO_BAN_MTE",
+                name: "Phó ban MTE",
+                groupKind: null,
+                permissions: [
+                    GROUP_PERMS.VIEW_PROGRESS,
+                    GROUP_PERMS.SCORE_RECAP,
+                    GROUP_PERMS.REVIEW_FUND,
+                ],
+                scopeKinds: [GroupKind.MENTEE],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                sortOrder: 13,
+            },
+            {
+                code: "PHO_BAN_HLC_FUND",
+                name: "Phó ban HLC Fund",
+                groupKind: null,
+                permissions: [
+                    GROUP_PERMS.VIEW_PROGRESS,
+                    GROUP_PERMS.REVIEW_FUND,
+                ],
+                scopeKinds: [GroupKind.MENTEE, GroupKind.FUND],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                sortOrder: 14,
+            },
+            {
+                code: "TRUONG_BAN_HOC_TAP",
+                name: "Trưởng ban Học tập",
+                groupKind: null,
+                permissions: [],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                adminScope: "LEARNING",
+                sortOrder: 15,
+            },
+            {
+                code: "KE_TOAN",
+                name: "Kế toán / phụ trách chi trả",
+                groupKind: null,
+                permissions: [GROUP_PERMS.VIEW_PAYOUT],
+                allowancePoints: 0,
+                bonusPoints: 0,
+                sortOrder: 16,
+            },
         ];
+        // Tên theo bảng quyền mới (chỉ đổi khi Admin chưa đặt tên khác)
+        for (const [code, from, to] of [
+            ["ADMIN_HLC_FUND", "Admin HLC Fund", "Trưởng ban HLC Fund"],
+            ["ADMIN_MENTORING", "Admin Mentoring", "Trưởng ban Mentoring"],
+        ]) {
+            const [count] = await this.positionModel.update(
+                { name: to },
+                { where: { code, name: from } },
+            );
+            changed += count;
+        }
         for (const role of roles) {
             const existing = await this.positionModel.findOne({
                 where: { code: role.code },
@@ -533,19 +611,23 @@ export class CatalogSeedService implements OnApplicationBootstrap {
                 changed += count;
             }
         }
-        // Quy tắc điểm chức vụ cũ (theo mã chức vụ) -> tắt, dùng quy tắc chung theo vai trò
+        // Điểm chức vụ chỉ định nghĩa ở Vai trò: tắt mọi quy tắc chức vụ / thưởng tỷ lệ khác
+        // (rule cũ POSITION_* hoặc rule tự tạo ở màn hình điểm phụ cấp) để không cộng 2 lần
         const [legacy] = await this.pointRuleModel.update(
             { isActive: false },
             {
                 where: {
-                    code: { [Op.like]: "POSITION_%" },
                     isActive: true,
-                    [Op.not]: {
-                        code: [
-                            "POSITION_ALLOWANCE",
-                            "POSITION_COMPLETION_BONUS",
-                        ],
-                    },
+                    [Op.or]: [
+                        { code: { [Op.like]: "POSITION_%" } },
+                        {
+                            sourceType: [
+                                PointSourceType.MEMBER_POSITION,
+                                PointSourceType.GROUP_COMPLETION,
+                            ],
+                        },
+                    ],
+                    [Op.not]: { code: ROLE_RULE_CODES },
                 },
             },
         );

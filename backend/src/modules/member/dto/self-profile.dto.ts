@@ -41,6 +41,26 @@ export class SelfProfileDto {
     @IsOptional()
     profileUrl?: string;
 
+    @IsString()
+    @MaxLength(255)
+    @IsOptional()
+    major?: string;
+
+    @IsString()
+    @MaxLength(255)
+    @IsOptional()
+    occupation?: string;
+
+    /** Quê quán: mã tỉnh, thành phố trong danh mục (rỗng = bỏ chọn) */
+    @IsString()
+    @IsOptional()
+    hometownCode?: string;
+
+    /** Địa chỉ: mã tỉnh, thành phố trong danh mục */
+    @IsString()
+    @IsOptional()
+    addressCode?: string;
+
     @Matches(/^[0-9 ]{4,30}$/, { message: "Số tài khoản chỉ gồm chữ số" })
     @IsOptional()
     bankAccount?: string;

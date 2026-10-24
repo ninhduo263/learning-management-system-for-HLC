@@ -36,6 +36,10 @@ import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
 import { MentoringExcelService } from "./mentoring-excel.service";
 import { MentoringFlowService } from "./mentoring-flow.service";
 import { MentoringHistoryService } from "./mentoring-history.service";
+import { GroupAccessService } from "@module/organization/flow/group-access.service";
+import { GroupFlowService } from "@module/organization/flow/group-flow.service";
+import { GroupKind } from "@module/organization/common/constant";
+import { MentoringSuggestService } from "./mentoring-suggest.service";
 
 /** Nghiệp vụ mentoring cho Admin tổng hoặc người có quyền MENTORING */
 @Controller("mentoring")
@@ -48,6 +52,9 @@ export class MentoringAdminController {
         private readonly flowService: MentoringFlowService,
         private readonly excelService: MentoringExcelService,
         private readonly historyService: MentoringHistoryService,
+        private readonly groupAccess: GroupAccessService,
+        private readonly groupFlow: GroupFlowService,
+        private readonly suggestService: MentoringSuggestService,
     ) {}
 
     @Get("quarters")
@@ -81,6 +88,51 @@ export class MentoringAdminController {
         @Body() dto: CreatePairDto,
     ) {
         return this.flowService.createPair(code, dto, user);
+    }
+
+    /**
+     * Gợi ý MTO cho từng MTE theo hồ sơ (?criteria=major,occupation,location,hometown,preference&menteeId=&limit=5).
+     * Chỉ gợi ý, không tự ghép.
+     */
+    @Get("quarters/:code/pair-suggestions")
+    pairSuggestions(
+        @Param("code") code: string,
+        @Query("criteria") criteria?: string,
+        @Query("menteeId") menteeId?: string,
+        @Query("limit") limit?: string,
+    ) {
+        return this.suggestService.pairSuggestions(code, {
+            criteria: criteria
+                ?.split(",")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            menteeId,
+            limit: Number(limit) || undefined,
+        });
+    }
+
+    /** Phương án chia nhóm cân bằng (?kind=MENTEE|FUND): Admin xem, chỉnh tay rồi mới áp dụng */
+    @Get("group-plan")
+    @AllowAdminScope(AdminScope.MENTEE)
+    async groupPlan(@ReqUser() user: User, @Query("kind") kind?: string) {
+        const value = kind === "FUND" ? GroupKind.FUND : GroupKind.MENTEE;
+        await this.groupFlow.assertManage(user, value);
+        return this.suggestService.groupPlan(value);
+    }
+
+    @Post("group-plan/apply")
+    @AllowAdminScope(AdminScope.MENTEE)
+    async applyGroupPlan(
+        @ReqUser() user: User,
+        @Body("kind") kind: string,
+        @Body("assignments")
+        assignments: { memberId: string; groupId: string }[],
+    ) {
+        await this.groupFlow.assertManage(
+            user,
+            kind === "FUND" ? GroupKind.FUND : GroupKind.MENTEE,
+        );
+        return this.suggestService.applyGroupPlan(user, assignments ?? []);
     }
 
     @Post("quarters/:code/import")
@@ -209,6 +261,8 @@ export class MentoringAdminController {
         @UploadedFile() file: Express.Multer.File,
         @Body("reason") reason?: string,
     ) {
+        // Nhập dữ liệu quý cũ: chỉ Admin toàn cục
+        this.groupAccess.assertSuperAdmin(user);
         if (!file?.buffer?.length)
             throw ApiError.BadRequest("error-import-file-invalid");
         return this.historyService.importQuarter(
@@ -228,6 +282,7 @@ export class MentoringAdminController {
     /** Hoàn tác cả lô nhập */
     @Post("history/batches/:id/revert")
     revertHistoryBatch(@ReqUser() user: User, @Param("id") id: string) {
+        this.groupAccess.assertSuperAdmin(user);
         return this.historyService.revertBatch(id, user);
     }
 

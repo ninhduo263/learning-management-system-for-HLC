@@ -179,6 +179,10 @@ export class PointFlowService implements OnApplicationBootstrap {
         return periods.map((period) => this.withLockFlag(period));
     }
 
+    async getPeriodView(code: string) {
+        return this.withLockFlag(await this.periodFlow.getByCode(code));
+    }
+
     async ensurePeriod(code: string) {
         const [year, month] = code.split("-").map(Number);
         return this.withLockFlag(
@@ -767,7 +771,15 @@ export class PointFlowService implements OnApplicationBootstrap {
     }
 
     /** Admin cộng/trừ điểm thủ công (áp dụng ngay) */
+    /** Không cộng / trừ / duyệt điểm của chính mình (xung đột lợi ích) */
+    private async assertNotSelf(user: User, memberId: string) {
+        const member = await this.memberModel.findByPk(memberId, { raw: true });
+        if (member?.userId && member.userId === user._id)
+            throw ApiError.Forbidden("error-self-review");
+    }
+
     async createAdjustment(code: string, input: AdjustmentInput, user: User) {
+        await this.assertNotSelf(user, input.memberId);
         return this.sequelize.transaction(async (t) => {
             const period = await this.periodFlow.getByCode(code, t);
             this.periodFlow.assertWritable(period);
@@ -866,6 +878,8 @@ export class PointFlowService implements OnApplicationBootstrap {
         note?: string,
         points?: number,
     ) {
+        const target = await this.adjustmentModel.findByPk(id, { raw: true });
+        if (target) await this.assertNotSelf(user, target.memberId);
         return this.sequelize.transaction(async (t) => {
             const adjustment = await this.adjustmentModel.findByPk(id, {
                 transaction: t,

@@ -29,8 +29,9 @@ export class AdminPermissionService
     }
 
     /**
-     * Có quyền thuộc phạm vi này: được cấp trực tiếp (bảng admin-permission, ví dụ quyền theo module học tập)
-     * hoặc đang giữ vai trò có quyền quản trị tương ứng (Position.adminScope, ví dụ "Admin HLC Fund").
+     * Có quyền thuộc phạm vi này: được cấp trực tiếp (bảng admin-permission), từ vai trò đang giữ
+     * (Position.adminScope), phạm vi bao hàm (Trưởng ban MTE gồm điểm phụ cấp và học tập), hoặc
+     * hành động cấp hệ thống (chốt kỳ, sửa điểm, xem bảng chi trả -> vào được màn hình điểm phụ cấp).
      */
     async hasScope(userId: string, scope: string): Promise<boolean> {
         if (
@@ -40,9 +41,10 @@ export class AdminPermissionService
             })
         )
             return true;
-        const member = await this.groupAccess.memberOfUser({ _id: userId });
-        return member
-            ? (await this.groupAccess.adminScopesOf(member._id)).includes(scope)
-            : false;
+        const capabilities = await this.groupAccess.capabilities({
+            _id: userId,
+            systemRole: undefined,
+        });
+        return capabilities.scopes.has(scope);
     }
 }

@@ -45,7 +45,7 @@ export const PERIOD_LOG_LABEL: Record<string, string> = { SETTINGS: 'Sửa cấu
 export const PERIOD_FIELD_LABEL: Record<string, string> = { pointRate: 'Đơn giá/điểm', baseAllowance: 'Phụ cấp cơ bản', payoutDate: 'Ngày chi trả' };
 
 export const PERIOD_STATUS_LABEL: Record<PeriodStatus, string> = {
-  OPEN: 'Đang mở',
+  OPEN: 'Đang tích lũy',
   CALCULATING: 'Đang tính',
   REVIEWING: 'Đang rà soát',
   LOCKED: 'Đã chốt · đang chờ chi',
@@ -244,10 +244,19 @@ export interface Member {
   bankName: string | null;
   address: string | null;
   hometown: string | null;
+  /** Mã tỉnh, thành phố (danh mục 34 tỉnh) */
+  hometownCode: string | null;
+  addressCode: string | null;
+  major: string | null;
+  occupation: string | null;
   joinedAt: string | null;
   status: 'ACTIVE' | 'INACTIVE';
   note: string | null;
 }
+
+/** Hồ sơ còn quê quán / địa chỉ cũ chưa quy đổi được về danh mục tỉnh */
+export const provinceNeedsReview = (member: Partial<Member>) =>
+  (Boolean(member.hometown?.trim()) && !member.hometownCode) || (Boolean(member.address?.trim()) && !member.addressCode);
 
 export const pointTypeApi = crudApi<PointType>('point-type');
 export const pointRuleApi = crudApi<PointRule>('point-rule');
@@ -449,6 +458,8 @@ export interface LearningModule {
   fields: ModuleField[];
   criteria: ModuleCriterion[];
   pendingReviews?: number;
+  /** ALL = mọi thành viên đúng đối tượng; SELECTED = chỉ người / nhóm được gán */
+  audienceMode?: 'ALL' | 'SELECTED';
   /** Module chấm recap mentoring (bài gốc nằm ở mentoring) */
   isRecapModule?: boolean;
 }
@@ -548,21 +559,49 @@ export const learningApi = {
     apiJson<SubmissionView[]>(`/learning/modules/${moduleId}/submissions${q(params)}`),
   progress: (moduleId: string, cycleKey?: string) => apiJson<ModuleProgress>(`/learning/modules/${moduleId}/progress${q({ cycleKey })}`),
   review: (id: string, body: { status: 'APPROVED' | 'REJECTED'; feedback?: string; scores?: { criterionId: string; score: number }[]; totalScore?: number }) =>
-    apiJson<SubmissionView>(`/learning/submissions/${id}/review`, { method: 'PUT', json: body })
+    apiJson<SubmissionView>(`/learning/submissions/${id}/review`, { method: 'PUT', json: body }),
+  audience: (moduleId: string) => apiJson<ModuleAudience>(`/learning/modules/${moduleId}/audience`),
+  saveAudience: (moduleId: string, body: { mode: 'ALL' | 'SELECTED'; memberIds?: string[]; groupIds?: string[] }) =>
+    apiJson<ModuleAudience>(`/learning/modules/${moduleId}/audience`, { method: 'PUT', json: body })
 };
+
+/** Người / nhóm được gán module (mode SELECTED: chỉ những người này thấy và nộp bài) */
+export interface ModuleAudience {
+  moduleId: string;
+  mode: 'ALL' | 'SELECTED';
+  members: { _id: string; memberCode: string; fullName: string; memberType: string }[];
+  groups: { _id: string; code: string; name: string; groupKind: GroupKind }[];
+  audienceCount: number;
+}
 
 // ---------- Quyền ----------
 
-export type AdminScope = 'FUND' | 'MENTORING' | 'POINT' | 'LEARNING_MODULE';
+export type AdminScope = 'FUND' | 'MENTORING' | 'POINT' | 'LEARNING_MODULE' | 'LEARNING' | 'MENTEE';
 export const SCOPE_LABEL: Record<AdminScope, string> = {
   FUND: 'Duyệt HLC Fund',
   MENTORING: 'Quản lý mentoring',
   POINT: 'Điểm phụ cấp',
-  LEARNING_MODULE: 'Quản lý module học tập'
+  LEARNING_MODULE: 'Quản lý module học tập',
+  LEARNING: 'Trưởng ban học tập (mọi module)',
+  MENTEE: 'Trưởng ban MTE (toàn quyền phần MTE)'
 };
 
-export interface LeaderGroupAccess { _id: string; code: string; name: string; role: string; roleName: string; groupKind: GroupKind; permissions: string[]; canReview: boolean }
-export interface MyAccess { systemRole: string; isSuperAdmin: boolean; scopes: AdminScope[]; moduleIds: string[]; leaderGroups: LeaderGroupAccess[] }
+export interface LeaderGroupAccess {
+  _id: string; code: string; name: string; role: string; roleName: string; groupKind: GroupKind; permissions: string[]; canReview: boolean;
+  /** Quyền chỉ có nhờ ủy quyền: quyền -> người ủy quyền */
+  delegatedFrom?: Record<string, { memberId: string; name: string }>;
+  source?: 'GROUP' | 'BAN' | 'DELEGATION';
+}
+export interface MyAccess {
+  systemRole: string; isSuperAdmin: boolean; scopes: AdminScope[];
+  /** Hành động cấp hệ thống: LOCK_PERIOD, EDIT_POINTS, VIEW_PAYOUT, EXPORT_PERSONAL, VIEW_ACTIVITY_LOG */
+  actions: string[];
+  /** null = mọi module */
+  moduleIds: string[] | null;
+  leaderGroups: LeaderGroupAccess[];
+  mustChangePassword: boolean;
+  profileUrlEditable: boolean;
+}
 export interface PermissionView {
   _id: string;
   userId: string;
@@ -653,10 +692,25 @@ export const ROLE_PERMISSION_LABEL: Record<string, string> = {
   VIEW_PROGRESS: 'Xem tiến độ nhóm',
   SCORE_RECAP: 'Chấm recap MTE',
   REVIEW_FUND: 'Duyệt minh chứng quỹ',
-  PROXY_FUND: 'Nộp hộ minh chứng quỹ'
+  PROXY_FUND: 'Nộp hộ minh chứng quỹ',
+  LOCK_PERIOD: 'Chốt kỳ phụ cấp, đánh dấu đã chi',
+  EDIT_POINTS: 'Sửa đơn giá, cộng / trừ điểm thủ công',
+  VIEW_PAYOUT: 'Xem, xuất bảng phụ cấp đã chốt (kế toán)',
+  EXPORT_PERSONAL: 'Xuất dữ liệu cá nhân',
+  VIEW_ACTIVITY_LOG: 'Xem nhật ký thao tác'
 };
+/** Quyền theo nhóm (tác động trong nhóm, hoặc mọi nhóm của loại được chọn với vai trò cấp ban) */
+export const GROUP_PERMISSIONS = ['VIEW_PROGRESS', 'SCORE_RECAP', 'REVIEW_FUND', 'PROXY_FUND'];
+/** Quyền cấp hệ thống (chỉ cho vai trò cấp ban) */
+export const GLOBAL_PERMISSIONS = ['LOCK_PERIOD', 'EDIT_POINTS', 'VIEW_PAYOUT', 'EXPORT_PERSONAL', 'VIEW_ACTIVITY_LOG'];
 export const ROLE_APPLIES_LABEL: Record<RoleAppliesTo, string> = { MENTEE: 'Nhóm MTE', FUND: 'Nhóm HLC Fund (MTO & thầy cô)', BAN: 'Chức vụ ban (không gắn nhóm)' };
-export const ADMIN_SCOPE_LABEL: Record<string, string> = { FUND: 'Admin HLC Fund', MENTORING: 'Admin Mentoring', POINT: 'Admin điểm phụ cấp' };
+export const ADMIN_SCOPE_LABEL: Record<string, string> = {
+  FUND: 'Toàn quyền HLC Fund (MTO và MTE)',
+  MENTORING: 'Toàn quyền dịch vụ mentoring',
+  POINT: 'Toàn quyền điểm phụ cấp',
+  LEARNING: 'Toàn quyền học tập (module, thư viện, bài nộp)',
+  MENTEE: 'Toàn quyền phần MTE (Trưởng ban MTE)'
+};
 export interface RoleView {
   _id: string;
   code: string;
@@ -670,13 +724,30 @@ export interface RoleView {
   sortOrder: number;
   isActive: boolean;
   assignmentCount: number;
+  /** Vai trò cấp ban: quyền theo nhóm áp dụng cho mọi nhóm của các loại này */
+  scopeKinds: GroupKind[];
+  activeHolderCount: number;
+  isSystem: boolean;
 }
 export const roleApi = {
   list: () => apiJson<RoleView[]>('/roles'),
   save: (body: Partial<RoleView>, id?: string) => apiJson<RoleView>(id ? `/roles/${id}` : '/roles', { method: id ? 'PUT' : 'POST', json: body }),
   thresholds: () => apiJson<Record<GroupKind, number>>('/roles/thresholds/all'),
-  saveThresholds: (body: Record<GroupKind, number>) => apiJson<Record<GroupKind, number>>('/roles/thresholds/all', { method: 'PUT', json: body })
+  saveThresholds: (body: Record<GroupKind, number>) => apiJson<Record<GroupKind, number>>('/roles/thresholds/all', { method: 'PUT', json: body }),
+  remove: (id: string) => apiJson<{ mode: 'DELETE' | 'DEACTIVATE' }>(`/roles/${id}`, { method: 'DELETE' })
 };
+
+export interface GroupDeletePreview {
+  group: { _id: string; code: string; name: string; groupKind: GroupKind };
+  members: GroupMember[];
+  counts: {
+    members: number; contributors: number; membershipHistory: number; roleAssignments: number; activeRoles: number;
+    moduleAudiences: number; finalizedPointEntries: number; finalizedContributions: number;
+  };
+  canDelete: boolean;
+  mode: 'HARD' | 'DEACTIVATE';
+  targets: { _id: string; code: string; name: string }[];
+}
 
 export const groupApi = {
   list: () => apiJson<GroupView[]>('/groups'),
@@ -689,7 +760,73 @@ export const groupApi = {
   history: (id: string) => apiJson<GroupHistory>(`/groups/${id}/history`),
   assign: (id: string, body: { memberId: string; positionId: string; startDate?: string; endDate?: string; note?: string }) =>
     apiJson<GroupView>(`/groups/${id}/assignments`, { method: 'POST', json: body }),
-  endAssignment: (assignmentId: string, endDate?: string) => apiJson(`/groups/assignments/${assignmentId}/end`, { method: 'PUT', json: { endDate } })
+  endAssignment: (assignmentId: string, endDate?: string, reason?: string) => apiJson(`/groups/assignments/${assignmentId}/end`, { method: 'PUT', json: { endDate, reason } }),
+  deletePreview: (id: string) => apiJson<GroupDeletePreview>(`/groups/${id}/delete-preview`),
+  transfer: (id: string, body: { targetGroupId: string; memberIds?: string[]; note?: string }) =>
+    apiJson<{ moved: number; contributors: number; preview: GroupDeletePreview }>(`/groups/${id}/transfer`, { method: 'POST', json: body }),
+  remove: (id: string, reason?: string) => apiJson<{ mode: 'HARD' | 'DEACTIVATE' }>(`/groups/${id}`, { method: 'DELETE', json: { reason } })
+};
+
+// ---------- Ủy quyền tạm thời ----------
+
+export interface DelegationView {
+  _id: string; groupId: string; fromMemberId: string; toMemberId: string; permissions: string[];
+  startDate: string; endDate: string; reason: string | null; revokedAt: string | null; createdAt: string;
+  from: { _id: string; memberCode: string; fullName: string } | null;
+  to: { _id: string; memberCode: string; fullName: string } | null;
+  group: { _id: string; code: string; name: string } | null;
+  status: 'ACTIVE' | 'UPCOMING' | 'EXPIRED' | 'REVOKED';
+}
+export const DELEGATION_STATUS: Record<DelegationView['status'], { label: string; color: string }> = {
+  ACTIVE: { label: 'Đang hiệu lực', color: 'green' },
+  UPCOMING: { label: 'Chưa tới ngày', color: 'blue' },
+  EXPIRED: { label: 'Đã hết hạn', color: 'default' },
+  REVOKED: { label: 'Đã thu hồi', color: 'red' }
+};
+export const delegationApi = {
+  list: (groupId?: string) => apiJson<DelegationView[]>(`/delegations${q({ groupId })}`),
+  create: (body: { groupId: string; toMemberId: string; permissions: string[]; startDate: string; endDate: string; reason?: string; fromMemberId?: string }) =>
+    apiJson<DelegationView>('/delegations', { method: 'POST', json: body }),
+  revoke: (id: string) => apiJson<DelegationView>(`/delegations/${id}/revoke`, { method: 'PUT' })
+};
+
+// ---------- Nhật ký thao tác ----------
+
+export interface ActivityLogView {
+  _id: string; module: string; action: string; targetId: string | null; targetName: string | null; summary: string;
+  detail: Record<string, unknown> | null; actorName: string | null; onBehalfOfName: string | null; createdAt: string;
+}
+export const ACTIVITY_MODULE_LABEL: Record<string, string> = {
+  ORGANIZATION: 'Tổ chức', ROLE: 'Vai trò, chức vụ', MEMBER: 'Thành viên', POINT: 'Điểm phụ cấp', FUND: 'HLC Fund',
+  MENTORING: 'Mentoring', LEARNING: 'Học tập', DELEGATION: 'Ủy quyền', SYSTEM: 'Cấu hình hệ thống'
+};
+export const activityApi = {
+  list: (params: { module?: string; action?: string; from?: string; to?: string; keyword?: string; limit?: number }) =>
+    apiJson<ActivityLogView[]>(`/activity-logs${q(params as Record<string, string | undefined>)}`)
+};
+
+// ---------- Cấu hình hệ thống ----------
+
+export interface SystemConfig { forcePasswordChangeOnFirstLogin: boolean; memberCanEditProfileUrl: boolean }
+export const systemConfigApi = {
+  get: () => apiJson<SystemConfig>('/system-config'),
+  save: (body: Partial<SystemConfig>) => apiJson<SystemConfig>('/system-config', { method: 'PUT', json: body })
+};
+
+// ---------- Danh mục tỉnh, thành phố ----------
+
+export interface Province { _id: string; code: string; name: string; aliases: string[]; mergedInto: string | null; sortOrder: number; isActive: boolean }
+export const provinceApi = {
+  list: (all = false) => apiJson<Province[]>(`/provinces${all ? '?all=true' : ''}`),
+  save: (body: Partial<Province>) => apiJson<Province>('/provinces', { method: 'PUT', json: body })
+};
+
+// ---------- Xuất danh sách thành viên ----------
+
+export const memberExportApi = {
+  /** type: MENTEE | MENTOR | undefined (tất cả). Tên file do máy chủ đặt */
+  download: (type?: 'MENTEE' | 'MENTOR') =>
+    downloadFile(`/member-export/members.xlsx${q({ type })}`, `danh-sach-thanh-vien-${type === 'MENTOR' ? 'mentor' : type === 'MENTEE' ? 'mentee' : 'tat-ca'}.xlsx`)
 };
 
 export interface RecapRubric {
@@ -727,6 +864,7 @@ export interface LeaderOverview {
     _id: string;
     code: string;
     name: string;
+    groupKind?: GroupKind;
     myRole: string;
     canReview: boolean;
     leader: GroupMember | null;
@@ -749,10 +887,15 @@ export const leaderApi = {
 
 // ---------- Hồ sơ cá nhân ----------
 
-export interface ProfileLog { _id: string; field: string; oldValue: string | null; newValue: string | null; changedByRole: 'SELF' | 'ADMIN'; createdAt: string }
+export interface ProfileLog { _id: string; field: string; oldValue: string | null; newValue: string | null; changedByRole: 'SELF' | 'ADMIN'; changedByName?: string; createdAt: string }
 export const PROFILE_FIELD_LABEL: Record<string, string> = {
   fullName: 'Họ tên', memberType: 'Vai trò', status: 'Trạng thái', dateOfBirth: 'Ngày sinh', gender: 'Giới tính', phone: 'Số điện thoại',
-  email: 'Email', address: 'Địa chỉ hiện tại', hometown: 'Quê quán', profileUrl: 'Link profile', bankAccount: 'Số tài khoản', bankName: 'Ngân hàng', joinedAt: 'Ngày tham gia'
+  email: 'Email', address: 'Địa chỉ cũ (nhập tự do)', hometown: 'Quê quán cũ (nhập tự do)', profileUrl: 'Link profile', bankAccount: 'Số tài khoản', bankName: 'Ngân hàng', joinedAt: 'Ngày tham gia',
+  hometownCode: 'Quê quán', addressCode: 'Địa chỉ (tỉnh, thành phố)', major: 'Ngành học', occupation: 'Ngành nghề'
+};
+
+export const passwordApi = {
+  change: (body: { oldPass: string; newPass: string; confirmPass: string }) => apiJson('/user/me/password', { method: 'PUT', json: body })
 };
 
 export const profileApi = {

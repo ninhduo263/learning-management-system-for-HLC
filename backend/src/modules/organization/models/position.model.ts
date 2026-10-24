@@ -51,4 +51,8 @@ export class PositionModel extends Model implements Position {
 
     @Column({ type: DataType.TEXT, allowNull: true })
     description?: string;
+
+    /** Vai trò cấp ban: quyền theo nhóm áp dụng cho MỌI nhóm của các loại này (MENTEE, FUND) */
+    @Column({ type: DataType.JSONB, allowNull: true })
+    scopeKinds?: string[];
 }

@@ -7,16 +7,19 @@ import { Global, Module } from "@nestjs/common";
 import { SettingImportService } from "./setting-import.service";
 import { SettingController } from "./setting.controller";
 import { SettingService } from "./setting.service";
+import { SecurityConfigController } from "./security-config.controller";
+import { SecurityConfigService } from "./security-config.service";
 
 @Global()
 @Module({
     providers: [
         SettingService,
         SettingImportService,
+        SecurityConfigService,
         RepositoryProvider(Entity.SETTING, SettingSqlRepository),
         TransactionProvider(SqlTransaction),
     ],
-    controllers: [SettingController],
-    exports: [SettingService],
+    controllers: [SettingController, SecurityConfigController],
+    exports: [SettingService, SecurityConfigService],
 })
 export class SettingModule {}

@@ -107,6 +107,9 @@ export class User implements BaseEntity {
     authList?: Auth[];
 
     dataPartitionCode?: string;
+
+    /** Lần tự đổi mật khẩu gần nhất */
+    passwordChangedAt?: Date;
 }
 
 export type UserDocument = HydratedDocument<User>;

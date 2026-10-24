@@ -1,8 +1,9 @@
+import { ModuleAudienceService } from "./flow/module-audience.service";
 import { Entity } from "@module/repository";
 import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
 import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
-import { Module } from "@nestjs/common";
+import { Global, Module } from "@nestjs/common";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { LearningFlowController } from "./flow/learning-flow.controller";
 import { LearningFlowService } from "./flow/learning-flow.service";
@@ -40,6 +41,8 @@ import { SubmissionScoreModel } from "./models/submission-score.model";
 import { SubmissionScoreSqlRepository } from "./repositories/submission-score-sql.repository";
 import { SubmissionScoreService } from "./services/submission-score.service";
 
+/** Global: các dịch vụ khác (điểm, Leader) dùng chung cách xác định đối tượng module */
+@Global()
 @Module({
     imports: [
         SequelizeModule.forFeature([
@@ -65,6 +68,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
         SubmissionScoreController,
     ],
     providers: [
+        ModuleAudienceService,
         LearningFlowService,
         LibraryExcelService,
         LibraryItemService,
@@ -99,6 +103,7 @@ import { SubmissionScoreService } from "./services/submission-score.service";
         TransactionProvider(SqlTransaction),
     ],
     exports: [
+        ModuleAudienceService,
         LearningFlowService,
         LibraryItemService,
         LearningModuleService,
