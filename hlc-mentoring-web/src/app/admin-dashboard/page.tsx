@@ -166,7 +166,7 @@ export default function AdminDashboardPage() {
                         { label: 'Chi phụ cấp (nghìn đ)', data: data.trend.map((item) => Math.round(item.totalAmount / 1000)), borderColor: CHART_COLORS.teal, backgroundColor: CHART_COLORS.teal, yAxisID: 'y1', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 }
                       ]
                     }}
-                    options={{ interaction: { mode: 'index', intersect: false }, scales: { y: { position: 'left', beginAtZero: true }, y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }, x: { grid: { display: false } } } }}
+                    options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { position: 'left', beginAtZero: true }, y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }, x: { grid: { display: false } } } }}
                   />
                 </div>
               </Card>
@@ -181,7 +181,7 @@ export default function AdminDashboardPage() {
                         { label: 'Bài nộp học tập', data: data.trend.map((item) => item.submissions), backgroundColor: CHART_COLORS.orange, borderRadius: 6, maxBarThickness: 30 }
                       ]
                     }}
-                    options={{ interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } }}
+                    options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } }}
                   />
                 </div>
               </Card>
