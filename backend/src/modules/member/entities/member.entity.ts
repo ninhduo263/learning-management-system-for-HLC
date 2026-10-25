@@ -1,7 +1,13 @@
 import { EntityDefinition } from "@common/constant/class/entity-definition";
 import { IsYYYYMMDD } from "@common/decorator/validate.decorator";
 import { BaseEntity } from "@common/interface/base-entity.interface";
-import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
+import {
+    IsEnum,
+    IsOptional,
+    IsString,
+    MaxLength,
+    IsArray,
+} from "class-validator";
 import { Gender, MemberStatus, MemberType } from "../common/constant";
 
 export class Member implements BaseEntity {
@@ -83,6 +89,21 @@ export class Member implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Ngành nghề" })
     occupation?: string;
+
+    @IsArray()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Ngành học (nhóm)" })
+    majorCodes?: string[];
+
+    @IsArray()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Ngành nghề (nhóm)" })
+    occupationCodes?: string[];
+
+    @IsString()
+    @IsOptional()
+    @EntityDefinition.field({ label: "Mã ngân hàng" })
+    bankCode?: string;
 
     @IsString()
     @IsOptional()

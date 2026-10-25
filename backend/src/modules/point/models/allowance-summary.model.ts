@@ -64,6 +64,10 @@ export class AllowanceSummaryModel extends Model implements AllowanceSummary {
     @Column({ type: DataType.STRING(255), allowNull: true })
     bankNameSnapshot?: string;
 
+    /** Chức vụ tại thời điểm chốt */
+    @Column({ type: DataType.TEXT, allowNull: true })
+    positionSnapshot?: string;
+
     @Column({ type: DataType.DATE, allowNull: false })
     calculatedAt: Date;
 

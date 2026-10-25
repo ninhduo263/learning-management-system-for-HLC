@@ -116,5 +116,9 @@
     "error-national-id-duplicate": "National ID already exists",
     "error-member-code-conflict": "Cannot generate member code",
     "error-member-group-required": "New mentee must be assigned to a group",
-    "error-bank-name-invalid": "Unknown bank"
+    "error-bank-name-invalid": "Unknown bank",
+    "error-catalog-invalid": "Value not in catalog",
+    "error-profile-request-not-pending": "Request already decided",
+    "error-profile-reject-reason": "Rejection requires a reason",
+    "error-profile-approver-forbidden": "You cannot approve profile changes"
 }

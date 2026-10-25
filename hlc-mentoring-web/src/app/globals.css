@@ -142,10 +142,12 @@ body {
     white-space: nowrap;
   }
 
+  /* Ô ngày gọn ở góc phải (không kéo dài hết hàng để lại khoảng trống) */
   .app-header .mock-date-button,
   .app-header .mock-date-display {
-    flex: 1 0 100%;
-    justify-content: flex-end;
+    flex: 0 0 auto;
+    margin-left: auto;
+    justify-content: center;
     font-variant-numeric: tabular-nums;
   }
 

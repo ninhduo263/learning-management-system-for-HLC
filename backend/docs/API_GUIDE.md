@@ -1138,6 +1138,48 @@ Mọi thay đổi các trường hồ sơ đều ghi lịch sử, kể cả khi 
   - Quyền: Admin toàn cục, Trưởng ban Học tập (mọi module, kèm recap), Trưởng ban MTE (bao hàm học tập); Admin module nhỏ chỉ thấy module mình (`canViewAll: false`, không có recap, `moduleId` ngoài phạm vi → `403`). Mentoring head, Fund head, thành viên thường → `403`.
   - Phần mentoring chỉ để xem; điều chỉnh bằng đề xuất `MENTORING_DATA`.
 
+### 11.18 Cập nhật vòng 7 (danh mục ngành / ngân hàng, bản nháp + duyệt hồ sơ, ánh xạ bảng phụ cấp, điểm trung bình)
+
+**Danh mục dùng chung**
+- `GET /catalogs/CAREER|BANK?all=` (mọi tài khoản) và `PUT /catalogs/{type}` (Admin toàn cục) với `{ code, name, shortName?, aliases[], mergedInto?, isActive? }`.
+  - `CAREER` gồm 38 nhóm ngành nghề.
+  - `BANK` gồm các ngân hàng đang hoạt động, kể cả ngân hàng tư nhân, nhận chuyển khoản từ MB Bank. Danh sách cần Ban HLC Fund kiểm tra thực tế.
+- Hồ sơ lưu mã danh mục:
+  - `majorCodes[]` và `occupationCodes[]`: chọn nhiều nhóm ngành.
+  - `bankCode`: `bankName` được lấy tự động theo danh mục.
+- Dữ liệu cũ nhập tự do (`major`, `occupation`, `bankName`) được quy đổi khi khởi động và mỗi lần lưu danh mục. Hồ sơ không khớp vẫn giữ giá trị cũ để thành viên hoặc Admin chọn lại.
+- Gợi ý ghép cặp tính theo mức trùng khớp giữa các nhóm ngành MTE và MTO đã chọn.
+
+**Hồ sơ: bản nháp → Lưu → duyệt thay đổi nhạy cảm**
+- Bản nháp chỉ chính chủ thấy: `GET` / `PUT` / `DELETE /member/me/profile/draft` với `{ data }`.
+- `PUT /member/me/profile` (Lưu) trả `{ member, applied[], pending }`.
+  - Trường thường thành chính thức ngay.
+  - `bankAccount`, `bankCode`, `nationalId` tạo yêu cầu `PENDING` (thay yêu cầu chờ trước đó).
+  - Các trang khác chỉ dùng bản chính thức.
+- `GET /member/me/profile/requests`: trạng thái yêu cầu (`PENDING`, `APPROVED`, `REJECTED`, `CANCELLED`), lý do, kỳ áp dụng.
+- `POST /member/me/profile/requests/{id}/cancel`: hủy yêu cầu đang chờ.
+- Duyệt (Admin toàn cục hoặc người được ủy quyền):
+  - `GET /profile-requests?status=` và `GET /profile-requests/can-approve`.
+  - `PUT /profile-requests/{id}/decide` với `{ approve, reason }`. Từ chối bắt buộc có lý do. Không tự duyệt yêu cầu của chính mình.
+- Ủy quyền duyệt (Admin toàn cục): `GET /profile-requests/approvers/all`, `POST /profile-requests/approvers` với `{ memberId, scope: ALL | MENTEE | MENTOR, startDate, endDate }`, `PUT .../approvers/{id}/revoke`.
+  - Khi người được ủy quyền duyệt, yêu cầu ghi `onBehalfOf` ("duyệt thay cho") và nhật ký có `onBehalfOfName`.
+- Mỗi thay đổi bản chính thức được ghi lịch sử hồ sơ: `changedByRole` là `SELF`, `ADMIN` hoặc `APPROVED`.
+- Số tài khoản có hiệu lực theo kỳ (`BankAccountHistory.effectivePeriodCode`):
+  - Duyệt khi đang có kỳ đã chốt mà chưa chi thì thay đổi áp dụng từ kỳ sau kỳ đó; không có thì áp dụng từ kỳ hiện tại.
+  - Lần đổi đầu tiên lưu thông tin cũ làm mốc.
+
+**Bảng phụ cấp tham chiếu hồ sơ**
+- Mỗi dòng có `member.position` (chức vụ), `bankName`, `hasBankAccount`.
+- `member.bankAccount` chỉ có giá trị với Admin toàn cục và người có quyền xác nhận chi (Trưởng ban HLC Fund). Phản hồi có `bankVisible`; file Excel/CSV và dữ liệu báo cáo PDF cũng bỏ cột số tài khoản với người không có quyền.
+- Kỳ đã chốt dùng bản chụp lúc chốt (họ tên, chức vụ, số tài khoản, ngân hàng).
+- Kỳ chưa chốt hoặc được mở khóa dùng hồ sơ chính thức hiện tại, riêng ngân hàng theo kỳ bắt đầu áp dụng. Chốt lại thì lưu bản chụp mới.
+
+**Điểm trung bình học tập**
+- `GET /dashboard/learning-average`: đơn vị gốc là **từng MTE, từng tháng** (trung bình điểm các bài đã chấm của các module MTE được gán và điểm recap mentoring của tháng, thang 100).
+- `byMember[].months` cho điểm từng tháng của khoảng xem; xem theo quý thì `average` = trung bình các điểm tháng.
+- Nhóm, module, toàn bộ và xu hướng = trung bình các điểm cá nhân (không gộp theo số bài).
+- Chỉ tính MTE.
+
 ---
 
 ## 12. Danh mục resource

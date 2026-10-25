@@ -90,4 +90,6 @@ export class AllowanceSummary implements BaseEntity {
     paidAt?: Date;
 
     adjustmentAmount?: number;
+
+    positionSnapshot?: string;
 }

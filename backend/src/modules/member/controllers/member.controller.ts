@@ -7,6 +7,7 @@ import { User } from "@module/user/entities/user.entity";
 import {
     Body,
     Controller,
+    Delete,
     Get,
     Param,
     Post,
@@ -62,6 +63,41 @@ export class MemberController extends BaseControllerFactory<Member>(
     @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
     updateMyProfile(@ReqUser() user: User, @Body() dto: SelfProfileDto) {
         return this.profileService.updateOwn(user, { ...dto });
+    }
+
+    /** Bản nháp hồ sơ (chỉ chính chủ thấy) */
+    @Get("me/profile/draft")
+    @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
+    getDraft(@ReqUser() user: User) {
+        return this.profileService.getDraft(user);
+    }
+
+    @Put("me/profile/draft")
+    @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
+    saveDraft(
+        @ReqUser() user: User,
+        @Body("data") data: Record<string, unknown>,
+    ) {
+        return this.profileService.saveDraft(user, data);
+    }
+
+    @Delete("me/profile/draft")
+    @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
+    discardDraft(@ReqUser() user: User) {
+        return this.profileService.discardDraft(user);
+    }
+
+    /** Yêu cầu thay đổi nhạy cảm của tôi */
+    @Get("me/profile/requests")
+    @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
+    myRequests(@ReqUser() user: User) {
+        return this.profileService.ownRequests(user);
+    }
+
+    @Post("me/profile/requests/:id/cancel")
+    @AllowSystemRoles(SystemRole.MENTOR, SystemRole.MENTEE)
+    cancelRequest(@ReqUser() user: User, @Param("id") id: string) {
+        return this.profileService.cancelOwnRequest(user, id);
     }
 
     @Get("me/profile-logs")

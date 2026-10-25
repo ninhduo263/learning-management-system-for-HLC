@@ -17,6 +17,7 @@ import { MemberStatus, MemberType } from "../common/constant";
 import { MemberModel } from "../models/member.model";
 import { ProvinceModel } from "../models/province.model";
 import { ProvinceService } from "./province.service";
+import { CatalogService } from "@module/catalog/catalog.service";
 
 const TYPE_LABEL: Record<string, string> = {
     [MemberType.MENTEE]: "Mentee",
@@ -40,6 +41,7 @@ export class MemberExportService {
         private readonly groupAccess: GroupAccessService,
         private readonly activityLog: ActivityLogService,
         private readonly timeService: TimeService,
+        private readonly catalogs: CatalogService,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
         @InjectModel(ProvinceModel)
@@ -75,6 +77,12 @@ export class MemberExportService {
             (await this.provinceModel.findAll({ raw: true })).map((item) => [
                 item.code,
                 item.name,
+            ]),
+        );
+        const careers = new Map(
+            (await this.catalogs.list("CAREER", true)).map((row) => [
+                row.code,
+                row.name,
             ]),
         );
         const groups = await this.groupAccess.groups(true);
@@ -148,8 +156,12 @@ export class MemberExportService {
                 ...(caps.superAdmin && { "Số CCCD": member.nationalId ?? "" }),
                 "Ngân hàng": member.bankName ?? "",
             }),
-            "Ngành học": member.major ?? "",
-            "Ngành nghề": member.occupation ?? "",
+            "Ngành học": (member.majorCodes ?? [])
+                .map((code) => careers.get(code) ?? code)
+                .join("; "),
+            "Ngành nghề": (member.occupationCodes ?? [])
+                .map((code) => careers.get(code) ?? code)
+                .join("; "),
             "Link profile": member.profileUrl ?? "",
             "Nhóm MTE": groupName(member._id, "MENTEE"),
             "Nhóm HLC Fund": groupName(member._id, "FUND"),

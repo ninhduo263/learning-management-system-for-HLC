@@ -7,6 +7,8 @@ import {
 import { LearningModuleModel } from "@module/learning/models/learning-module.model";
 import { SubmissionModel } from "@module/learning/models/submission.model";
 import { MemberModel } from "@module/member/models/member.model";
+import { MemberType } from "@module/member/common/constant";
+import { ModuleAudienceService } from "@module/learning/flow/module-audience.service";
 import { MentoringRole } from "@module/mentoring/common/constant";
 import { MentoringRecapModel } from "@module/mentoring/models/mentoring-recap.model";
 import { MentoringSessionModel } from "@module/mentoring/models/mentoring-session.model";
@@ -49,8 +51,9 @@ export interface LearningAverageQuery {
 }
 
 /**
- * Dashboard điểm học tập trung bình = trung bình điểm các bài học tập đã chấm (module học tập) và điểm recap
- * mentoring của MTE, quy về thang 100. Điểm recap LẤY TRỰC TIẾP từ dữ liệu mentoring, không sao chép.
+ * Điểm trung bình học tập là của TỪNG CÁ NHÂN MTE, tính THEO THÁNG: mỗi MTE có 1 giá trị mỗi tháng = trung bình
+ * điểm các bài đã chấm của các module MTE được gán và điểm recap mentoring của tháng đó, quy về thang 100.
+ * Nhóm / module / toàn bộ = tổng hợp từ điểm từng MTE (không gộp theo số bài). Điểm recap LẤY TRỰC TIẾP từ dữ liệu mentoring, không sao chép.
  * Xem được theo MTE, nhóm, module, tháng và quý. Admin toàn cục và Trưởng ban Học tập xem tất cả; Admin module
  * nhỏ chỉ xem module mình quản lý. Phần mentoring chỉ để xem: điều chỉnh thì gửi đề xuất cho Trưởng ban Mentoring.
  */
@@ -71,6 +74,7 @@ export class LearningAverageService {
         private readonly recapModel: typeof MentoringRecapModel,
         @InjectModel(MentoringSessionModel)
         private readonly sessionModel: typeof MentoringSessionModel,
+        private readonly audience: ModuleAudienceService,
     ) {}
 
     /** Quyền xem: null = mọi module; danh sách = chỉ các module đó (Admin module nhỏ) */
@@ -190,12 +194,31 @@ export class LearningAverageService {
                   raw: true,
               })
             : [];
+        // Chỉ module MTE được gán (đối tượng module + danh sách gán người / nhóm)
+        const targets = await this.audience.resolver();
+        const submitters = new Map(
+            (submissions.length
+                ? await this.memberModel.findAll({
+                      where: {
+                          _id: [
+                              ...new Set(
+                                  submissions.map((row) => row.memberId),
+                              ),
+                          ],
+                      },
+                      attributes: ["_id", "memberType"],
+                      raw: true,
+                  })
+                : []
+            ).map((member) => [member._id, member]),
+        );
         for (const row of submissions) {
             const module = moduleOf.get(row.moduleId);
             if (
                 !module ||
                 module.code === RECAP_MODULE_CODE ||
-                !wantModule(row.moduleId)
+                !wantModule(row.moduleId) ||
+                !targets(module, submitters.get(row.memberId))
             )
                 continue;
             const max = Number(module.maxScore ?? 100) || 100;
@@ -269,11 +292,11 @@ export class LearningAverageService {
         }
 
         const inRange = (item: Item) => range.months.includes(item.periodCode);
+        // Điểm trung bình học tập là của từng cá nhân MTE
         const wantMember = (item: Item) => {
             const member = members.get(item.memberId);
             if (!member) return false;
-            if (query.memberType && member.memberType !== query.memberType)
-                return false;
+            if (member.memberType !== MemberType.MENTEE) return false;
             if (
                 query.groupId &&
                 groupOfMember.get(item.memberId)?._id !== query.groupId
@@ -284,12 +307,35 @@ export class LearningAverageService {
         const scoped = items.filter(wantMember);
         const current = scoped.filter(inRange);
 
-        const byMember = [...new Set(current.map((item) => item.memberId))]
+        // Đơn vị gốc: điểm trung bình của từng MTE trong từng tháng (trung bình các bài đã chấm của tháng)
+        const monthly = new Map<string, Item[]>();
+        for (const item of scoped) {
+            const key = `${item.memberId}|${item.periodCode}`;
+            monthly.set(key, [...(monthly.get(key) ?? []), item]);
+        }
+        const memberMonth = (memberId: string, code: string) => {
+            const own = monthly.get(`${memberId}|${code}`) ?? [];
+            return own.length ? mean(own.map((item) => item.score)) : null;
+        };
+        const memberIdsInRange = [
+            ...new Set(current.map((item) => item.memberId)),
+        ];
+
+        const byMember = memberIdsInRange
             .map((memberId) => {
                 const own = current.filter(
                     (item) => item.memberId === memberId,
                 );
                 const member = members.get(memberId);
+                const months = Object.fromEntries(
+                    range.months.map((code) => [
+                        code,
+                        memberMonth(memberId, code),
+                    ]),
+                );
+                const values = Object.values(months).filter(
+                    (value): value is number => value !== null,
+                );
                 return {
                     member: {
                         _id: member._id,
@@ -298,7 +344,10 @@ export class LearningAverageService {
                         memberType: member.memberType,
                     },
                     group: groupOfMember.get(memberId) ?? null,
-                    average: mean(own.map((item) => item.score)),
+                    /** Tháng: điểm của tháng; quý: trung bình các điểm tháng */
+                    average: mean(values),
+                    /** Điểm trung bình từng tháng của khoảng xem */
+                    months,
                     learningAverage: mean(
                         own
                             .filter((item) => item.kind === "MODULE")
@@ -313,37 +362,51 @@ export class LearningAverageService {
                 };
             })
             .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
+        const averageOf = (ids: string[]) =>
+            mean(
+                byMember
+                    .filter((row) => ids.includes(row.member._id))
+                    .map((row) => row.average)
+                    .filter((value): value is number => value !== null),
+            );
 
+        // Nhóm: tổng hợp từ điểm từng MTE (trung bình các điểm cá nhân)
         const groupKeys = [
-            ...new Set(
-                current.map(
-                    (item) => groupOfMember.get(item.memberId)?._id ?? "NONE",
-                ),
-            ),
+            ...new Set(byMember.map((row) => row.group?._id ?? "NONE")),
         ];
         const byGroup = groupKeys
             .map((key) => {
-                const own = current.filter(
-                    (item) =>
-                        (groupOfMember.get(item.memberId)?._id ?? "NONE") ===
-                        key,
-                );
+                const ids = byMember
+                    .filter((row) => (row.group?._id ?? "NONE") === key)
+                    .map((row) => row.member._id);
                 const group = key === "NONE" ? null : groupById.get(key);
                 return {
                     group: group
                         ? { _id: group._id, name: group.name }
                         : { _id: null, name: "Chưa có nhóm" },
-                    average: mean(own.map((item) => item.score)),
-                    members: new Set(own.map((item) => item.memberId)).size,
-                    scoredItems: own.length,
+                    average: averageOf(ids),
+                    members: ids.length,
+                    scoredItems: current.filter((item) =>
+                        ids.includes(item.memberId),
+                    ).length,
                 };
             })
             .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
 
+        // Module: trung bình điểm từng MTE ở module đó
         const byModule = [...new Set(current.map((item) => item.moduleId))]
             .map((id) => {
                 const own = current.filter((item) => item.moduleId === id);
                 const module = moduleOf.get(id);
+                const perMember = [
+                    ...new Set(own.map((item) => item.memberId)),
+                ].map((memberId) =>
+                    mean(
+                        own
+                            .filter((item) => item.memberId === memberId)
+                            .map((item) => item.score),
+                    ),
+                );
                 return {
                     module: {
                         _id: id,
@@ -354,28 +417,43 @@ export class LearningAverageService {
                                 : module.name,
                         isRecap: module.code === RECAP_MODULE_CODE,
                     },
-                    average: mean(own.map((item) => item.score)),
-                    members: new Set(own.map((item) => item.memberId)).size,
+                    average: mean(
+                        perMember.filter(
+                            (value): value is number => value !== null,
+                        ),
+                    ),
+                    members: perMember.length,
                     scoredItems: own.length,
                 };
             })
             .sort((a, b) => (b.average ?? 0) - (a.average ?? 0));
 
+        // Xu hướng: mỗi tháng = trung bình điểm tháng của các MTE có điểm trong tháng
         const byMonth = trend.map((code) => {
             const own = scoped.filter((item) => item.periodCode === code);
+            const ids = [...new Set(own.map((item) => item.memberId))];
+            const perMember = (kind?: Item["kind"]) =>
+                mean(
+                    ids
+                        .map((memberId) =>
+                            mean(
+                                own
+                                    .filter(
+                                        (item) =>
+                                            item.memberId === memberId &&
+                                            (!kind || item.kind === kind),
+                                    )
+                                    .map((item) => item.score),
+                            ),
+                        )
+                        .filter((value): value is number => value !== null),
+                );
             return {
                 period: code,
-                average: mean(own.map((item) => item.score)),
-                learningAverage: mean(
-                    own
-                        .filter((item) => item.kind === "MODULE")
-                        .map((item) => item.score),
-                ),
-                recapAverage: mean(
-                    own
-                        .filter((item) => item.kind === "RECAP")
-                        .map((item) => item.score),
-                ),
+                average: perMember(),
+                learningAverage: perMember("MODULE"),
+                recapAverage: perMember("RECAP"),
+                members: ids.length,
                 scoredItems: own.length,
             };
         });
@@ -394,8 +472,9 @@ export class LearningAverageService {
             },
             /** false = chỉ thấy module mình quản lý (Admin module nhỏ) */
             canViewAll: !moduleScope,
+            /** Trung bình của các điểm cá nhân MTE (đơn vị gốc là từng MTE) */
             overall: {
-                average: mean(current.map((item) => item.score)),
+                average: averageOf(byMember.map((row) => row.member._id)),
                 learningAverage: mean(
                     current
                         .filter((item) => item.kind === "MODULE")

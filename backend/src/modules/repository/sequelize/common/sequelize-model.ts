@@ -17,6 +17,13 @@ import { ActivityLogModel } from "@module/activity-log/activity-log.model";
 import { GroupDelegationModel } from "@module/organization/models/group-delegation.model";
 import { ModuleAudienceModel } from "@module/learning/models/module-audience.model";
 import { ProvinceModel } from "@module/member/models/province.model";
+import { CatalogItemModel } from "@module/catalog/catalog-item.model";
+import {
+    BankAccountHistoryModel,
+    ProfileApproverModel,
+    ProfileChangeRequestModel,
+    ProfileDraftModel,
+} from "@module/member/models/profile-workflow.models";
 import { ProposalModel } from "@module/proposal/models/proposal.model";
 import { RecapDelegationModel } from "@module/mentoring/models/recap-delegation.model";
 import { GroupKindConfigModel } from "@module/organization/models/group-kind-config.model";
@@ -121,6 +128,11 @@ export const SequelizeModel: ModelCtor<Model>[] = [
     GroupDelegationModel,
     ModuleAudienceModel,
     ProvinceModel,
+    CatalogItemModel,
+    ProfileDraftModel,
+    ProfileChangeRequestModel,
+    ProfileApproverModel,
+    BankAccountHistoryModel,
     ProposalModel,
     RecapDelegationModel,
 ];

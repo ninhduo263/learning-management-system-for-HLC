@@ -2,7 +2,7 @@ import { Entity } from "@module/repository";
 import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
 import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
-import { Module } from "@nestjs/common";
+import { Global, Module } from "@nestjs/common";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { MemberController } from "./controllers/member.controller";
 import { MemberModel } from "./models/member.model";
@@ -17,8 +17,13 @@ import { MemberExportController } from "./controllers/member-export.controller";
 import { ProvinceController } from "./controllers/province.controller";
 import { MemberAdminController } from "./controllers/member-admin.controller";
 import { MemberDirectoryController } from "./controllers/member-directory.controller";
+import { ProfileApprovalController } from "./controllers/profile-approval.controller";
+import { ProfileApprovalService } from "./services/profile-approval.service";
+import { BankHistoryService } from "./services/bank-history.service";
 import { MemberAdminService } from "./services/member-admin.service";
 
+/** Global: bảng phụ cấp dùng thông tin ngân hàng theo kỳ (BankHistoryService) */
+@Global()
 @Module({
     imports: [SequelizeModule.forFeature([MemberModel, MemberProfileLogModel])],
     controllers: [
@@ -27,6 +32,7 @@ import { MemberAdminService } from "./services/member-admin.service";
         MemberExportController,
         MemberAdminController,
         MemberDirectoryController,
+        ProfileApprovalController,
     ],
     providers: [
         MemberService,
@@ -35,10 +41,17 @@ import { MemberAdminService } from "./services/member-admin.service";
         ProvinceService,
         MemberExportService,
         MemberAdminService,
+        ProfileApprovalService,
+        BankHistoryService,
         RepositoryProvider(Entity.MEMBER, MemberSqlRepository),
         SqlTransaction,
         TransactionProvider(SqlTransaction),
     ],
-    exports: [MemberService, MemberProfileService, ProvinceService],
+    exports: [
+        MemberService,
+        MemberProfileService,
+        ProvinceService,
+        BankHistoryService,
+    ],
 })
 export class MemberModule {}

@@ -94,10 +94,12 @@ export interface SummaryRow {
   adjustmentAmount?: number;
   status: 'DRAFT' | 'LOCKED' | 'PAID';
   calculatedAt: string;
-  member?: MemberBrief & { bankAccount?: string | null; bankName?: string | null; status?: string };
+  member?: MemberBrief & { bankAccount?: string | null; bankName?: string | null; status?: string; position?: string | null; hasBankAccount?: boolean };
 }
 
 export interface PeriodSummary {
+  /** false = người xem không có quyền xem số tài khoản */
+  bankVisible?: boolean;
   /** Khoản chi đã ghi sổ quỹ (null nếu chưa xác nhận đã chi) */
   payout?: PayoutExpense | null;
   period: PeriodView;
@@ -257,6 +259,11 @@ export interface Member {
   addressCode: string | null;
   major: string | null;
   occupation: string | null;
+  /** Nhóm ngành nghề (danh mục 38 nhóm, chọn nhiều) */
+  majorCodes?: string[] | null;
+  occupationCodes?: string[] | null;
+  /** Mã ngân hàng trong danh mục */
+  bankCode?: string | null;
   joinedAt: string | null;
   status: 'ACTIVE' | 'INACTIVE';
   note: string | null;
@@ -701,6 +708,8 @@ export interface AverageMemberRow {
   member: { _id: string; memberCode: string; fullName: string; memberType: 'MENTOR' | 'MENTEE' };
   group: { _id: string; name: string } | null;
   average: number | null;
+  /** Điểm trung bình từng tháng của khoảng xem (đơn vị gốc: 1 MTE x 1 tháng) */
+  months?: Record<string, number | null>;
   learningAverage: number | null;
   recapAverage: number | null;
   scoredItems: number;
@@ -951,7 +960,8 @@ export interface NextMemberCode { code: string; method: 'COUNT' | 'MAX_PLUS_ONE'
 export interface DuplicateMember { _id: string; memberCode: string; fullName: string; memberType: string; dateOfBirth: string | null; status: string; phone: string | null; email: string | null }
 export interface NewMemberInput {
   fullName: string; gender: string; dateOfBirth: string; memberType: 'MENTEE' | 'MENTOR'; hometownCode: string; addressCode: string;
-  phone: string; email: string; nationalId?: string; bankAccount?: string; bankName?: string; groupId?: string; confirmDuplicate?: boolean;
+  phone: string; email: string; nationalId?: string; bankAccount?: string; bankCode?: string; groupId?: string; confirmDuplicate?: boolean;
+  majorCodes?: string[]; occupationCodes?: string[];
 }
 export const memberAdminApi = {
   nextCode: (type: 'MENTEE' | 'MENTOR') => apiJson<NextMemberCode>(`/member-admin/next-code?type=${type}`),
@@ -1043,11 +1053,62 @@ export const leaderApi = {
 
 // ---------- Hồ sơ cá nhân ----------
 
-export interface ProfileLog { _id: string; field: string; oldValue: string | null; newValue: string | null; changedByRole: 'SELF' | 'ADMIN'; changedByName?: string; createdAt: string }
+export interface ProfileLog { _id: string; field: string; oldValue: string | null; newValue: string | null; changedByRole: 'SELF' | 'ADMIN' | 'APPROVED'; changedByName?: string; createdAt: string }
 export const PROFILE_FIELD_LABEL: Record<string, string> = {
   fullName: 'Họ tên', memberType: 'Vai trò', status: 'Trạng thái', dateOfBirth: 'Ngày sinh', gender: 'Giới tính', phone: 'Số điện thoại',
   email: 'Email', address: 'Địa chỉ cũ (nhập tự do)', hometown: 'Quê quán cũ (nhập tự do)', profileUrl: 'Link profile', bankAccount: 'Số tài khoản', bankName: 'Ngân hàng', joinedAt: 'Ngày tham gia',
-  hometownCode: 'Quê quán', addressCode: 'Địa chỉ (tỉnh, thành phố)', major: 'Ngành học', occupation: 'Ngành nghề', nationalId: 'Số CCCD'
+  hometownCode: 'Quê quán', addressCode: 'Địa chỉ (tỉnh, thành phố)', major: 'Ngành học (cũ)', occupation: 'Ngành nghề (cũ)', nationalId: 'Số CCCD',
+  majorCodes: 'Ngành học', occupationCodes: 'Ngành nghề', bankCode: 'Ngân hàng'
+};
+
+// ---------- Danh mục ngành nghề / ngân hàng ----------
+
+export interface CatalogItem { _id: string; type: 'CAREER' | 'BANK'; code: string; name: string; shortName: string | null; aliases: string[]; mergedInto: string | null; sortOrder: number; isActive: boolean }
+export const catalogApi = {
+  list: (type: 'CAREER' | 'BANK', all = false) => apiJson<CatalogItem[]>(`/catalogs/${type}${all ? '?all=true' : ''}`),
+  save: (type: 'CAREER' | 'BANK', body: Partial<CatalogItem>) => apiJson<CatalogItem>(`/catalogs/${type}`, { method: 'PUT', json: body })
+};
+/** Hồ sơ còn ngành học / ngành nghề / ngân hàng cũ nhập tự do chưa quy đổi được */
+export const catalogNeedsReview = (member: Partial<Member>) => ({
+  major: Boolean(member.major?.trim()) && !member.majorCodes?.length,
+  occupation: Boolean(member.occupation?.trim()) && !member.occupationCodes?.length,
+  bank: Boolean(member.bankName?.trim()) && !member.bankCode
+});
+
+// ---------- Bản nháp & duyệt thay đổi hồ sơ ----------
+
+export type ProfileChangeStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
+export interface ProfileChangeRequest {
+  _id: string; memberId: string; status: ProfileChangeStatus; reason: string | null; onBehalfOf: string | null; effectivePeriodCode: string | null;
+  changes: { field: string; oldValue: string | null; newValue: string | null }[];
+  createdAt: string; decidedAt: string | null; decidedByName?: string | null;
+  member?: { _id: string; memberCode: string; fullName: string; memberType: string };
+}
+export const PROFILE_CHANGE_STATUS: Record<ProfileChangeStatus, { label: string; color: string }> = {
+  PENDING: { label: 'Chờ duyệt', color: 'gold' },
+  APPROVED: { label: 'Đã duyệt', color: 'green' },
+  REJECTED: { label: 'Bị từ chối', color: 'red' },
+  CANCELLED: { label: 'Đã hủy', color: 'default' }
+};
+export interface ProfileApprover {
+  _id: string; memberId: string; scope: 'ALL' | 'MENTEE' | 'MENTOR'; startDate: string; endDate: string; note: string | null;
+  status: 'ACTIVE' | 'UPCOMING' | 'EXPIRED' | 'REVOKED'; member: { _id: string; memberCode: string; fullName: string } | null;
+}
+export const profileWorkflowApi = {
+  draft: () => apiJson<{ data: Record<string, unknown>; updatedAt: string } | null>('/member/me/profile/draft'),
+  saveDraft: (data: Record<string, unknown>) => apiJson('/member/me/profile/draft', { method: 'PUT', json: { data } }),
+  discardDraft: () => apiJson('/member/me/profile/draft', { method: 'DELETE' }),
+  save: (body: Record<string, unknown>) => apiJson<{ member: Member; applied: string[]; pending: ProfileChangeRequest | null }>('/member/me/profile', { method: 'PUT', json: body }),
+  myRequests: () => apiJson<ProfileChangeRequest[]>('/member/me/profile/requests'),
+  cancelRequest: (id: string) => apiJson(`/member/me/profile/requests/${id}/cancel`, { method: 'POST' })
+};
+export const profileApprovalApi = {
+  canApprove: () => apiJson<{ canApprove: boolean; scopes: string[] }>('/profile-requests/can-approve'),
+  list: (status = 'PENDING') => apiJson<ProfileChangeRequest[]>(`/profile-requests?status=${status}`),
+  decide: (id: string, approve: boolean, reason?: string) => apiJson<ProfileChangeRequest>(`/profile-requests/${id}/decide`, { method: 'PUT', json: { approve, reason } }),
+  approvers: () => apiJson<ProfileApprover[]>('/profile-requests/approvers/all'),
+  addApprover: (body: { memberId: string; scope: string; startDate: string; endDate: string; note?: string }) => apiJson('/profile-requests/approvers', { method: 'POST', json: body }),
+  revokeApprover: (id: string) => apiJson(`/profile-requests/approvers/${id}/revoke`, { method: 'PUT' })
 };
 
 export const passwordApi = {

@@ -5,8 +5,9 @@ import { Alert, App, Button, DatePicker, Form, Input, Modal, Select, Table, Tabs
 import dayjs, { type Dayjs } from 'dayjs';
 import { apiJson, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
-import { PROFILE_FIELD_LABEL, memberAdminApi, profileApi, provinceNeedsReview, type Member, type ProfileLog } from '@/services/hlcApi';
+import { PROFILE_FIELD_LABEL, catalogNeedsReview, memberAdminApi, profileApi, provinceNeedsReview, type Member, type ProfileLog } from '@/services/hlcApi';
 import ProvinceSelect, { useProvinces } from '@/components/ProvinceSelect';
+import CatalogSelect from '@/components/CatalogSelect';
 
 type Values = Omit<Partial<Member>, 'dateOfBirth' | 'joinedAt'> & { dateOfBirth?: Dayjs; joinedAt?: Dayjs };
 
@@ -23,7 +24,7 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
     if (!memberId) return;
     try {
       const data = await memberAdminApi.sensitive(memberId);
-      form.setFieldsValue({ bankAccount: data.bankAccount, nationalId: data.nationalId, bankName: data.bankName });
+      form.setFieldsValue({ bankAccount: data.bankAccount, nationalId: data.nationalId });
       setRevealed(true);
     } catch (error) {
       message.error(errorMessage(error));
@@ -67,11 +68,11 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
         profileUrl: nullable(values.profileUrl),
         // Chưa bấm "Hiện" thì không gửi dữ liệu nhạy cảm (giá trị đang bị che)
         ...(revealed && { bankAccount: nullable(values.bankAccount), nationalId: nullable(values.nationalId) }),
-        bankName: nullable(values.bankName),
         hometownCode: values.hometownCode ?? null,
         addressCode: values.addressCode ?? null,
-        major: nullable(values.major),
-        occupation: nullable(values.occupation),
+        majorCodes: values.majorCodes ?? [],
+        occupationCodes: values.occupationCodes ?? [],
+        bankCode: values.bankCode ?? null,
         gender: values.gender ?? null,
         note: nullable(values.note),
         dateOfBirth: values.dateOfBirth ? values.dateOfBirth.format('YYYY-MM-DD') : null,
@@ -111,14 +112,14 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
               <Form.Item name="bankAccount" label="Số tài khoản" extra={revealed ? 'Đã hiện đầy đủ (có ghi nhật ký)' : <span>Đang che bớt. <Button size="small" type="link" className="!px-0" onClick={reveal}>Hiện CCCD và số tài khoản</Button></span>}>
                 <Input disabled={!revealed} />
               </Form.Item>
-              <Form.Item name="bankName" label="Ngân hàng"><Input /></Form.Item>
+              <Form.Item name="bankCode" label="Ngân hàng" extra={legacy && catalogNeedsReview(legacy).bank ? `Tên cũ "${legacy.bankName}" chưa khớp danh mục: chọn lại` : undefined}><CatalogSelect type="BANK" /></Form.Item>
               <Form.Item name="nationalId" label="Số CCCD" rules={revealed ? [{ pattern: /^\d{12}$/, message: 'CCCD gồm 12 chữ số' }] : []}>
                 <Input disabled={!revealed} />
               </Form.Item>
               <Form.Item name="hometownCode" label="Quê quán (tỉnh, thành phố)"><ProvinceSelect /></Form.Item>
               <Form.Item name="addressCode" label="Địa chỉ (tỉnh, thành phố)"><ProvinceSelect /></Form.Item>
-              <Form.Item name="major" label="Ngành học"><Input /></Form.Item>
-              <Form.Item name="occupation" label="Ngành nghề"><Input /></Form.Item>
+              <Form.Item name="majorCodes" label="Ngành học (chọn nhiều)" extra={legacy && catalogNeedsReview(legacy).major ? `Dữ liệu cũ: "${legacy.major}"` : undefined}><CatalogSelect type="CAREER" multiple /></Form.Item>
+              <Form.Item name="occupationCodes" label="Ngành nghề (chọn nhiều)" extra={legacy && catalogNeedsReview(legacy).occupation ? `Dữ liệu cũ: "${legacy.occupation}"` : undefined}><CatalogSelect type="CAREER" multiple /></Form.Item>
               <Form.Item name="profileUrl" label="Link profile" extra="Tạm thời chỉ Admin sửa; mọi thay đổi được ghi nhật ký."><Input /></Form.Item>
               <Form.Item name="joinedAt" label="Ngày tham gia"><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>
             </div>
@@ -135,7 +136,7 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
               { title: 'Thông tin', render: (_: unknown, row: ProfileLog) => <span className={row.field.startsWith('bank') ? 'font-semibold text-red-600' : ''}>{PROFILE_FIELD_LABEL[row.field] ?? row.field}</span> },
               { title: 'Cũ', render: (_: unknown, row: ProfileLog) => display(row, row.oldValue) },
               { title: 'Mới', render: (_: unknown, row: ProfileLog) => display(row, row.newValue) },
-              { title: 'Người sửa', render: (_: unknown, row: ProfileLog) => <Tag color={row.changedByRole === 'ADMIN' ? 'purple' : 'blue'}>{row.changedByRole === 'ADMIN' ? 'Admin' : 'Thành viên'}{row.changedByName ? ` · ${row.changedByName}` : ''}</Tag> }
+              { title: 'Người sửa', render: (_: unknown, row: ProfileLog) => <Tag color={row.changedByRole === 'SELF' ? 'blue' : 'purple'}>{row.changedByRole === 'SELF' ? 'Thành viên' : row.changedByRole === 'APPROVED' ? 'Duyệt thay đổi' : 'Admin'}{row.changedByName ? ` · ${row.changedByName}` : ''}</Tag> }
             ]} />
           )
         }

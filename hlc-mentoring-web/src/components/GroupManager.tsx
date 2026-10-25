@@ -125,13 +125,16 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
             <Card
               key={group._id}
               size="small"
-              title={<span>{group.name} <span className="text-xs font-normal text-gray-400">{group.code}</span>{!group.isActive && <Tag className="ml-2">Ngừng</Tag>}</span>}
-              extra={(
-                <Space size="small">
-                  <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
-                  <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, isActive: group.isActive, deputyCanReview: group.deputyCanReview }); setEditing(group); }}>Sửa</Button>
-                  {canDelete && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setDeleting(group)}>Xóa</Button>}
-                </Space>
+              // Tiêu đề và nút tự xuống dòng (không tràn khỏi thẻ trên điện thoại)
+              title={(
+                <div className="flex flex-wrap items-center justify-between gap-2 py-1">
+                  <span className="min-w-0 whitespace-normal break-words">{group.name} <span className="text-xs font-normal text-gray-400">{group.code}</span>{!group.isActive && <Tag className="ml-2">Ngừng</Tag>}</span>
+                  <Space size="small" wrap>
+                    <Button size="small" icon={<HistoryOutlined />} onClick={async () => { try { setHistory({ group, data: await groupApi.history(group._id) }); } catch (error) { message.error(errorMessage(error)); } }}>Lịch sử</Button>
+                    <Button size="small" onClick={() => { form.setFieldsValue({ name: group.name, isActive: group.isActive, deputyCanReview: group.deputyCanReview }); setEditing(group); }}>Sửa</Button>
+                    {canDelete && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setDeleting(group)}>Xóa</Button>}
+                  </Space>
+                </div>
               )}
             >
               <div className="mb-2 flex items-center justify-between">

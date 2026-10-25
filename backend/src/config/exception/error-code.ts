@@ -140,4 +140,8 @@ export type ErrorCode =
     | "error-member-code-conflict"
     | "error-member-group-required"
     | "error-bank-name-invalid"
+    | "error-catalog-invalid"
+    | "error-profile-request-not-pending"
+    | "error-profile-reject-reason"
+    | "error-profile-approver-forbidden"
     | FileErrorCode;

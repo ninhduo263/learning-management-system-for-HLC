@@ -20,7 +20,8 @@ import {
   SolutionOutlined,
   BarChartOutlined,
   AuditOutlined,
-  EyeOutlined
+  EyeOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -28,6 +29,8 @@ import { apiFetch, apiJson, clearSession, getSessionUser } from '@/lib/api';
 import { getCurrentTime, syncServerTime } from '@/utils/time';
 import { proposalApi, type AdminScope } from '@/services/hlcApi';
 import { loadAccess } from '@/lib/useAccess';
+import { confirmLeave } from '@/lib/unsavedGuard';
+import { profileApprovalApi } from '@/services/hlcApi';
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
@@ -48,7 +51,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [moduleIds, setModuleIds] = useState<string[] | null>([]);
   const [proposalAbility, setProposalAbility] = useState({ canPropose: 0, canDecide: 0, pending: 0 });
   const [mustChangePassword, setMustChangePassword] = useState(false);
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
+  const [canApproveProfile, setCanApproveProfile] = useState(false);
+  const [pendingProfile, setPendingProfile] = useState(0);
+  /** Chuyển trang: hỏi lưu / bỏ nếu trang hiện tại còn thay đổi chưa lưu */
+  const go = async (target: string, replace = false) => {
+    if (!(await confirmLeave(modal))) return false;
+    if (replace) router.replace(target); else router.push(target);
+    return true;
+  };
   const router = useRouter();
   const pathname = usePathname();
   const screens = useBreakpoint();
@@ -122,6 +133,27 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     return () => { active = false; window.removeEventListener('hlc-access-change', refresh); };
   }, [user]);
 
+  // Duyệt thay đổi hồ sơ nhạy cảm: Admin toàn cục và người được ủy quyền; huy hiệu = số yêu cầu chờ duyệt
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const ability = await profileApprovalApi.canApprove();
+        if (!active) return;
+        setCanApproveProfile(ability.canApprove);
+        if (ability.canApprove) {
+          const pending = await profileApprovalApi.list('PENDING');
+          if (active) setPendingProfile(pending.length);
+        }
+      } catch { /* bỏ qua */ }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('hlc-profile-request-change', refresh);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('hlc-profile-request-change', refresh); };
+  }, [user]);
+
   // Đề xuất giữa các chức vụ: hiện menu khi được gửi / duyệt, huy hiệu = số đề xuất đang chờ tôi duyệt
   useEffect(() => {
     if (!user) return;
@@ -148,6 +180,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     <span className="flex items-center justify-between gap-2">{text}{proposalAbility.pending > 0 && <Badge count={proposalAbility.pending} size="small" />}</span>
   );
 
+  const profileApprovalLabel = (
+    <span className="flex items-center justify-between gap-2">Duyệt hồ sơ{pendingProfile > 0 && <Badge count={pendingProfile} size="small" />}</span>
+  );
+
   const adminMenuItems = [
     { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Dashboard tháng' },
     { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Ghép cặp mentoring' },
@@ -159,6 +195,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     { key: 'learning-dashboard', icon: <BarChartOutlined />, label: 'Điểm học tập TB' },
     { key: 'proposals', icon: <AuditOutlined />, label: proposalLabel('Đề xuất') },
     { key: 'admin-members', icon: <IdcardOutlined />, label: 'Thành viên & báo cáo' },
+    { key: 'profile-approvals', icon: <SafetyCertificateOutlined />, label: profileApprovalLabel },
   ];
 
   // Trang quản trị mở cho mentor/mentee được giao quyền
@@ -173,6 +210,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     (scopes.includes('MENTEE') || actions.includes('VIEW_ACTIVITY_LOG')) && { key: 'admin-organization', icon: <ApartmentOutlined />, label: scopes.includes('MENTEE') ? 'Nhóm MTE' : 'Nhật ký thao tác' },
     (scopes.includes('LEARNING') || Boolean(moduleIds?.length)) && { key: 'learning-dashboard', icon: <BarChartOutlined />, label: 'Điểm học tập TB' },
     (proposalAbility.canPropose > 0 || proposalAbility.canDecide > 0) && { key: 'proposals', icon: <AuditOutlined />, label: proposalLabel('Đề xuất') },
+    canApproveProfile && { key: 'profile-approvals', icon: <SafetyCertificateOutlined />, label: profileApprovalLabel },
   ] as (MenuEntry | false)[]).filter((item): item is MenuEntry => Boolean(item));
 
   const menteeMenuItems = [
@@ -226,6 +264,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     'admin-members': '/admin-members',
     'learning-dashboard': '/learning-dashboard',
     proposals: '/proposals',
+    'profile-approvals': '/profile-approvals',
     'mentor-learning': '/mentor-learning',
     'mentor-fund': '/mentor-fund',
     leader: '/leader',
@@ -247,8 +286,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       onClick={({ key }) => {
         const target = routeMap[String(key)];
         setDrawerOpen(false);
-        if (target) router.push(target);
-        else router.push('/');
+        void go(target || '/');
       }}
     />
   );
@@ -316,7 +354,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
               type="text"
               size={isMobile ? 'large' : 'middle'}
               icon={<LogoutOutlined />}
-              onClick={() => {
+              onClick={async () => {
+                if (!(await confirmLeave(modal))) return;
                 const refreshToken = localStorage.getItem('hlc_refresh_token');
                 if (refreshToken) {
                   void apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken }) }).catch(() => undefined);
@@ -332,7 +371,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {roleTabs.length > 0 && <nav className="role-tabs" aria-label="Điều hướng nhanh">
           {roleTabs.map((item) => {
             const target = routeMap[item.key];
-            return <button key={item.key} type="button" className={pathname === target ? 'active' : ''} onClick={() => router.push(target)}>{item.icon}<span>{item.label}</span></button>;
+            return <button key={item.key} type="button" className={pathname === target ? 'active' : ''} onClick={() => void go(target)}>{item.icon}<span>{item.label}</span></button>;
           })}
         </nav>}
 

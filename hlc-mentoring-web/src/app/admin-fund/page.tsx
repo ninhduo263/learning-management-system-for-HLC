@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { App, Button, Card, DatePicker, Input, Modal, Progress, Segmented, Space, Statistic, Table, Tabs, Tag, Typography } from 'antd';
+import { App, Button, Card, DatePicker, Input, Modal, Progress, Segmented, Space, Statistic, Table, Tag, Typography } from 'antd';
 import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import FileThumbs from '@/components/FileThumbs';
 import FundGroupReport from '@/components/FundGroupReport';
+import ResponsiveTabs from '@/components/ResponsiveTabs';
 import FundLedgerPanel from '@/components/FundLedgerPanel';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
@@ -159,7 +160,7 @@ export default function AdminFundPage() {
         </div>
       )}
       <Card>
-        <Tabs defaultActiveKey={typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') ?? 'list' : 'list'} items={[
+        <ResponsiveTabs defaultActiveKey={typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') ?? 'list' : 'list'} items={[
           { key: 'list', label: date ? `Minh chứng ngày ${formatDate(date)}` : 'Minh chứng', children: listTab },
           { key: 'stats', label: 'Thống kê tháng', children: statsTab },
           { key: 'fund-groups', label: 'Nhóm MTO & thầy cô', children: <FundGroupReport fixedKind="FUND" /> },

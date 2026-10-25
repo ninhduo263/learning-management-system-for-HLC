@@ -5,6 +5,7 @@ import { Alert, App, Button, DatePicker, Descriptions, Form, Input, Modal, Selec
 import { CopyOutlined } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import ProvinceSelect from '@/components/ProvinceSelect';
+import CatalogSelect from '@/components/CatalogSelect';
 import { errorMessage } from '@/lib/api';
 import { memberAdminApi, memberDirectoryApi, type DuplicateMember, type NewMemberInput, type NextMemberCode } from '@/services/hlcApi';
 
@@ -21,7 +22,6 @@ export default function AddMemberModal({ open, onClose, onCreated }: { open: boo
   const memberType = Form.useWatch('memberType', form);
   const bankAccount = Form.useWatch('bankAccount', form);
   const [next, setNext] = useState<NextMemberCode | null>(null);
-  const [banks, setBanks] = useState<string[]>([]);
   const [groups, setGroups] = useState<{ _id: string; name: string; groupKind: string }[]>([]);
   const [duplicates, setDuplicates] = useState<{ values: Values; rows: DuplicateMember[] } | null>(null);
   const [created, setCreated] = useState<Created | null>(null);
@@ -30,9 +30,8 @@ export default function AddMemberModal({ open, onClose, onCreated }: { open: boo
   useEffect(() => {
     if (!open) return;
     let active = true;
-    Promise.all([memberAdminApi.banks(), memberDirectoryApi.groups()]).then(([bankList, groupList]) => {
+    memberDirectoryApi.groups().then((groupList) => {
       if (!active) return;
-      setBanks(bankList);
       setGroups(groupList);
     }).catch((error) => message.error(errorMessage(error)));
     return () => { active = false; };
@@ -53,7 +52,7 @@ export default function AddMemberModal({ open, onClose, onCreated }: { open: boo
     email: values.email.trim(),
     nationalId: values.nationalId?.trim() || undefined,
     bankAccount: values.bankAccount?.replace(/\s+/g, '') || undefined,
-    bankName: values.bankAccount ? values.bankName : undefined,
+    bankCode: values.bankAccount ? values.bankCode : undefined,
     confirmDuplicate
   });
 
@@ -124,14 +123,16 @@ export default function AddMemberModal({ open, onClose, onCreated }: { open: boo
             <Form.Item name="addressCode" label="Địa chỉ (tỉnh, thành phố)" rules={[{ required: true, message: 'Chọn địa chỉ' }]}><ProvinceSelect /></Form.Item>
             <Form.Item name="phone" label="Số điện thoại" rules={[{ required: true, message: 'Nhập số điện thoại' }, { pattern: /^(\+84|0)\d{9,10}$/, message: 'Số điện thoại không hợp lệ' }]}><Input inputMode="tel" /></Form.Item>
             <Form.Item name="email" label="Email" rules={[{ required: true, message: 'Nhập email' }, { type: 'email', message: 'Email không hợp lệ' }]}><Input /></Form.Item>
+            <Form.Item name="majorCodes" label="Ngành học (tùy chọn, chọn nhiều)"><CatalogSelect type="CAREER" multiple /></Form.Item>
+            <Form.Item name="occupationCodes" label="Ngành nghề (tùy chọn, chọn nhiều)"><CatalogSelect type="CAREER" multiple /></Form.Item>
           </div>
           <Typography.Title level={5}>Thông tin tùy chọn (dữ liệu nhạy cảm)</Typography.Title>
           <Typography.Paragraph type="secondary" className="text-xs">Số CCCD và số tài khoản chỉ Admin toàn cục và chính chủ xem được; việc xem, sửa, xuất file đều ghi nhật ký. Số CCCD trùng với hồ sơ đã có sẽ bị chặn.</Typography.Paragraph>
           <div className="grid grid-cols-1 gap-x-3 sm:grid-cols-3">
             <Form.Item name="nationalId" label="Số CCCD" rules={[{ pattern: /^\d{12}$/, message: 'CCCD gồm 12 chữ số' }]}><Input inputMode="numeric" maxLength={12} /></Form.Item>
             <Form.Item name="bankAccount" label="Số tài khoản" rules={[{ pattern: /^[0-9 ]{4,30}$/, message: 'Chỉ gồm chữ số' }]}><Input inputMode="numeric" /></Form.Item>
-            <Form.Item name="bankName" label="Ngân hàng" rules={bankAccount ? [{ required: true, message: 'Chọn ngân hàng' }] : []}>
-              <Select showSearch allowClear disabled={!bankAccount} optionFilterProp="label" options={banks.map((bank) => ({ value: bank, label: bank }))} />
+            <Form.Item name="bankCode" label="Ngân hàng" rules={bankAccount ? [{ required: true, message: 'Chọn ngân hàng' }] : []}>
+              <CatalogSelect type="BANK" disabled={!bankAccount} />
             </Form.Item>
           </div>
           <Typography.Text type="secondary" className="text-xs">Link profile và các thông tin khác bổ sung sau ở “Sửa hồ sơ”.</Typography.Text>

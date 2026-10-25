@@ -1,4 +1,5 @@
 import {
+    IsArray,
     IsEmail,
     IsEnum,
     IsOptional,
@@ -41,15 +42,27 @@ export class SelfProfileDto {
     @IsOptional()
     profileUrl?: string;
 
-    @IsString()
-    @MaxLength(255)
+    /** Ngành học: mã các nhóm ngành nghề (chọn nhiều, danh mục CAREER) */
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    major?: string;
+    majorCodes?: string[];
 
-    @IsString()
-    @MaxLength(255)
+    /** Ngành nghề: mã các nhóm ngành nghề (chọn nhiều) */
+    @IsArray()
+    @IsString({ each: true })
     @IsOptional()
-    occupation?: string;
+    occupationCodes?: string[];
+
+    /** Ngân hàng: mã danh mục BANK */
+    @IsString()
+    @IsOptional()
+    bankCode?: string;
+
+    /** Số CCCD (thay đổi cần duyệt) */
+    @Matches(/^(\d{12}|.*•.*)?$/, { message: "Số CCCD gồm 12 chữ số" })
+    @IsOptional()
+    nationalId?: string;
 
     /** Quê quán: mã tỉnh, thành phố trong danh mục (rỗng = bỏ chọn) */
     @IsString()

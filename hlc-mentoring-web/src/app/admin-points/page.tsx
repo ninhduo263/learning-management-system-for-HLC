@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Statistic, Switch, Table, Tabs, Tag, Typography
+  Alert, App, Button, Card, DatePicker, Descriptions, Drawer, Form, Input, InputNumber, Modal, Popconfirm, Progress, Segmented, Select, Space, Statistic, Switch, Table, Tag, Typography
 } from 'antd';
 import { PrinterOutlined, CalculatorOutlined, DownloadOutlined, LockOutlined, PlusOutlined, SettingOutlined, UnlockOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
+import ResponsiveTabs from '@/components/ResponsiveTabs';
 import ProposalModal from '@/components/ProposalModal';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
@@ -183,7 +184,12 @@ export default function AdminPointsPage() {
           { title: 'Tổng điểm', width: 100, align: 'right' as const, sorter: (a: SummaryRow, b: SummaryRow) => a.totalPoints - b.totalPoints, render: (_: unknown, row: SummaryRow) => <strong>{points(row.totalPoints)}</strong> },
           { title: 'Bù chênh lệch', width: 120, align: 'right' as const, render: (_: unknown, row: SummaryRow) => Number(row.adjustmentAmount ?? 0) ? money(row.adjustmentAmount) : '' },
           { title: 'Thành tiền', width: 130, align: 'right' as const, sorter: (a: SummaryRow, b: SummaryRow) => a.amount - b.amount, render: (_: unknown, row: SummaryRow) => money(row.amount) },
-          { title: 'Tài khoản', width: 190, render: (_: unknown, row: SummaryRow) => row.member?.bankAccount ? `${row.member.bankAccount} · ${row.member.bankName ?? ''}` : <Tag>Chưa có STK</Tag> }
+          { title: 'Chức vụ', width: 180, render: (_: unknown, row: SummaryRow) => row.member?.position ? <span className="text-xs">{row.member.position}</span> : <span className="text-gray-300">—</span> },
+          {
+            title: summary?.bankVisible ? 'Số tài khoản · ngân hàng' : 'Ngân hàng', width: 210, render: (_: unknown, row: SummaryRow) => !row.member?.hasBankAccount && !row.member?.bankAccount
+              ? <Tag>Chưa có STK</Tag>
+              : summary?.bankVisible ? `${row.member?.bankAccount ?? ''} · ${row.member?.bankName ?? ''}` : <span>{row.member?.bankName ?? ''} <span className="text-xs text-gray-400">(số TK ẩn)</span></span>
+          }
         ]}
       />
     </div>
@@ -313,7 +319,7 @@ export default function AdminPointsPage() {
       )}
 
       <Card>
-        <Tabs items={[
+        <ResponsiveTabs items={[
           { key: 'summary', label: 'Bảng tổng hợp', children: summaryTab },
           { key: 'completion', label: 'Leader / Phó nhóm', children: <CompletionPanel code={code} /> },
           { key: 'adjust', label: `Điều chỉnh & khiếu nại${pending.length ? ` (${pending.length})` : ''}`, children: adjustmentTab },

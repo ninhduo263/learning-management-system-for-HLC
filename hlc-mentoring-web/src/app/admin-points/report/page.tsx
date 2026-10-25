@@ -34,7 +34,7 @@ function ReportView() {
       {!data.period.isLocked && <p className="text-center font-semibold text-orange-600">Bản nháp: kỳ chưa chốt, số liệu có thể thay đổi.</p>}
       <table className="report-table mt-4 w-full">
         <thead>
-          <tr><th>STT</th><th>Thành viên</th>{data.pointTypes.map((type) => <th key={type.code}>{type.name}</th>)}<th>Tổng điểm</th><th>Thành tiền</th><th>Tài khoản</th></tr>
+          <tr><th>STT</th><th>Thành viên</th>{data.pointTypes.map((type) => <th key={type.code}>{type.name}</th>)}<th>Tổng điểm</th><th>Thành tiền</th><th>Chức vụ</th><th>{data.bankVisible ? 'Tài khoản' : 'Ngân hàng'}</th></tr>
         </thead>
         <tbody>
           {data.rows.map((row, index) => (
@@ -44,10 +44,11 @@ function ReportView() {
               {data.pointTypes.map((type) => <td key={type.code} className="text-right">{Number(row.pointsByType?.[type.code] ?? 0) ? points(row.pointsByType[type.code]) : ''}</td>)}
               <td className="text-right font-semibold">{points(row.totalPoints)}</td>
               <td className="text-right">{money(row.amount)}</td>
-              <td>{row.member?.bankAccount ? `${row.member.bankAccount} – ${row.member.bankName ?? ''}` : 'Chưa có STK'}</td>
+              <td>{row.member?.position ?? ''}</td>
+              <td>{!row.member?.hasBankAccount && !row.member?.bankAccount ? 'Chưa có STK' : data.bankVisible ? `${row.member?.bankAccount ?? ''} – ${row.member?.bankName ?? ''}` : row.member?.bankName ?? ''}</td>
             </tr>
           ))}
-          <tr className="font-semibold"><td colSpan={2 + data.pointTypes.length}>Tổng cộng {data.totals.members} thành viên</td><td className="text-right">{points(data.totals.points)}</td><td className="text-right">{money(data.totals.amount)}</td><td /></tr>
+          <tr className="font-semibold"><td colSpan={2 + data.pointTypes.length}>Tổng cộng {data.totals.members} thành viên</td><td className="text-right">{points(data.totals.points)}</td><td className="text-right">{money(data.totals.amount)}</td><td /><td /></tr>
         </tbody>
       </table>
 

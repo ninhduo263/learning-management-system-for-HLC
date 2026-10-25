@@ -17,6 +17,7 @@ import { TimeModule } from "./modules/time/time.module";
 import { DashboardModule } from "./modules/dashboard/dashboard.module";
 import { LeaderModule } from "./modules/leader/leader.module";
 import { ActivityLogModule } from "./modules/activity-log/activity-log.module";
+import { CatalogModule } from "./modules/catalog/catalog.module";
 import { ProposalModule } from "./modules/proposal/proposal.module";
 import { AppController } from "./app.controller";
 import { RootController } from "./root.controller";
@@ -73,6 +74,7 @@ import { WebSocketModule } from "./modules/websocket/websocket.module";
         DashboardModule,
         LeaderModule,
         ActivityLogModule,
+        CatalogModule,
         ProposalModule,
     ],
     providers: [...DefaultProviders],

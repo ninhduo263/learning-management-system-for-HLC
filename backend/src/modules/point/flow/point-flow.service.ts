@@ -33,6 +33,10 @@ import { PointTypeModel } from "../models/point-type.model";
 import { PointCalculationService, stableId } from "./point-calculation.service";
 import { PeriodLogModel } from "@module/period/models/period-log.model";
 import { FundExpenseModel } from "@module/fund/models/fund-expense.model";
+import { BankHistoryService } from "@module/member/services/bank-history.service";
+import { MemberPositionModel } from "@module/organization/models/member-position.model";
+import { PositionModel } from "@module/organization/models/position.model";
+import { DepartmentModel } from "@module/organization/models/department.model";
 import { SecurityConfigService } from "@module/setting/security-config.service";
 import { isValidDateKey, vnDateKey } from "@common/utils/vn-date.util";
 import { UserModel } from "@module/repository/sequelize/model/user.model";
@@ -87,6 +91,13 @@ export class PointFlowService implements OnApplicationBootstrap {
         @InjectModel(FundExpenseModel)
         private readonly expenseModel: typeof FundExpenseModel,
         private readonly securityConfig: SecurityConfigService,
+        private readonly bankHistory: BankHistoryService,
+        @InjectModel(MemberPositionModel)
+        private readonly memberPositionModel: typeof MemberPositionModel,
+        @InjectModel(PositionModel)
+        private readonly positionModel: typeof PositionModel,
+        @InjectModel(DepartmentModel)
+        private readonly departmentModel: typeof DepartmentModel,
     ) {}
 
     /** Khởi động: tự tạo bảng của tháng hiện tại (bảng tháng mới cũng được tạo mỗi ngày lúc 01:00) */
@@ -346,8 +357,8 @@ export class PointFlowService implements OnApplicationBootstrap {
     }
 
     /** Báo cáo chi trả mùng 10: bảng tổng hợp + từng dòng điểm (nguồn) của mỗi người */
-    async report(code: string) {
-        const summary = await this.getSummary(code);
+    async report(code: string, showBank = false) {
+        const summary = await this.getSummary(code, { showBank });
         const types = new Map(
             (await this.pointTypes()).map((type) => [type._id, type]),
         );
@@ -450,15 +461,26 @@ export class PointFlowService implements OnApplicationBootstrap {
                 where: { periodId: period._id },
                 transaction: t,
             });
+            // Bản chụp lúc chốt: họ tên, chức vụ theo hồ sơ chính thức; ngân hàng theo kỳ áp dụng
+            const memberIds = summaries.map((row) => row.memberId);
+            const banks = await this.bankHistory.bankFor(
+                memberIds,
+                period.code,
+                t,
+            );
+            const positions = await this.positionsOf(memberIds, period, t);
             for (const summary of summaries) {
                 const member = members.get(summary.memberId);
+                const bank = banks.get(summary.memberId);
                 await summary.update(
                     {
                         status: AllowanceSummaryStatus.LOCKED,
                         lockedAt: now,
                         fullNameSnapshot: member?.fullName,
-                        bankAccountSnapshot: member?.bankAccount,
-                        bankNameSnapshot: member?.bankName,
+                        bankAccountSnapshot: bank?.bankAccount ?? null,
+                        bankNameSnapshot: bank?.bankName ?? null,
+                        positionSnapshot:
+                            positions.get(summary.memberId) ?? null,
                     },
                     { transaction: t },
                 );
@@ -796,7 +818,63 @@ export class PointFlowService implements OnApplicationBootstrap {
         return byMember.size;
     }
 
-    async getSummary(code: string) {
+    /**
+     * Chức vụ đang giữ của từng thành viên tại ngày chốt của kỳ (ngày cuối tháng hoặc hôm nay),
+     * ví dụ "Leader nhóm MTE (Nhóm 1); Trưởng ban MTE".
+     */
+    private async positionsOf(
+        memberIds: string[],
+        period: Period,
+        t?: Transaction,
+    ) {
+        const result = new Map<string, string>();
+        if (!memberIds.length) return result;
+        const today = vnDateKey(this.timeService.now());
+        const ref = today < period.endDate ? today : period.endDate;
+        const rows = await this.memberPositionModel.findAll({
+            where: {
+                memberId: memberIds,
+                startDate: { [Op.lte]: ref },
+                [Op.or]: [{ endDate: null }, { endDate: { [Op.gte]: ref } }],
+            },
+            raw: true,
+            transaction: t,
+        });
+        if (!rows.length) return result;
+        const positions = new Map(
+            (
+                await this.positionModel.findAll({ raw: true, transaction: t })
+            ).map((item) => [item._id, item]),
+        );
+        const departments = new Map(
+            (
+                await this.departmentModel.findAll({
+                    raw: true,
+                    transaction: t,
+                })
+            ).map((item) => [item._id, item]),
+        );
+        for (const row of rows) {
+            const position = positions.get(row.positionId);
+            if (!position) continue;
+            const department = departments.get(row.departmentId);
+            const label =
+                department?.type === "GROUP"
+                    ? `${position.name} (${department.name})`
+                    : position.name;
+            const list = result.get(row.memberId);
+            result.set(row.memberId, list ? `${list}; ${label}` : label);
+        }
+        return result;
+    }
+
+    /**
+     * Bảng tổng hợp: họ tên, mã, chức vụ, số tài khoản, ngân hàng tham chiếu từ hồ sơ chính thức.
+     * Kỳ đã chốt: dùng bản chụp lúc chốt (không đổi theo hồ sơ). Kỳ chưa chốt / được mở khóa: theo hồ sơ hiện tại,
+     * riêng ngân hàng theo kỳ bắt đầu áp dụng. Số tài khoản chỉ trả khi showBank (Admin toàn cục, Trưởng ban HLC Fund).
+     */
+    async getSummary(code: string, options: { showBank?: boolean } = {}) {
+        const showBank = options.showBank ?? false;
         const period = await this.periodFlow.getByCode(code);
         const types = (await this.pointTypes()).filter(
             (type) => type.isAllowance !== false,
@@ -819,9 +897,26 @@ export class PointFlowService implements OnApplicationBootstrap {
                 status: PointAdjustmentStatus.PENDING,
             },
         });
+        const locked = this.periodFlow.isLocked(period);
+        const memberIds = summaries.map((row) => row.memberId);
+        const banks = locked
+            ? new Map()
+            : await this.bankHistory.bankFor(memberIds, period.code);
+        const positions = locked
+            ? new Map<string, string>()
+            : await this.positionsOf(memberIds, period);
         const rows = summaries
             .map((row) => {
                 const member = members.get(row.memberId);
+                const bank = locked
+                    ? {
+                          bankAccount: row.bankAccountSnapshot ?? null,
+                          bankName: row.bankNameSnapshot ?? null,
+                      }
+                    : (banks.get(row.memberId) ?? {
+                          bankAccount: member?.bankAccount ?? null,
+                          bankName: member?.bankName ?? null,
+                      });
                 return {
                     ...row,
                     totalPoints: Number(row.totalPoints),
@@ -832,11 +927,16 @@ export class PointFlowService implements OnApplicationBootstrap {
                     member: member && {
                         _id: member._id,
                         memberCode: member.memberCode,
-                        fullName: row.fullNameSnapshot ?? member.fullName,
+                        fullName: locked
+                            ? (row.fullNameSnapshot ?? member.fullName)
+                            : member.fullName,
                         memberType: member.memberType,
-                        bankAccount:
-                            row.bankAccountSnapshot ?? member.bankAccount,
-                        bankName: row.bankNameSnapshot ?? member.bankName,
+                        position: locked
+                            ? (row.positionSnapshot ?? null)
+                            : (positions.get(row.memberId) ?? null),
+                        bankAccount: showBank ? bank.bankAccount : null,
+                        bankName: bank.bankName,
+                        hasBankAccount: Boolean(bank.bankAccount),
                         status: member.status,
                     },
                 };
@@ -849,6 +949,8 @@ export class PointFlowService implements OnApplicationBootstrap {
                     ),
             );
         return {
+            /** false = người xem không có quyền xem số tài khoản */
+            bankVisible: showBank,
             /** Khoản chi đã ghi sổ quỹ khi Xác nhận đã chi (null nếu chưa chi) */
             payout: await this.payoutExpense(period._id),
             period: this.withLockFlag(period),
@@ -1151,15 +1253,21 @@ export class PointFlowService implements OnApplicationBootstrap {
     // Xuất file chi trả
     // ------------------------------------------------------------------
 
-    async exportAllowance(code: string, format: "xlsx" | "csv", user: User) {
-        // Bảng cơ bản giống màn hình; xuất được cả khi chưa chốt (bản tạm tính)
-        const summary = await this.getSummary(code);
+    async exportAllowance(
+        code: string,
+        format: "xlsx" | "csv",
+        user: User,
+        showBank = false,
+    ) {
+        // Bảng cơ bản giống màn hình; xuất được cả khi chưa chốt (bản tạm tính). Số tài khoản chỉ khi có quyền
+        const summary = await this.getSummary(code, { showBank });
         const rows = summary.rows.map((row, index) => {
             const line: Record<string, string | number> = {
                 STT: index + 1,
                 "Mã HLC": row.member?.memberCode ?? "",
                 "Họ và tên": row.member?.fullName ?? "",
                 Loại: row.member?.memberType === "MENTOR" ? "Mentor" : "Mentee",
+                "Chức vụ": row.member?.position ?? "",
             };
             for (const type of summary.pointTypes)
                 line[type.name] = Number(row.pointsByType?.[type.code] ?? 0);
@@ -1168,7 +1276,7 @@ export class PointFlowService implements OnApplicationBootstrap {
             line["Phụ cấp cơ bản"] = Number(row.baseAllowance);
             line["Bù chênh lệch"] = Number(row.adjustmentAmount ?? 0);
             line["Thành tiền"] = row.amount;
-            line["Số tài khoản"] = row.member?.bankAccount ?? "";
+            if (showBank) line["Số tài khoản"] = row.member?.bankAccount ?? "";
             line["Ngân hàng"] = row.member?.bankName ?? "";
             return line;
         });

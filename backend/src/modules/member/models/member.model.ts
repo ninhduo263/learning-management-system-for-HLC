@@ -58,6 +58,18 @@ export class MemberModel extends Model implements Member {
     @Column({ type: DataType.STRING(255), allowNull: true })
     occupation?: string;
 
+    /** Ngành học: mã các nhóm ngành nghề (danh mục CAREER, chọn nhiều) */
+    @Column({ type: DataType.JSONB, allowNull: true })
+    majorCodes?: string[];
+
+    /** Ngành nghề: mã các nhóm ngành nghề (chọn nhiều) */
+    @Column({ type: DataType.JSONB, allowNull: true })
+    occupationCodes?: string[];
+
+    /** Ngân hàng: mã danh mục BANK (bankName giữ tên hiển thị) */
+    @Column({ type: DataType.STRING(30), allowNull: true })
+    bankCode?: string;
+
     /** Quê quán: mã tỉnh trong danh mục 34 tỉnh, thành phố (Province.code) */
     @Column({ type: DataType.STRING(30), allowNull: true })
     hometownCode?: string;

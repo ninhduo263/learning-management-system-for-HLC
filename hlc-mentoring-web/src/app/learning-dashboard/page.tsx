@@ -47,7 +47,6 @@ export default function LearningDashboardPage() {
   const [quarter, setQuarter] = useState(() => quarterOf(getCurrentTime()).code);
   const [groupId, setGroupId] = useState<string | undefined>();
   const [moduleId, setModuleId] = useState<string | undefined>();
-  const [memberType, setMemberType] = useState<string | undefined>();
   const [data, setData] = useState<LearningAverage | null>(null);
   const [loading, setLoading] = useState(true);
   const [canPropose, setCanPropose] = useState<ProposalType[]>([]);
@@ -62,14 +61,14 @@ export default function LearningDashboardPage() {
     try {
       setData(await dashboardApi.learningAverage({
         ...(mode === 'MONTH' ? { period: month } : { quarter }),
-        groupId, moduleId, memberType
+        groupId, moduleId
       }));
     } catch (error) {
       message.error(errorMessage(error, 'Không tải được dashboard điểm học tập'));
     } finally {
       setLoading(false);
     }
-  }, [mode, month, quarter, groupId, moduleId, memberType, message]);
+  }, [mode, month, quarter, groupId, moduleId, message]);
 
   useEffect(() => {
     let active = true;
@@ -84,7 +83,7 @@ export default function LearningDashboardPage() {
         <li key={row.member._id} className="rank-item">
           <span className="rank-no">{bad ? '!' : index + 1}</span>
           <Avatar name={row.member.fullName} />
-          <span className="rank-name">{row.member.fullName}<span className="block text-xs font-normal text-gray-500">{row.group?.name ?? (row.member.memberType === 'MENTOR' ? 'MTO' : 'Chưa có nhóm')}</span></span>
+          <span className="rank-name">{row.member.fullName}<span className="block text-xs font-normal text-gray-500">{row.group?.name ?? 'Chưa có nhóm'}</span></span>
           <span className={`rank-score${bad ? ' bad' : ''}`}>{fmt(row.average)}</span>
         </li>
       ))}
@@ -93,7 +92,7 @@ export default function LearningDashboardPage() {
 
   return (
     <div className="dash">
-      <DashHeader title="Điểm học tập trung bình" subtitle={data ? `${data.range.label} · tính từ điểm module học tập và điểm recap mentoring (thang 100)` : 'Tính từ điểm module học tập và điểm recap mentoring (thang 100)'}>
+      <DashHeader title="Điểm học tập trung bình" subtitle={`${data ? `${data.range.label} · ` : ''}điểm của từng MTE theo tháng, từ các module được gán và điểm recap mentoring (thang 100)`}>
         <Segmented value={mode} onChange={(value) => setMode(value as 'MONTH' | 'QUARTER')} options={[{ value: 'MONTH', label: 'Theo tháng' }, { value: 'QUARTER', label: 'Theo quý' }]} />
         {mode === 'MONTH' ? <MonthPicker value={month} onChange={setMonth} /> : <Select className="w-40" value={quarter} onChange={setQuarter} options={quarterOptions()} />}
       </DashHeader>
@@ -102,7 +101,6 @@ export default function LearningDashboardPage() {
         <div className="flex flex-wrap items-center gap-3">
           <Select allowClear placeholder="Mọi nhóm MTE" className="w-52" value={groupId} onChange={setGroupId} options={(data?.filters.groups ?? []).map((item) => ({ value: item._id, label: item.name }))} />
           <Select allowClear placeholder="Mọi module" className="w-64" value={moduleId} onChange={setModuleId} options={(data?.filters.modules ?? []).map((item) => ({ value: item._id, label: item.name }))} />
-          <Select allowClear placeholder="MTE và MTO" className="w-40" value={memberType} onChange={setMemberType} options={[{ value: 'MENTEE', label: 'Chỉ MTE' }, { value: 'MENTOR', label: 'Chỉ MTO' }]} />
           <Button onClick={() => void load()}>Tải lại</Button>
         </div>
       </Card>
@@ -164,9 +162,13 @@ export default function LearningDashboardPage() {
                 scroll={{ x: 'max-content' }}
                 locale={{ emptyText: 'Chưa có điểm trong kỳ này' }}
                 columns={[
-                  { title: 'Thành viên', render: (_: unknown, row: AverageMemberRow) => <div className="flex items-center gap-2"><Avatar name={row.member.fullName} /><div><strong>{row.member.fullName}</strong><div className="text-xs text-gray-500">{row.member.memberCode} · {row.member.memberType === 'MENTOR' ? 'MTO' : 'MTE'}</div></div></div> },
+                  { title: 'Thành viên', render: (_: unknown, row: AverageMemberRow) => <div className="flex items-center gap-2"><Avatar name={row.member.fullName} /><div><strong>{row.member.fullName}</strong><div className="text-xs text-gray-500">{row.member.memberCode}</div></div></div> },
                   { title: 'Nhóm', render: (_: unknown, row: AverageMemberRow) => row.group?.name ?? '—' },
-                  { title: 'Điểm TB', sorter: (a: AverageMemberRow, b: AverageMemberRow) => (a.average ?? 0) - (b.average ?? 0), render: (_: unknown, row: AverageMemberRow) => <Progress percent={row.average ?? 0} size={[110, 8]} strokeColor={levelColor(row.average)} format={() => fmt(row.average)} /> },
+                  ...(data.range.months.length > 1 ? data.range.months.map((code) => ({
+                    title: `T${Number(code.slice(5))}`, align: 'right' as const,
+                    render: (_: unknown, row: AverageMemberRow) => fmt(row.months?.[code] ?? null)
+                  })) : []),
+                  { title: data.range.months.length > 1 ? 'TB quý' : 'Điểm TB tháng', sorter: (a: AverageMemberRow, b: AverageMemberRow) => (a.average ?? 0) - (b.average ?? 0), render: (_: unknown, row: AverageMemberRow) => <Progress percent={row.average ?? 0} size={[110, 8]} strokeColor={levelColor(row.average)} format={() => fmt(row.average)} /> },
                   { title: 'Học tập', align: 'right' as const, render: (_: unknown, row: AverageMemberRow) => fmt(row.learningAverage) },
                   { title: 'Recap', align: 'right' as const, render: (_: unknown, row: AverageMemberRow) => fmt(row.recapAverage) },
                   { title: 'Số bài', dataIndex: 'scoredItems', align: 'right' as const },

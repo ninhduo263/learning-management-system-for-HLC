@@ -5,7 +5,8 @@ import { Alert, App, Button, Card, DatePicker, Form, Input, Modal, Select, Space
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import GroupManager from '@/components/GroupManager';
-import RolesPanel from '@/components/RolesPanel';
+import ResponsiveTabs from '@/components/ResponsiveTabs';
+import RolesPanel, { RolePointsPanel } from '@/components/RolesPanel';
 import ActivityLogPanel from '@/components/ActivityLogPanel';
 import DelegationPanel from '@/components/DelegationPanel';
 import SystemConfigPanel from '@/components/SystemConfigPanel';
@@ -77,12 +78,13 @@ export default function AdminOrganizationPage() {
     <div className="space-y-4">
       <Typography.Title level={3} className="!mb-0">Tổ chức & phân quyền</Typography.Title>
       <Card loading={loading}>
-        <Tabs items={[
+        <ResponsiveTabs items={[
           { key: 'mte', label: 'Nhóm MTE', children: <GroupManager kind="MENTEE" /> },
           { key: 'fund', label: 'Nhóm HLC Fund', children: <GroupManager kind="FUND" /> },
-          { key: 'roles', label: 'Vai trò & điểm', children: <RolesPanel /> },
+          { key: 'roles', label: 'Chức vụ & quyền', children: <RolesPanel /> },
+          { key: 'role-points', label: 'Điểm chức vụ', children: <RolePointsPanel /> },
           { key: 'assign', label: 'Chức vụ ban', children: <AssignmentPanel assignments={assignments.filter((row) => !groupIds.has(row.departmentId))} members={members} departments={departments.filter((item) => item.type !== 'GROUP')} positions={positions.filter((item) => !(item as Position & { groupKind?: string | null }).groupKind)} onChanged={load} /> },
-          { key: 'catalog', label: 'Danh sách ban', children: <CatalogPanel departments={departments.filter((item) => item.type !== 'GROUP')} onChanged={load} /> },
+          { key: 'catalog', label: 'Các ban', children: <CatalogPanel departments={departments.filter((item) => item.type !== 'GROUP')} onChanged={load} /> },
           { key: 'delegation', label: 'Ủy quyền', children: <DelegationPanel mode="admin" /> },
           { key: 'logs', label: 'Nhật ký', children: <ActivityLogPanel /> },
           { key: 'config', label: 'Cấu hình', children: <SystemConfigPanel /> }

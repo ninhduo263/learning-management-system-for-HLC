@@ -44,6 +44,12 @@ export class PointAdminController {
         private readonly access: GroupAccessService,
     ) {}
 
+    /** Số tài khoản chỉ hiện với Admin toàn cục và Trưởng ban HLC Fund (quyền xác nhận chi) */
+    private async canSeeBank(user: User) {
+        const { superAdmin, actions } = await this.access.capabilities(user);
+        return superAdmin || actions.has(RolePermission.CONFIRM_PAYOUT);
+    }
+
     /** Kế toán (chỉ VIEW_PAYOUT): chỉ xuất bảng đã chốt */
     private async assertExport(user: User, code: string) {
         const { actions } = await this.access.capabilities(user);
@@ -129,8 +135,11 @@ export class PointAdminController {
     }
 
     @Get("periods/:code/report")
-    report(@Param("code") code: string) {
-        return this.flowService.report(periodCode(code));
+    async report(@ReqUser() user: User, @Param("code") code: string) {
+        return this.flowService.report(
+            periodCode(code),
+            await this.canSeeBank(user),
+        );
     }
 
     @Get("periods/:code/group-completion")
@@ -139,8 +148,10 @@ export class PointAdminController {
     }
 
     @Get("periods/:code/summary")
-    getSummary(@Param("code") code: string) {
-        return this.flowService.getSummary(periodCode(code));
+    async getSummary(@ReqUser() user: User, @Param("code") code: string) {
+        return this.flowService.getSummary(periodCode(code), {
+            showBank: await this.canSeeBank(user),
+        });
     }
 
     @Get("periods/:code/members/:memberId")
@@ -208,6 +219,7 @@ export class PointAdminController {
             periodCode(code),
             format === "csv" ? "csv" : "xlsx",
             user,
+            await this.canSeeBank(user),
         );
         res.setHeader("Content-Type", file.contentType);
         res.setHeader(

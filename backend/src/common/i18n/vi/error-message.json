@@ -123,5 +123,9 @@
     "error-national-id-duplicate": "Số CCCD đã thuộc hồ sơ {code} - {name}: không thể tạo trùng",
     "error-member-code-conflict": "Không sinh được mã thành viên: mã {code} đã tồn tại. Cần rà soát dữ liệu mã trước khi thêm",
     "error-member-group-required": "Thành viên MTE mới phải được gán vào một nhóm MTE",
-    "error-bank-name-invalid": "Ngân hàng không có trong danh sách ngân hàng đang hoạt động"
+    "error-bank-name-invalid": "Ngân hàng không có trong danh sách ngân hàng đang hoạt động",
+    "error-catalog-invalid": "Giá trị không có trong danh mục {type} (hoặc đã bị ẩn)",
+    "error-profile-request-not-pending": "Yêu cầu này đã được xử lý",
+    "error-profile-reject-reason": "Từ chối cần ghi lý do",
+    "error-profile-approver-forbidden": "Bạn chưa được giao quyền duyệt thay đổi hồ sơ"
 }

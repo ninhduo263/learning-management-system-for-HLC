@@ -2,7 +2,6 @@ import { ApiError } from "@config/exception/api-error";
 import { MemberStatus, MemberType } from "@module/member/common/constant";
 import { MemberModel } from "@module/member/models/member.model";
 import { ProvinceModel } from "@module/member/models/province.model";
-import { normalizePlace } from "@module/member/services/province-catalog";
 import { GroupKind } from "@module/organization/common/constant";
 import { GroupAccessService } from "@module/organization/flow/group-access.service";
 import { GroupFlowService } from "@module/organization/flow/group-flow.service";
@@ -12,6 +11,7 @@ import { User } from "@module/user/entities/user.entity";
 import { ActivityLogService } from "@module/activity-log/activity-log.service";
 import { Injectable } from "@nestjs/common";
 import { TimeService } from "@module/time/time.service";
+import { CatalogService } from "@module/catalog/catalog.service";
 import { vnDateKey } from "@common/utils/vn-date.util";
 import { InjectModel } from "@nestjs/sequelize";
 import { Op } from "sequelize";
@@ -31,37 +31,6 @@ export const SUGGEST_CRITERIA = [
 ] as const;
 type Criterion = (typeof SUGGEST_CRITERIA)[number];
 
-/** Từ có nghĩa (bỏ từ nối) để so ngành học / ngành nghề gần nhau */
-const STOP = new Set([
-    "nganh",
-    "va",
-    "cong",
-    "nghe",
-    "ky",
-    "thuat",
-    "quan",
-    "tri",
-    "hoc",
-    "chuyen",
-    "linh",
-    "vuc",
-    "the",
-    "of",
-    "and",
-]);
-const tokens = (value?: string | null) =>
-    new Set(
-        normalizePlace(value ?? "")
-            .split(" ")
-            .filter((item) => item.length > 1 && !STOP.has(item)),
-    );
-const near = (a?: string | null, b?: string | null) => {
-    if (!a?.trim() || !b?.trim()) return false;
-    if (normalizePlace(a) === normalizePlace(b)) return true;
-    const left = tokens(a);
-    return [...tokens(b)].some((item) => left.has(item));
-};
-
 /**
  * Gợi ý ghép cặp MTE - MTO theo hồ sơ và gợi ý chia nhóm cân bằng. Chấm điểm tương đồng đơn giản, tính tức
  * thời (quy mô ~40 MTE x 30 MTO chỉ vài mili-giây). Hệ thống chỉ gợi ý; Admin quyết định và tự ghép.
@@ -74,6 +43,7 @@ export class MentoringSuggestService {
         private readonly groupFlow: GroupFlowService,
         private readonly activityLog: ActivityLogService,
         private readonly timeService: TimeService,
+        private readonly catalogs: CatalogService,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
         @InjectModel(ProvinceModel)
@@ -174,12 +144,23 @@ export class MentoringSuggestService {
                     item.priority,
                 );
         }
+        // Nhóm ngành nghề (chọn nhiều): xét mức trùng khớp giữa các nhóm đã chọn
+        const careers = new Map(
+            (await this.catalogs.list("CAREER", true)).map((row) => [
+                row.code,
+                row.name,
+            ]),
+        );
+        const careerNames = (codes?: string[] | null) =>
+            (codes ?? []).map((code) => careers.get(code) ?? code);
+        const overlap = (left?: string[] | null, right?: string[] | null) =>
+            (left ?? []).filter((code) => (right ?? []).includes(code));
         const brief = (item: MemberModel) => ({
             _id: item._id,
             memberCode: item.memberCode,
             fullName: item.fullName,
-            major: item.major ?? null,
-            occupation: item.occupation ?? null,
+            major: careerNames(item.majorCodes).join(", ") || null,
+            occupation: careerNames(item.occupationCodes).join(", ") || null,
             address: item.addressCode
                 ? (provinceName.get(item.addressCode) ?? item.addressCode)
                 : null,
@@ -193,23 +174,38 @@ export class MentoringSuggestService {
                 .map((mentor) => {
                     let score = 0;
                     const reasons: string[] = [];
-                    if (
-                        criteria.has("major") &&
-                        near(mentee.major, mentor.major)
-                    ) {
-                        score += 3;
-                        reasons.push(`Cùng ngành học (${mentor.major})`);
+                    // Mức trùng khớp: mỗi nhóm trùng cộng điểm, tối đa 3 nhóm mỗi tiêu chí
+                    if (criteria.has("major")) {
+                        const same = overlap(
+                            mentee.majorCodes,
+                            mentor.majorCodes,
+                        );
+                        if (same.length) {
+                            score += 2 + Math.min(same.length, 3);
+                            reasons.push(
+                                `Cùng ngành học: ${careerNames(same).join(", ")}`,
+                            );
+                        }
                     }
                     if (criteria.has("occupation")) {
-                        if (near(mentee.occupation, mentor.occupation)) {
-                            score += 3;
+                        const same = overlap(
+                            mentee.occupationCodes,
+                            mentor.occupationCodes,
+                        );
+                        const cross = overlap(
+                            mentee.majorCodes,
+                            mentor.occupationCodes,
+                        ).filter((code) => !same.includes(code));
+                        if (same.length) {
+                            score += 2 + Math.min(same.length, 3);
                             reasons.push(
-                                `Cùng ngành nghề (${mentor.occupation})`,
+                                `Cùng ngành nghề: ${careerNames(same).join(", ")}`,
                             );
-                        } else if (near(mentee.major, mentor.occupation)) {
-                            score += 2;
+                        }
+                        if (cross.length) {
+                            score += 1 + Math.min(cross.length, 2);
                             reasons.push(
-                                `Ngành học của MTE gần ngành nghề của MTO (${mentor.occupation})`,
+                                `Ngành học của MTE trùng ngành nghề của MTO: ${careerNames(cross).join(", ")}`,
                             );
                         }
                     }
@@ -265,8 +261,8 @@ export class MentoringSuggestService {
                 pairedMentorIds: pairedMentees.get(mentee._id) ?? [],
                 /** Hồ sơ còn thiếu thông tin dùng để gợi ý */
                 missingProfile: [
-                    !mentee.major && "ngành học",
-                    !mentee.occupation && "ngành nghề",
+                    !mentee.majorCodes?.length && "ngành học",
+                    !mentee.occupationCodes?.length && "ngành nghề",
                     !mentee.addressCode && "địa chỉ",
                 ].filter(Boolean),
                 candidates,

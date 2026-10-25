@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Form, Input, Modal, Select, Switch, Table, Tag, Typography } from 'antd';
 import { errorMessage } from '@/lib/api';
+import CatalogManager from '@/components/CatalogManager';
 import { provinceApi, systemConfigApi, type Province, type SystemConfig } from '@/services/hlcApi';
 
 /** Công tắc cấu hình (Admin toàn cục) và danh mục 34 tỉnh, thành phố */
@@ -57,6 +58,10 @@ export default function SystemConfigPanel() {
           </div>
         </div>
       </Card>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <CatalogManager type="CAREER" />
+        <CatalogManager type="BANK" />
+      </div>
       <Card size="small" title={`Danh mục tỉnh, thành phố (${active.length} đang dùng)`} extra={<Button size="small" onClick={() => { form.resetFields(); form.setFieldsValue({ isActive: true, aliases: [] }); setEditing('new'); }}>Thêm đơn vị</Button>}>
         <Alert className="!mb-3" type="info" showIcon title="Hồ sơ lưu mã đơn vị nên đổi tên không làm hỏng dữ liệu đã lưu. Khi gộp đơn vị, chọn “Gộp vào”: hồ sơ của đơn vị cũ tự chuyển sang mã mới." />
         <Table<Province>

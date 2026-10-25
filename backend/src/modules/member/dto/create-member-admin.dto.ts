@@ -1,4 +1,5 @@
 import {
+    IsArray,
     IsBoolean,
     IsEmail,
     IsEnum,
@@ -51,9 +52,20 @@ export class CreateMemberAdminDto {
     @IsOptional()
     bankAccount?: string;
 
+    /** Mã ngân hàng trong danh mục (bắt buộc khi có số tài khoản) */
     @IsString()
     @IsOptional()
-    bankName?: string;
+    bankCode?: string;
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    majorCodes?: string[];
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    occupationCodes?: string[];
 
     /** Nhóm: bắt buộc với MTE (nhóm MTE); MTO có thể chọn nhóm HLC Fund */
     @IsString()

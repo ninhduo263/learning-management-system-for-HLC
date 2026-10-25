@@ -12,7 +12,7 @@ import { InjectModel } from "@nestjs/sequelize";
 import { randomInt } from "crypto";
 import { Transaction } from "sequelize";
 import { Sequelize } from "sequelize-typescript";
-import { VN_BANKS } from "../common/banks";
+import { CatalogService } from "@module/catalog/catalog.service";
 import { MemberStatus, MemberType } from "../common/constant";
 import { CreateMemberAdminDto } from "../dto/create-member-admin.dto";
 import { MemberModel } from "../models/member.model";
@@ -66,6 +66,7 @@ export class MemberAdminService {
         private readonly provinces: ProvinceService,
         private readonly groupFlow: GroupFlowService,
         private readonly activityLog: ActivityLogService,
+        private readonly catalogs: CatalogService,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
         @InjectModel(UserModel)
@@ -179,8 +180,19 @@ export class MemberAdminService {
         const fullName = dto.fullName.trim().replace(/\s+/g, " ");
         await this.provinces.assertCode(dto.hometownCode);
         await this.provinces.assertCode(dto.addressCode);
-        if (dto.bankName && !VN_BANKS.includes(dto.bankName))
+        const bank = dto.bankAccount
+            ? await this.catalogs.bank(dto.bankCode).catch(() => null)
+            : null;
+        if (dto.bankAccount && !bank)
             throw ApiError.BadRequest("error-bank-name-invalid");
+        const majorCodes = await this.catalogs.resolve(
+            "CAREER",
+            dto.majorCodes ?? [],
+        );
+        const occupationCodes = await this.catalogs.resolve(
+            "CAREER",
+            dto.occupationCodes ?? [],
+        );
         if (dto.memberType === MemberType.MENTEE && !dto.groupId)
             throw ApiError.BadRequest("error-member-group-required");
         await this.assertNationalIdFree(dto.nationalId);
@@ -233,7 +245,10 @@ export class MemberAdminService {
                     email: dto.email.trim(),
                     nationalId: dto.nationalId || null,
                     bankAccount: dto.bankAccount || null,
-                    bankName: dto.bankAccount ? dto.bankName || null : null,
+                    bankCode: bank?.code ?? null,
+                    bankName: bank?.display ?? null,
+                    majorCodes,
+                    occupationCodes,
                     status: MemberStatus.ACTIVE,
                     joinedAt: vnDateKey(this.timeService.now()),
                     userId: account._id,
@@ -301,7 +316,10 @@ export class MemberAdminService {
         };
     }
 
-    banks() {
-        return VN_BANKS;
+    /** Ngân hàng đang dùng (danh mục BANK) */
+    async banks() {
+        return (await this.catalogs.list("BANK")).map(
+            (row) => row.shortName || row.name,
+        );
     }
 }
