@@ -638,6 +638,8 @@ export interface MyAccess {
   moduleIds: string[] | null;
   leaderGroups: LeaderGroupAccess[];
   mustChangePassword: boolean;
+  /** Phạm vi có quyền GHI (scopes gồm cả phạm vi chỉ xem như POINT của Trưởng ban MTE) */
+  writeScopes: AdminScope[];
   profileUrlEditable: boolean;
 }
 export interface PermissionView {

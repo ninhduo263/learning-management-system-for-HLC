@@ -18,6 +18,7 @@ import {
 import { Member } from "@module/member/entities/member.entity";
 import { MemberModel } from "@module/member/models/member.model";
 import { PeriodFlowService } from "@module/period/flow/period-flow.service";
+import { AdminScope } from "@module/permission/common/constant";
 import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
 import { TimeService } from "@module/time/time.service";
 import { SystemRole } from "@module/user/common/constant";
@@ -124,6 +125,19 @@ export class LearningFlowService {
         const ids = await this.manageableModuleIds(user);
         if (ids && !ids.includes(moduleId))
             throw ApiError.Forbidden("error-learning-module-forbidden");
+    }
+
+    /**
+     * Cấu hình module (sửa form, tiêu chí, đối tượng): Admin toàn cục, Trưởng ban Học tập (mọi module) hoặc Admin module
+     * của đúng module đó. Trưởng ban MTE chỉ xem và duyệt bài, không cấu hình module.
+     */
+    async assertCanConfigure(user: User, moduleId: string) {
+        if (user.systemRole === SystemRole.ADMIN) return;
+        const caps = await this.groupAccess.capabilities(user);
+        if (caps.writeScopes.has(AdminScope.LEARNING)) return;
+        if (Array.isArray(caps.moduleIds) && caps.moduleIds.includes(moduleId))
+            return;
+        throw ApiError.Forbidden("error-learning-module-forbidden");
     }
 
     private async getModule(id: string, t?: Transaction) {
@@ -394,7 +408,7 @@ export class LearningFlowService {
     }
 
     async updateModule(user: User, id: string, dto: ModuleConfigDto) {
-        await this.assertCanManage(user, id);
+        await this.assertCanConfigure(user, id);
         await this.getModule(id);
         this.validateConfig(dto);
         await this.sequelize.transaction(async (t) => {

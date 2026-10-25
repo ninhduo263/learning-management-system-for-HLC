@@ -1,5 +1,10 @@
 import { ApiRecordResponse } from "@common/decorator/api.decorator";
-import { Authorization, ReqUser } from "@common/decorator/auth.decorator";
+import {
+    AllowSystemRoles,
+    Authorization,
+    ReqUser,
+} from "@common/decorator/auth.decorator";
+import { SystemRole } from "@module/user/common/constant";
 import { CreateNotificationDto } from "@module/notification/dto/create-notification.dto";
 import { NotificationService } from "@module/notification/notification.service";
 import { User } from "@module/user/entities/user.entity";
@@ -10,6 +15,8 @@ import { Notification } from "./entities/notification.entity";
 @Controller("notification")
 @ApiTags("notification")
 @Authorization()
+// Chỉ Admin tạo thông báo: trước đây mọi tài khoản đều gửi được thông báo cho người khác
+@AllowSystemRoles(SystemRole.ADMIN)
 export class NotificationController {
     constructor(private readonly notificationService: NotificationService) {}
 

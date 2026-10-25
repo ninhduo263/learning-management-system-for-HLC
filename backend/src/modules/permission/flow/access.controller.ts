@@ -46,6 +46,8 @@ export class AccessController {
             systemRole: user.systemRole,
             isSuperAdmin,
             scopes: [...capabilities.scopes],
+            /** Phạm vi có quyền GHI (scopes gồm cả phạm vi chỉ xem): FE dùng để ẩn nút sửa của người chỉ được xem */
+            writeScopes: [...capabilities.writeScopes],
             /** Hành động cấp hệ thống: chốt kỳ, sửa điểm, xem bảng chi trả, xuất dữ liệu cá nhân, xem nhật ký */
             actions: [...capabilities.actions],
             /** null = mọi module (Admin tổng, Trưởng ban học tập / MTE); Admin module nhỏ: các module được giao */

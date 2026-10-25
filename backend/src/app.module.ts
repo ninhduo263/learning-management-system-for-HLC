@@ -25,7 +25,6 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { CommonProviderModule } from "./modules/common-provider/common-provider.module";
 import { DataPartitionModule } from "./modules/data-partition/data-partition.module";
 import { DataProcessModule } from "./modules/data-process/data-process.module";
-import { EventAccountModule } from "./modules/event-account/event-account.module";
 import { FileModule } from "./modules/file/file.module";
 import { ImportSessionModule } from "./modules/import-session/import-session.module";
 import { NotificationModule } from "./modules/notification/notification.module";
@@ -34,16 +33,12 @@ import { QuyTacMaModule } from "./modules/quy-tac-ma/quy-tac-ma.module";
 import { SettingModule } from "./modules/setting/setting.module";
 import { TopicModule } from "./modules/topic/topic.module";
 import { UserModule } from "./modules/user/user.module";
-import { EventModule } from "./modules/event/event.module";
-import { EventLogModule } from "./modules/event-log/event-log.module";
-import { WebSocketModule } from "./modules/websocket/websocket.module";
 
 @Module({
     imports: [
         ...DefaultModules,
         AuthModule,
         UserModule,
-        EventAccountModule,
         OneSignalModule,
         NotificationModule,
         TopicModule,
@@ -58,9 +53,8 @@ import { WebSocketModule } from "./modules/websocket/websocket.module";
         DataProcessModule,
         DataPartitionModule,
         CommonProviderModule,
-        EventModule,
-        EventLogModule,
-        WebSocketModule,
+        // Đã gỡ EventAccountModule, EventModule, EventLogModule, WebSocketModule: bộ mẫu check-in sự kiện của khung dự án,
+        // HLC không dùng và các controller này không có kiểm tra quyền (ai cũng ghi / xóa được).
         MemberModule,
         OrganizationModule,
         PeriodModule,

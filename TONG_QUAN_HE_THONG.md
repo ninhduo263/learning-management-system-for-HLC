@@ -40,7 +40,7 @@ Không còn chức năng "quyền module" riêng. Mỗi chức vụ có sẵn b�
 | **Trưởng ban HLC Fund** | Toàn quyền thu chi: duyệt quỹ, sửa đơn giá, điều chỉnh bù, **chốt kỳ**, **xác nhận đã chi**, dashboard thu chi, **duyệt đề xuất điểm** | Không tự có quyền mentoring / học tập |
 | **Trưởng ban Học tập** | Toàn bộ module học tập, tạo module, chỉ định Admin module, **dashboard điểm học tập trung bình** | Mentoring **chỉ xem**; muốn điều chỉnh thì đề xuất cho Trưởng ban Mentoring |
 | **Admin module nhỏ** ("Admin module Đọc sách"...) | Quản lý riêng một module, xem dashboard điểm của module đó | Không thấy module khác |
-| **Trưởng ban MTE** | Quản lý mọi nhóm MTE, duyệt / nộp hộ trong phạm vi MTE, xem điểm phụ cấp và mentoring | Sửa điểm → đề xuất Trưởng ban HLC Fund; đổi cặp → đề xuất Trưởng ban Mentoring |
+| **Trưởng ban MTE** | Quản lý mọi nhóm MTE, duyệt / nộp hộ trong phạm vi MTE, duyệt bài học tập của MTE, xem điểm phụ cấp và mentoring | Sửa điểm → đề xuất Trưởng ban HLC Fund; đổi cặp → đề xuất Trưởng ban Mentoring; không tạo / cấu hình module |
 | **Leader / Phó nhóm MTE** | Xem tiến độ, duyệt, chấm bài của nhóm mình | Recap MTO chỉ xem; duyệt hộ khi được ủy quyền |
 | **Leader / Phó nhóm HLC Fund** | Duyệt, nộp hộ, xem tiến độ minh chứng của thầy cô và MTO trong nhóm | Không phải thành viên nhóm |
 

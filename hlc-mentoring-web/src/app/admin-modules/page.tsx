@@ -23,6 +23,8 @@ export default function AdminModulesPage() {
   const [modules, setModules] = useState<LearningModule[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [canCreate, setCanCreate] = useState(false);
+  // Module được cấu hình (sửa, gán đối tượng): Trưởng ban Học tập / Admin: tất cả; Admin module nhỏ: module của mình; Trưởng ban MTE: không
+  const [configurableIds, setConfigurableIds] = useState<string[]>([]);
   const [audienceOf, setAudienceOf] = useState<LearningModule | null>(null);
   const [adminsOf, setAdminsOf] = useState<LearningModule | null>(null);
   const [directory, setDirectory] = useState<DirectoryMember[]>([]);
@@ -40,7 +42,9 @@ export default function AdminModulesPage() {
     try {
       const [list, access] = await Promise.all([learningApi.modules(), accessApi.mine()]);
       setModules(list);
-      setCanCreate(access.isSuperAdmin || access.scopes.includes('LEARNING'));
+      const configureAll = access.isSuperAdmin || access.writeScopes.includes('LEARNING');
+      setCanCreate(configureAll);
+      setConfigurableIds(configureAll ? list.map((item) => item._id) : Array.isArray(access.moduleIds) ? access.moduleIds : []);
       setModuleId((current) => current || list.find((item) => item.pendingReviews)?._id || list[0]?._id || '');
       if (access.isSuperAdmin) setDepartments(await departmentApi.many());
       if (access.isSuperAdmin || access.scopes.includes('LEARNING')) {
@@ -131,7 +135,7 @@ export default function AdminModulesPage() {
                 {TARGET_LABEL[row.targetMemberType]}
                 {!row.isRecapModule && (
                   <div>
-                    <Button size="small" type="link" className="!px-0" onClick={() => setAudienceOf(row)}>
+                    <Button size="small" type="link" className="!px-0" disabled={!configurableIds.includes(row._id)} onClick={() => setAudienceOf(row)}>
                       {row.audienceMode === 'SELECTED' ? <Tag color="orange">Chỉ người được gán</Tag> : 'Gán cho người cụ thể'}
                     </Button>
                   </div>
@@ -153,7 +157,7 @@ export default function AdminModulesPage() {
           },
           { title: 'Chờ duyệt', dataIndex: 'pendingReviews', render: (value: number, row: LearningModule) => value ? <Button size="small" type="link" onClick={() => { setModuleId(row._id); setTab('review'); }}>{value} bài</Button> : 0 },
           { title: 'Trạng thái', dataIndex: 'isActive', render: (value: boolean) => value ? <Tag color="green">Đang mở</Tag> : <Tag>Tạm tắt</Tag> },
-          { title: '', render: (_: unknown, row: LearningModule) => <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(row)}>Sửa</Button> }
+          { title: '', render: (_: unknown, row: LearningModule) => configurableIds.includes(row._id) ? <Button size="small" icon={<EditOutlined />} onClick={() => openEditor(row)}>Sửa</Button> : <Tag>Chỉ xem và duyệt bài</Tag> }
         ]}
       />
     </div>

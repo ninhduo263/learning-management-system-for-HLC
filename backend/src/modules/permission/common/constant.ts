@@ -39,10 +39,11 @@ export const SCOPE_IMPLIES: Record<string, string[]> = {
 };
 
 /**
- * Phạm vi bao hàm cả quyền GHI. Trưởng ban MTE vẫn quản lý học tập (module, duyệt bài) như vòng 4, Trưởng ban Học tập
- * quản lý mọi module. KHÔNG gồm POINT và MENTORING_VIEW: điểm phụ cấp và mentoring chỉ xem, muốn sửa phải đề xuất.
+ * Phạm vi bao hàm cả quyền GHI. Trưởng ban MTE duyệt bài học tập của MTE (LEARNING_MODULE) nhưng KHÔNG tạo / cấu hình
+ * module, không chỉ định Admin module (đó là việc của Trưởng ban Học tập: scope LEARNING). KHÔNG gồm POINT và
+ * MENTORING_VIEW: điểm phụ cấp và mentoring chỉ xem, muốn sửa phải đề xuất.
  */
 export const SCOPE_WRITE_IMPLIES: Record<string, string[]> = {
-    [AdminScope.MENTEE]: [AdminScope.LEARNING, AdminScope.LEARNING_MODULE],
+    [AdminScope.MENTEE]: [AdminScope.LEARNING_MODULE],
     [AdminScope.LEARNING]: [AdminScope.LEARNING_MODULE],
 };

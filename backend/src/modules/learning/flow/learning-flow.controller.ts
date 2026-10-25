@@ -163,7 +163,7 @@ export class LearningFlowController {
         @Param("id") id: string,
         @Body() dto: ModuleAudienceDto,
     ) {
-        await this.flowService.assertCanManage(user, id);
+        await this.flowService.assertCanConfigure(user, id);
         return this.audience.save(user, id, dto);
     }
 
