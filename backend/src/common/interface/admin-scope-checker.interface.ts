@@ -2,5 +2,9 @@
 export const ADMIN_SCOPE_CHECKER = "AdminScopeChecker";
 
 export interface AdminScopeChecker {
-    hasScope(userId: string, scope: string): Promise<boolean>;
+    /**
+     * `write = true` khi request thay đổi dữ liệu (POST / PUT / PATCH / DELETE): chỉ tính phạm vi được cấp thật sự
+     * (hoặc bao hàm quyền ghi), không tính phạm vi "chỉ xem" được bao hàm.
+     */
+    hasScope(userId: string, scope: string, write?: boolean): Promise<boolean>;
 }

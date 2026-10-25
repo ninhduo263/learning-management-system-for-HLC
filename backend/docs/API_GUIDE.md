@@ -202,6 +202,8 @@ Admin tổng cấp thêm quyền cho một tài khoản bất kỳ, kể cả me
 | `LEARNING_MODULE` | API quản lý `/learning/modules…`, `/learning/submissions/{id}/review`, thư viện (mục 11.5) | Chỉ với module ghi trong `moduleId`. Từ vòng 6 không cấp riêng nữa: Admin module nhỏ có quyền này qua **chức vụ** (mục 11.17) |
 | `MENTORING_VIEW` | Các API mentoring chỉ **đọc** (`GET /mentoring/quarters`, `/board`, `/reports/quarters`, `/pair-logs`, `/schedule-logs`, `/members`) | Không cấp trực tiếp; được bao hàm bởi `MENTORING`, `LEARNING`, `MENTEE` (mục 11.17) |
 
+**Quyền XEM khác quyền GHI.** Có phạm vi do được *bao hàm* (ví dụ Trưởng ban MTE có `POINT` để xem điểm phụ cấp, Trưởng ban Học tập / MTE có `MENTORING_VIEW`) chỉ cho phép **đọc**: guard chỉ chấp nhận các request `POST / PUT / PATCH / DELETE` khi người gọi có phạm vi được **cấp thật sự** (trực tiếp hoặc theo chức vụ) hoặc phạm vi bao hàm quyền ghi (`SCOPE_WRITE_IMPLIES`: Trưởng ban MTE → học tập; Trưởng ban Học tập → module). Nhờ vậy người chỉ được xem không sửa được dữ liệu qua các API CRUD chung (`point-type`, `point-rule`...). Route POST thực chất chỉ đọc (ví dụ `POST /points/periods/{code}/ensure`) đánh dấu `@ReadOnlyOperation()`. `GET /access/me` trả `scopes` (để xem) và chỉ dùng `actions` để quyết định nút thao tác.
+
 ### 4.3 Bảng quyền hiện tại
 
 | Nhóm API | Admin tổng | Có scope tương ứng | Mentor / Mentee thường |

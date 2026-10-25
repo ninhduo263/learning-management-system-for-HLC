@@ -33,7 +33,12 @@ export class AdminPermissionService
      * (Position.adminScope), phạm vi bao hàm (Trưởng ban MTE gồm điểm phụ cấp và học tập), hoặc
      * hành động cấp hệ thống (chốt kỳ, sửa điểm, xem bảng chi trả -> vào được màn hình điểm phụ cấp).
      */
-    async hasScope(userId: string, scope: string): Promise<boolean> {
+    async hasScope(
+        userId: string,
+        scope: string,
+        write = false,
+    ): Promise<boolean> {
+        // Phạm vi cấp trực tiếp (bảng admin-permission) có đủ quyền xem và ghi
         if (
             await this.adminPermissionRepository.exists({
                 userId,
@@ -45,6 +50,9 @@ export class AdminPermissionService
             _id: userId,
             systemRole: undefined,
         });
-        return capabilities.scopes.has(scope);
+        // Request đổi dữ liệu: chỉ tính phạm vi có quyền GHI (phạm vi chỉ xem như POINT của Trưởng ban MTE thì không)
+        return (write ? capabilities.writeScopes : capabilities.scopes).has(
+            scope,
+        );
     }
 }

@@ -18,7 +18,8 @@ export class PointAdjustmentController extends BaseControllerFactory<PointAdjust
     PointAdjustmentConditionDto,
     CreatePointAdjustmentDto,
     UpdatePointAdjustmentDto,
-    CrudControllerConfig(),
+    // Chỉ đọc: điều chỉnh điểm ghi qua /points/periods/:code/adjustments (kiểm tra kỳ chốt, quyền sửa điểm, nhật ký)
+    CrudControllerConfig({ readOnly: true }),
 ) {
     constructor(
         private readonly pointAdjustmentService: PointAdjustmentService,

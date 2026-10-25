@@ -30,6 +30,15 @@ export const ADMIN_SCOPE_METADATA = "admin-scope";
 export const AllowAdminScope = (scope: AdminScope) =>
     SetMetadata(ADMIN_SCOPE_METADATA, scope);
 
+export const READ_ONLY_OPERATION_METADATA = "read-only-operation";
+
+/**
+ * Đánh dấu route POST thực chất chỉ đọc / khởi tạo idempotent (ví dụ mở kỳ điểm để xem). Guard không coi là thao tác
+ * ghi nên người chỉ được XEM (phạm vi bao hàm) vẫn gọi được.
+ */
+export const ReadOnlyOperation = () =>
+    SetMetadata(READ_ONLY_OPERATION_METADATA, true);
+
 export const ENABLE_DATA_PARTITION_METADATA = "enable-data-partition";
 export const REQUIRE_DATA_PARTITION_METADATA = "require-data-partition";
 

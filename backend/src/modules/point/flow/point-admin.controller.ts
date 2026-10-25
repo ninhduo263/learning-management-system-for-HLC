@@ -2,6 +2,7 @@ import {
     AllowAdminScope,
     AllowSystemRoles,
     Authorization,
+    ReadOnlyOperation,
     ReqUser,
 } from "@common/decorator/auth.decorator";
 import { AdminScope } from "@module/permission/common/constant";
@@ -69,7 +70,9 @@ export class PointAdminController {
         return this.flowService.listPeriods();
     }
 
+    /** Mở kỳ để xem (idempotent): người chỉ được xem điểm (Trưởng ban MTE) vẫn gọi được */
     @Post("periods/:code/ensure")
+    @ReadOnlyOperation()
     ensurePeriod(@Param("code") code: string) {
         return this.flowService.ensurePeriod(periodCode(code));
     }

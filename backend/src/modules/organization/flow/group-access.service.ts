@@ -8,7 +8,11 @@ import { InjectModel } from "@nestjs/sequelize";
 import { Op } from "sequelize";
 import { ApiError } from "@config/exception/api-error";
 import { AdminPermissionModel } from "@module/permission/models/admin-permission.model";
-import { AdminScope, SCOPE_IMPLIES } from "@module/permission/common/constant";
+import {
+    AdminScope,
+    SCOPE_IMPLIES,
+    SCOPE_WRITE_IMPLIES,
+} from "@module/permission/common/constant";
 import {
     DepartmentType,
     GLOBAL_PERMISSIONS,
@@ -57,8 +61,10 @@ export interface LeaderGroup {
 export interface Capabilities {
     superAdmin: boolean;
     memberId: string | null;
-    /** Phạm vi quản trị (đã gồm phạm vi được bao hàm) */
+    /** Phạm vi quản trị để XEM (đã gồm phạm vi được bao hàm, kể cả phạm vi chỉ xem) */
     scopes: Set<string>;
+    /** Phạm vi có quyền GHI (POST / PUT / PATCH / DELETE qua các API CRUD chung) */
+    writeScopes: Set<string>;
     /** Hành động cấp hệ thống (GLOBAL_PERMISSIONS) */
     actions: Set<string>;
     /** Module học tập được quản lý: null = mọi module (Admin toàn cục, Trưởng ban Học tập, Trưởng ban MTE) */
@@ -418,6 +424,7 @@ export class GroupAccessService {
                 superAdmin: true,
                 memberId: null,
                 scopes: new Set(all),
+                writeScopes: new Set(all),
                 actions: new Set(GLOBAL_PERMISSIONS),
                 moduleIds: null,
             } as Capabilities;
@@ -490,10 +497,24 @@ export class GroupAccessService {
               ].filter(Boolean);
         // Admin module học tập nhỏ vào được màn hình học tập
         if (moduleIds?.length) scopes.add(AdminScope.LEARNING_MODULE);
+        // Phạm vi có quyền GHI: được cấp thật sự (trực tiếp / chức vụ) và phạm vi bao hàm quyền ghi. Phạm vi chỉ XEM
+        // (POINT của Trưởng ban MTE, MENTORING_VIEW) không nằm ở đây nên không ghi được qua các API CRUD chung.
+        const writeScopes = new Set<string>(directScopes);
+        for (const scope of [...directScopes])
+            for (const implied of SCOPE_WRITE_IMPLIES[scope] ?? [])
+                writeScopes.add(implied);
+        if (
+            actions.has(RolePermission.EDIT_POINTS) ||
+            actions.has(RolePermission.LOCK_PERIOD) ||
+            actions.has(RolePermission.CONFIRM_PAYOUT)
+        )
+            writeScopes.add(AdminScope.POINT);
+        if (moduleIds?.length) writeScopes.add(AdminScope.LEARNING_MODULE);
         return {
             superAdmin: false,
             memberId: member?._id ?? null,
             scopes,
+            writeScopes,
             actions,
             moduleIds,
         } as Capabilities;

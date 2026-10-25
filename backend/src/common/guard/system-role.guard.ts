@@ -1,5 +1,8 @@
 import { RequestAuthData } from "@common/constant/class/request-auth-data";
-import { ADMIN_SCOPE_METADATA } from "@common/decorator/auth.decorator";
+import {
+    ADMIN_SCOPE_METADATA,
+    READ_ONLY_OPERATION_METADATA,
+} from "@common/decorator/auth.decorator";
 import {
     ADMIN_SCOPE_CHECKER,
     AdminScopeChecker,
@@ -97,9 +100,24 @@ export class SystemRoleGuard implements CanActivate {
                 ADMIN_SCOPE_METADATA,
                 [context.getHandler(), context.getClass()],
             );
+            // Request đổi dữ liệu chỉ qua được bằng phạm vi có quyền GHI; phạm vi "chỉ xem" (được bao hàm) chỉ đọc
+            const method = context
+                .switchToHttp()
+                .getRequest<Request>()
+                .method.toUpperCase();
+            const readOnlyRoute = this.reflector.get<boolean>(
+                READ_ONLY_OPERATION_METADATA,
+                context.getHandler(),
+            );
+            const write =
+                !["GET", "HEAD", "OPTIONS"].includes(method) && !readOnlyRoute;
             if (
                 adminScope &&
-                (await this.adminScopeChecker?.hasScope(user._id, adminScope))
+                (await this.adminScopeChecker?.hasScope(
+                    user._id,
+                    adminScope,
+                    write,
+                ))
             ) {
                 return true;
             }
