@@ -246,6 +246,9 @@ export interface Member {
   dateOfBirth: string | null;
   gender: string | null;
   phone: string | null;
+  /** Ẩn số điện thoại (và Zalo) với người ngoài cặp và nhóm; mặc định false */
+  hidePhone?: boolean;
+  phoneHidden?: boolean;
   email: string | null;
   profileUrl: string | null;
   bankAccount: string | null;
@@ -302,8 +305,14 @@ export const SOURCE_TYPE_LABEL: Record<string, string> = {
 // ---------- HLC Fund ----------
 
 export type FundStatus = 'PENDING' | 'DONE' | 'NOT_DONE';
-export const FUND_STATUS_LABEL: Record<FundStatus, string> = { PENDING: 'Chờ', DONE: 'Đã xong', NOT_DONE: 'Chưa xong' };
-export const FUND_STATUS_COLOR: Record<FundStatus, string> = { PENDING: 'gold', DONE: 'green', NOT_DONE: 'red' };
+/**
+ * Khoản đóng góp TÌNH NGUYỆN: không dùng "đã xong / chưa xong" và không tô đỏ / cam. Chỉ 2 trạng thái hiển thị:
+ * Đã ghi nhận (nền xanh lá) và Đang chờ xác nhận (nền vàng). NOT_DONE (minh chứng chưa hợp lệ, trả lại để bổ sung)
+ * hiện chữ trung tính "Chưa ghi nhận" ở chi tiết khoản; ở bảng tổng hợp coi như chưa có khoản (dấu gạch ngang).
+ * Hiển thị bằng <FundStatusTag> (luôn có chữ + biểu tượng, không chỉ dựa vào màu).
+ */
+export const FUND_STATUS_LABEL: Record<FundStatus, string> = { PENDING: 'Đang chờ xác nhận', DONE: 'Đã ghi nhận', NOT_DONE: 'Chưa ghi nhận' };
+export const FUND_STATUS_COLOR: Record<FundStatus, string> = { PENDING: 'gold', DONE: 'green', NOT_DONE: 'default' };
 
 export interface ContributionView {
   _id: string;
@@ -367,8 +376,9 @@ export interface MyFund {
 }
 
 export type WeekStatus = 'NONE' | FundStatus;
-export const WEEK_STATUS_LABEL: Record<WeekStatus, string> = { NONE: 'Chưa nộp', PENDING: 'Chờ', DONE: 'Đã xong', NOT_DONE: 'Chưa xong' };
-export const WEEK_STATUS_COLOR: Record<WeekStatus, string> = { NONE: 'default', PENDING: 'gold', DONE: 'green', NOT_DONE: 'red' };
+/** Ô tuần ở bảng tổng hợp: chưa có khoản (kể cả khoản chưa hợp lệ) để trống bằng dấu gạch ngang trung tính */
+export const WEEK_STATUS_LABEL: Record<WeekStatus, string> = { NONE: '—', PENDING: 'Đang chờ xác nhận', DONE: 'Đã ghi nhận', NOT_DONE: '—' };
+export const WEEK_STATUS_COLOR: Record<WeekStatus, string> = { NONE: 'default', PENDING: 'gold', DONE: 'green', NOT_DONE: 'default' };
 
 export interface FundGroupReport {
   period: PeriodView;
@@ -794,7 +804,7 @@ export const proposalApi = {
 
 // ---------- Nhóm & Leader ----------
 
-export interface GroupMember extends MemberBrief { status?: string; phone?: string | null; email?: string | null; joinedGroupAt?: string }
+export interface GroupMember extends MemberBrief { status?: string; phone?: string | null; phoneHidden?: boolean; email?: string | null; joinedGroupAt?: string }
 export type GroupKind = 'MENTEE' | 'FUND';
 export const GROUP_KIND_LABEL: Record<GroupKind, string> = { MENTEE: 'Nhóm MTE', FUND: 'Nhóm HLC Fund (MTO)' };
 export interface GroupView {
@@ -1057,7 +1067,7 @@ export const leaderApi = {
 
 export interface ProfileLog { _id: string; field: string; oldValue: string | null; newValue: string | null; changedByRole: 'SELF' | 'ADMIN' | 'APPROVED'; changedByName?: string; createdAt: string }
 export const PROFILE_FIELD_LABEL: Record<string, string> = {
-  fullName: 'Họ tên', memberType: 'Vai trò', status: 'Trạng thái', dateOfBirth: 'Ngày sinh', gender: 'Giới tính', phone: 'Số điện thoại',
+  fullName: 'Họ tên', memberType: 'Vai trò', status: 'Trạng thái', dateOfBirth: 'Ngày sinh', gender: 'Giới tính', phone: 'Số điện thoại', hidePhone: 'Ẩn số điện thoại với người ngoài cặp và nhóm',
   email: 'Email', address: 'Địa chỉ cũ (nhập tự do)', hometown: 'Quê quán cũ (nhập tự do)', profileUrl: 'Link profile', bankAccount: 'Số tài khoản', bankName: 'Ngân hàng', joinedAt: 'Ngày tham gia',
   hometownCode: 'Quê quán', addressCode: 'Địa chỉ (tỉnh, thành phố)', major: 'Ngành học (cũ)', occupation: 'Ngành nghề (cũ)', nationalId: 'Số CCCD',
   majorCodes: 'Ngành học', occupationCodes: 'Ngành nghề', bankCode: 'Ngân hàng'

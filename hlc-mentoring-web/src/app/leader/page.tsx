@@ -3,14 +3,16 @@
 import { useEffect, useState } from 'react';
 import { Alert, App, Card, Empty, Spin, Table, Tabs, Tag, Tooltip, Typography } from 'antd';
 import FundGroupReport from '@/components/FundGroupReport';
+import { FundStatusTag } from '@/components/fund/FundStatus';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import DelegationPanel from '@/components/DelegationPanel';
 import { useAccess } from '@/lib/useAccess';
 import { errorMessage } from '@/lib/api';
 import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL } from '@/services/mentoringApi';
-import { GROUP_KIND_LABEL, WEEK_STATUS_COLOR, WEEK_STATUS_LABEL, completionApi, leaderApi, money, points, type GroupCompletion, type LeaderOverview } from '@/services/hlcApi';
+import { GROUP_KIND_LABEL, completionApi, leaderApi, money, points, type GroupCompletion, type LeaderOverview } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
+import PhoneLink from '@/components/PhoneLink';
 
 type MemberRow = LeaderOverview['groups'][number]['members'][number];
 const ROLE_LABEL = { LEADER: 'Leader', DEPUTY: 'Phó nhóm', ADMIN: 'Admin' };
@@ -73,7 +75,7 @@ export default function LeaderPage() {
               dataSource={group.members}
               scroll={{ x: 'max-content' }}
               columns={[
-                { title: 'Thành viên', fixed: 'left' as const, render: (_: unknown, row: MemberRow) => <div><strong>{row.member.fullName}</strong><div className="text-xs text-gray-500">{row.member.memberCode} · {row.member.phone || 'chưa có SĐT'}</div></div> },
+                { title: 'Thành viên', fixed: 'left' as const, render: (_: unknown, row: MemberRow) => <div><strong>{row.member.fullName}</strong><div className="text-sm text-gray-500">{row.member.memberCode}</div><div className="text-sm"><PhoneLink phone={row.member.phone} hidden={row.member.phoneHidden} empty="Chưa có SĐT" /></div></div> },
                 { title: 'Vai trò', render: (_: unknown, row: MemberRow) => <Tag color={row.member.memberType === 'MENTOR' ? 'blue' : 'green'}>{row.member.memberType === 'MENTOR' ? 'Mentor' : 'Mentee'}</Tag> },
                 ...(fundOnly ? [] : [{
                   title: 'Mentoring tháng', render: (_: unknown, row: MemberRow) => row.mentoring.length ? (
@@ -98,8 +100,8 @@ export default function LeaderPage() {
                 {
                   title: 'HLC Fund theo tuần', render: (_: unknown, row: MemberRow) => (
                     <div className="flex flex-wrap gap-1">
-                      {row.fund.weeks.map((week) => <Tooltip key={week.weekKey} title={week.weekKey}><Tag color={WEEK_STATUS_COLOR[week.status]}>{WEEK_STATUS_LABEL[week.status]}</Tag></Tooltip>)}
-                      <span className="text-xs text-gray-500">{money(row.fund.approvedAmount)}</span>
+                      {row.fund.weeks.map((week) => <Tooltip key={week.weekKey} title={week.weekKey}><span><FundStatusTag status={week.status} /></span></Tooltip>)}
+                      {row.fund.approvedAmount > 0 && <span className="text-sm font-bold">Đã ghi nhận {money(row.fund.approvedAmount)}</span>}
                     </div>
                   )
                 }
@@ -118,7 +120,7 @@ export default function LeaderPage() {
         <Tabs items={[
           { key: 'progress', label: 'Tiến độ nhóm', children: progress },
           ...(data && data.groups.length && data.groups.every((group) => group.groupKind === 'FUND') ? [] : [{ key: 'recap', label: 'Chấm recap', children: <RecapGradingPanel /> }]),
-          { key: 'fund', label: 'HLC Fund (duyệt, nộp hộ)', children: <FundGroupReport /> },
+          { key: 'fund', label: 'HLC Fund (xác nhận, nộp hộ)', children: <FundGroupReport /> },
           ...(access && !access.isSuperAdmin ? [{ key: 'delegation', label: 'Ủy quyền', children: <DelegationPanel mode="leader" myGroups={access.leaderGroups} /> }] : [])
         ]} />
       </Card>

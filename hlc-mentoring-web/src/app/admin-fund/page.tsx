@@ -2,16 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { App, Button, Card, DatePicker, Input, Modal, Progress, Segmented, Space, Statistic, Table, Tag, Typography } from 'antd';
-import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
+import { CheckOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import FileThumbs from '@/components/FileThumbs';
 import FundGroupReport from '@/components/FundGroupReport';
+import { EvidenceButton, FundStatusTag } from '@/components/fund/FundStatus';
 import ResponsiveTabs from '@/components/ResponsiveTabs';
 import FundLedgerPanel from '@/components/FundLedgerPanel';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
-import { FUND_STATUS_COLOR, FUND_STATUS_LABEL, formatDate, fundApi, money, type ContributionView, type FundStats } from '@/services/hlcApi';
+import { formatDate, fundApi, money, periodLabel, type ContributionView, type FundStats } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
 export default function AdminFundPage() {
@@ -54,7 +54,7 @@ export default function AdminFundPage() {
     setSaving(true);
     try {
       const result = ids.length === 1 ? await fundApi.review(ids[0], nextStatus, reviewNote) : await fundApi.bulkReview(ids, nextStatus, reviewNote);
-      message.success(`Đã ${nextStatus === 'DONE' ? 'duyệt' : 'từ chối'} ${result.updated} minh chứng`);
+      message.success(nextStatus === 'DONE' ? `Đã ghi nhận ${result.updated} khoản đóng góp vào sổ quỹ` : `Đã chuyển ${result.updated} khoản về "Chưa ghi nhận" để người nộp bổ sung`);
       setRejecting(null);
       setNote('');
       await load();
@@ -71,12 +71,12 @@ export default function AdminFundPage() {
       <div className="flex flex-wrap items-center gap-2">
         <DatePicker format="DD/MM/YYYY" placeholder="Lọc theo ngày đóng" value={date ? dayjs(date) : null} onChange={(value) => setDate(value ? value.format('YYYY-MM-DD') : '')} />
         <Segmented value={status} onChange={(value) => setStatus(String(value))} options={[
-          { value: 'PENDING', label: 'Chờ duyệt' }, { value: 'DONE', label: 'Đã duyệt' }, { value: 'NOT_DONE', label: 'Không hợp lệ' }, { value: 'ALL', label: 'Tất cả' }
+          { value: 'PENDING', label: 'Đang chờ xác nhận' }, { value: 'DONE', label: 'Đã ghi nhận' }, { value: 'NOT_DONE', label: 'Chưa ghi nhận (cần bổ sung)' }, { value: 'ALL', label: 'Tất cả' }
         ]} />
         <div className="flex-1" />
         <Space wrap>
-          <Button type="primary" icon={<CheckOutlined />} disabled={!selected.length || locked} loading={saving} onClick={() => review(selected, 'DONE')}>Duyệt {selected.length || ''} mục</Button>
-          <Button danger icon={<CloseOutlined />} disabled={!selected.length || locked} onClick={() => setRejecting(selected)}>Từ chối</Button>
+          <Button type="primary" icon={<CheckOutlined />} disabled={!selected.length || locked} loading={saving} onClick={() => review(selected, 'DONE')}>Ghi nhận {selected.length || ''} khoản</Button>
+          <Button disabled={!selected.length || locked} onClick={() => setRejecting(selected)}>Chưa ghi nhận</Button>
         </Space>
       </div>
       <Table<ContributionView>
@@ -91,15 +91,15 @@ export default function AdminFundPage() {
           { title: 'Ngày đóng', width: 110, render: (_: unknown, row: ContributionView) => formatDate(row.contributionDate) },
           { title: 'Thành viên', width: 200, render: (_: unknown, row: ContributionView) => <div><strong>{row.member?.fullName}</strong><div className="text-xs text-gray-500">{row.member?.memberCode}</div></div> },
           { title: 'Số tiền', width: 120, align: 'right' as const, render: (_: unknown, row: ContributionView) => <strong>{money(row.amount)}</strong> },
-          { title: 'Minh chứng', width: 220, render: (_: unknown, row: ContributionView) => <FileThumbs files={row.files} /> },
-          { title: 'Ghi chú', render: (_: unknown, row: ContributionView) => <div className="max-w-xs whitespace-pre-wrap text-sm">{row.note || '—'}{row.reviewNote && <div className="text-xs text-red-500">Phản hồi: {row.reviewNote}</div>}</div> },
+          { title: 'Ảnh minh chứng', width: 200, render: (_: unknown, row: ContributionView) => <EvidenceButton files={row.files} /> },
+          { title: 'Ghi chú', render: (_: unknown, row: ContributionView) => <div className="max-w-xs whitespace-pre-wrap text-sm">{row.note || '—'}{row.reviewNote && <div className="text-sm text-gray-600">Lời nhắn: {row.reviewNote}</div>}</div> },
           { title: 'Gửi lúc', width: 140, render: (_: unknown, row: ContributionView) => formatDateTime(row.submittedAt) },
-          { title: 'Trạng thái', width: 120, render: (_: unknown, row: ContributionView) => <Tag color={FUND_STATUS_COLOR[row.status]}>{FUND_STATUS_LABEL[row.status]}</Tag> },
+          { title: 'Trạng thái', width: 190, render: (_: unknown, row: ContributionView) => <FundStatusTag status={row.status} detail /> },
           {
             title: '', width: 150, render: (_: unknown, row: ContributionView) => locked ? null : (
               <Space>
-                {row.status !== 'DONE' && <Button size="small" type="primary" onClick={() => review([row._id], 'DONE')}>Duyệt</Button>}
-                {row.status !== 'NOT_DONE' && <Button size="small" danger onClick={() => setRejecting([row._id])}>Từ chối</Button>}
+                {row.status !== 'DONE' && <Button type="primary" onClick={() => review([row._id], 'DONE')}>Ghi nhận</Button>}
+                {row.status === 'PENDING' && <Button onClick={() => setRejecting([row._id])}>Chưa ghi nhận</Button>}
               </Space>
             )
           }
@@ -119,11 +119,11 @@ export default function AdminFundPage() {
         onRow={(row) => ({ onClick: () => { setDate(row.date); setStatus('ALL'); }, className: 'cursor-pointer' })}
         columns={[
           { title: 'Ngày', dataIndex: 'date', render: (value: string) => formatDate(value) },
-          { title: 'Số minh chứng', dataIndex: 'total' },
-          { title: 'Chờ duyệt', dataIndex: 'pending', render: (value: number) => value ? <Tag color="gold">{value}</Tag> : 0 },
-          { title: 'Đã duyệt', dataIndex: 'done' },
-          { title: 'Không hợp lệ', dataIndex: 'notDone' },
-          { title: 'Tiền đã duyệt', dataIndex: 'amount', align: 'right' as const, render: (value: number) => money(value) }
+          { title: 'Số khoản', dataIndex: 'total' },
+          { title: 'Đang chờ xác nhận', dataIndex: 'pending', render: (value: number) => value || '—' },
+          { title: 'Đã ghi nhận', dataIndex: 'done' },
+          { title: 'Chưa ghi nhận', dataIndex: 'notDone', render: (value: number) => value || '—' },
+          { title: 'Tiền đã ghi nhận', dataIndex: 'amount', align: 'right' as const, render: (value: number) => money(value) }
         ]}
       />
       <Table
@@ -134,10 +134,10 @@ export default function AdminFundPage() {
         pagination={{ pageSize: 30 }}
         columns={[
           { title: 'Mentee', render: (_: unknown, row: FundStats['members'][number]) => <div>{row.member.fullName}<div className="text-xs text-gray-500">{row.member.memberCode}</div></div> },
-          { title: 'Đã duyệt', align: 'right' as const, sorter: (a: FundStats['members'][number], b: FundStats['members'][number]) => a.approved - b.approved, render: (_: unknown, row: FundStats['members'][number]) => money(row.approved) },
-          { title: 'Chờ duyệt', align: 'right' as const, render: (_: unknown, row: FundStats['members'][number]) => money(row.pending) },
+          { title: 'Đã ghi nhận', align: 'right' as const, sorter: (a: FundStats['members'][number], b: FundStats['members'][number]) => a.approved - b.approved, render: (_: unknown, row: FundStats['members'][number]) => money(row.approved) },
+          { title: 'Đang chờ xác nhận', align: 'right' as const, render: (_: unknown, row: FundStats['members'][number]) => row.pending ? money(row.pending) : '—' },
           { title: 'Tiến độ', width: 200, render: (_: unknown, row: FundStats['members'][number]) => <Progress size="small" percent={Math.min(100, Math.round((row.approved / Math.max(1, stats.target.minApprovedAmount)) * 100))} status={row.reached ? 'success' : 'active'} /> },
-          { title: '', render: (_: unknown, row: FundStats['members'][number]) => row.count === 0 ? <Tag color="red">Chưa đóng</Tag> : row.reached ? <Tag color="green">Đạt</Tag> : <Tag color="gold">Chưa đủ</Tag> }
+          { title: '', render: (_: unknown, row: FundStats['members'][number]) => row.count === 0 ? <span className="text-gray-500">Chưa có ghi nhận</span> : row.reached ? <Tag color="green">Đạt mức</Tag> : <span className="text-gray-500">Chưa đủ mức</span> }
         ]}
       />
     </div>
@@ -146,30 +146,43 @@ export default function AdminFundPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Typography.Title level={3} className="!mb-0">Duyệt HLC Fund</Typography.Title>
+        <Typography.Title level={3} className="!mb-0">HLC Fund</Typography.Title>
         <MonthPicker value={code} onChange={(value) => { setCode(value); setDate(''); }} />
         {locked && <Tag color="purple">Kỳ đã chốt</Tag>}
       </div>
       {stats && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <Card size="small"><Statistic title="Chờ duyệt" value={stats.totals.pending} /></Card>
-          <Card size="small"><Statistic title="Tiền đã duyệt" value={money(stats.totals.approvedAmount)} /></Card>
-          <Card size="small"><Statistic title="Mentee đạt mức" value={stats.totals.reached} suffix={`/ ${stats.totals.mentees}`} /></Card>
-          <Card size="small"><Statistic title="Chưa đóng" value={stats.totals.notContributed} /></Card>
-          <Card size="small"><Statistic title="Tổng minh chứng" value={stats.totals.contributions} /></Card>
-        </div>
+        <>
+          {/* Tổng đã ghi nhận nổi bật: minh bạch với nhà tài trợ */}
+          <section className="fund-hero" aria-label="Tổng đã ghi nhận">
+            <div>
+              <div className="fund-hero-label">Tổng đã ghi nhận vào sổ quỹ · {periodLabel(stats.period.code)}</div>
+              <div className="fund-hero-value">{money(stats.totals.approvedAmount)}</div>
+              <div className="fund-hero-note">{stats.totals.contributions} khoản đóng góp tình nguyện trong tháng</div>
+            </div>
+            <div className="fund-hero-side">
+              <div className="fund-hero-chip">Đang chờ xác nhận<b>{stats.totals.pending} khoản</b></div>
+              <div className="fund-hero-chip is-green">Mentee đạt mức<b>{stats.totals.reached} / {stats.totals.mentees}</b></div>
+            </div>
+          </section>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Card size="small"><Statistic title="Đang chờ xác nhận" value={stats.totals.pending} suffix="khoản" /></Card>
+            <Card size="small"><Statistic title="Tổng số khoản" value={stats.totals.contributions} /></Card>
+            <Card size="small"><Statistic title="Mentee chưa có ghi nhận" value={stats.totals.notContributed} /></Card>
+          </div>
+        </>
       )}
       <Card>
         <ResponsiveTabs defaultActiveKey={typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tab') ?? 'list' : 'list'} items={[
-          { key: 'list', label: date ? `Minh chứng ngày ${formatDate(date)}` : 'Minh chứng', children: listTab },
+          { key: 'list', label: date ? `Khoản đóng góp ngày ${formatDate(date)}` : 'Khoản đóng góp', children: listTab },
           { key: 'stats', label: 'Thống kê tháng', children: statsTab },
           { key: 'fund-groups', label: 'Nhóm MTO & thầy cô', children: <FundGroupReport fixedKind="FUND" /> },
           { key: 'mte-groups', label: 'Nhóm MTE', children: <FundGroupReport fixedKind="MENTEE" /> },
           { key: 'ledger', label: 'Dashboard thu chi', children: <FundLedgerPanel /> }
         ]} />
       </Card>
-      <Modal title={`Từ chối ${rejecting?.length ?? 0} minh chứng`} open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Từ chối" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden>
-        <Input.TextArea rows={3} placeholder="Lý do (mentee sẽ thấy để gửi lại)" value={note} onChange={(event) => setNote(event.target.value)} />
+      <Modal title={`Chưa ghi nhận ${rejecting?.length ?? 0} khoản`} open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Lưu" cancelText="Hủy" confirmLoading={saving} destroyOnHidden>
+        <Typography.Paragraph type="secondary">Dùng khi ảnh minh chứng chưa khớp. Người nộp sẽ thấy lời nhắn để bổ sung.</Typography.Paragraph>
+        <Input.TextArea rows={3} placeholder="Lời nhắn cho người nộp (ví dụ: ảnh chưa rõ số tiền, nhờ gửi lại giúp)" value={note} onChange={(event) => setNote(event.target.value)} />
       </Modal>
     </div>
   );

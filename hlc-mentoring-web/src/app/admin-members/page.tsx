@@ -17,6 +17,7 @@ import {
   type MemberView,
   type QuarterReport
 } from '@/services/mentoringApi';
+import PhoneLink from '@/components/PhoneLink';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 type ReportRow = QuarterReport['rows'][number];
@@ -163,7 +164,7 @@ export default function AdminMembersPage() {
         { title: 'STT', render: (_: unknown, _member: MemberView, index: number) => index + 1, width: 65 },
         { title: 'HỌ VÀ TÊN', dataIndex: 'fullName' },
         { title: 'HLC ID', dataIndex: 'memberCode' },
-        { title: 'SỐ ĐIỆN THOẠI', dataIndex: 'phone', render: (value?: string) => value || '—' },
+        { title: 'SỐ ĐIỆN THOẠI / ZALO', render: (_: unknown, row: MemberView) => <PhoneLink phone={row.phone} hidden={row.phoneHidden} /> },
         { title: 'EMAIL', dataIndex: 'email', render: (value?: string) => value || '—' },
         {
           title: 'HOẠT ĐỘNG',

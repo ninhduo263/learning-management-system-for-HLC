@@ -25,10 +25,20 @@ export function getAuthToken() {
   return typeof window !== 'undefined' ? localStorage.getItem(ACCESS_TOKEN_KEY) : null;
 }
 
+/** Phát khi đăng nhập / đăng xuất: mọi dữ liệu lưu tạm theo tài khoản (quyền, menu) phải xóa và tải lại */
+export const SESSION_CHANGE_EVENT = 'hlc-session-change';
+
+const notifySessionChange = () => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SESSION_CHANGE_EVENT));
+};
+
 export function saveSession(tokens: { accessToken: string; refreshToken: string }, user?: SessionUser) {
   localStorage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken);
   localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken);
-  if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (user) {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    notifySessionChange();
+  }
 }
 
 export function getSessionUser(): SessionUser | null {
@@ -45,6 +55,7 @@ export function clearSession() {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  notifySessionChange();
 }
 
 let refreshing: Promise<boolean> | null = null;

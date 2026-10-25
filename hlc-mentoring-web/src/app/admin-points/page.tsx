@@ -651,7 +651,7 @@ function CompletionPanel({ code }: { code: string }) {
   }, [code, message]);
   return (
     <div className="space-y-3">
-      <Alert type="info" showIcon title="Điểm phụ cấp và điểm thưởng lấy theo cấu hình vai trò (Tổ chức & phân quyền → Vai trò & điểm). Thưởng khi tỷ lệ hoàn thành VƯỢT ngưỡng % của loại nhóm." description="Nhóm MTE: hoàn thành = buổi mentoring tháng “Đã xong” (recap MTE đã duyệt) và đủ số bài tối thiểu các module học tập. Nhóm HLC Fund: mọi tuần của tháng có khoản đóng được duyệt (MTO và thầy cô; Leader/Phó không tính vào mẫu số)." />
+      <Alert type="info" showIcon title="Điểm phụ cấp và điểm thưởng lấy theo cấu hình vai trò (Tổ chức & phân quyền → Vai trò & điểm). Thưởng khi tỷ lệ hoàn thành VƯỢT ngưỡng % của loại nhóm." description="Nhóm MTE: hoàn thành = buổi mentoring tháng “Đã xong” (recap MTE đã duyệt) và đủ số bài tối thiểu các module học tập. Nhóm HLC Fund: mọi tuần của tháng có khoản đóng góp đã ghi nhận (MTO và thầy cô; Leader/Phó không tính vào mẫu số)." />
       <Table<GroupCompletion> rowKey="_id" size="small" pagination={false} dataSource={rows} columns={[
         { title: 'Nhóm', dataIndex: 'name' },
         { title: 'Loại', dataIndex: 'groupKind', render: (value: GroupCompletion['groupKind']) => GROUP_KIND_LABEL[value] },

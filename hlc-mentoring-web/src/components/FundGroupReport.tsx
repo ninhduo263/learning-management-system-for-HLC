@@ -2,32 +2,40 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, App, Button, Card, DatePicker, Empty, Form, Input, InputNumber, Modal, Segmented, Select, Space, Table, Tag, Typography } from 'antd';
-import { PlusOutlined, UserAddOutlined } from '@ant-design/icons';
+import { CheckOutlined, HeartFilled, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
-import FileThumbs from '@/components/FileThumbs';
 import ImageUpload, { type UploadedImage } from '@/components/ImageUpload';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
+import { EvidenceButton, FundStatusTag, periodOf, weekLabel } from '@/components/fund/FundStatus';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
-  FUND_CYCLE_LABEL, FUND_STATUS_COLOR, FUND_STATUS_LABEL, GROUP_KIND_LABEL, WEEK_STATUS_COLOR, WEEK_STATUS_LABEL, formatDate, fundApi, money,
+  FUND_CYCLE_LABEL, GROUP_KIND_LABEL, formatDate, fundApi, money, periodLabel,
   type ContributionView, type FundCycle, type FundGroupReport as Report, type GroupKind
 } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
 
 type Group = Report['groups'][number];
 type Row = Group['members'][number];
-const weekLabel = (week: { weekKey: string; from: string; to: string }) => `${week.weekKey.slice(-3)} (${formatDate(week.from).slice(0, 5)}–${formatDate(week.to).slice(0, 5)})`;
+/** Bộ lọc trạng thái. NONE ("Chưa có ghi nhận") chỉ có ở chế độ xem quản trị để biết ai cần được nhắc nhẹ */
+type StatusFilter = 'ALL' | 'DONE' | 'PENDING' | 'NONE';
 const payerTag = (type?: string) => type === 'EXTERNAL' ? <Tag color="gold">Thầy cô</Tag> : type === 'MENTOR' ? <Tag color="blue">MTO</Tag> : <Tag color="green">MTE</Tag>;
+/** Một dòng bảng dễ đọc: một khoản đóng góp, hoặc người chưa có khoản nào trong kỳ (ô để trống) */
+type EasyRow = { key: string; payer: Row['member']; item: ContributionView | null };
 
 interface ProxyValues { payer: string; contributionDate: Dayjs; amount: number; cycleType: FundCycle; coverUntil?: Dayjs; note?: string; images: UploadedImage[] }
 
-/** Báo cáo quỹ theo nhóm và tuần. Leader/Phó: quan sát, duyệt, nộp hộ nhóm mình; Admin HLC Fund: toàn bộ */
+/**
+ * Báo cáo quỹ theo nhóm. Leader/Phó: quan sát, xác nhận, nộp hộ nhóm mình; Admin HLC Fund: toàn bộ.
+ * Nhóm HLC Fund của MTO và thầy cô (người dùng lớn tuổi): bảng ít cột, chữ lớn, nút có chữ, xem ảnh cỡ lớn.
+ * Nhóm MTE: lưới theo tuần. Khoản tình nguyện nên chỉ có "Đã ghi nhận" / "Đang chờ xác nhận"; chưa có thì để trống.
+ */
 export default function FundGroupReport({ showKindFilter = false, fixedKind }: { showKindFilter?: boolean; fixedKind?: GroupKind }) {
   const { message } = App.useApp();
   const [code, setCode] = useState(() => currentPeriodCode(getCurrentTime()));
   const [kind, setKind] = useState<GroupKind | 'ALL'>(fixedKind ?? 'ALL');
   const [groupId, setGroupId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [data, setData] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
   const [viewing, setViewing] = useState<{ title: string; ids: string[]; canReview: boolean } | null>(null);
@@ -60,7 +68,7 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
     setSaving(true);
     try {
       const result = await fundApi.groupReview(ids, status, reviewNote);
-      message.success(`Đã cập nhật ${result.updated} minh chứng: ${status === 'DONE' ? 'Đã xong' : 'Chưa xong'}`);
+      message.success(status === 'DONE' ? `Đã ghi nhận ${result.updated} khoản đóng góp vào sổ quỹ` : `Đã chuyển ${result.updated} khoản về "Chưa ghi nhận" để người nộp bổ sung`);
       setRejecting(null);
       setNote('');
       await load();
@@ -85,7 +93,7 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
         note: values.note,
         fileIds: values.images.map((item) => item.fileId)
       });
-      message.success('Đã nộp hộ minh chứng');
+      message.success('Đã nộp minh chứng hộ, đang chờ xác nhận');
       setProxyGroup(null);
       await load();
     } catch (error) {
@@ -98,115 +106,203 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
   const byId = useMemo(() => new Map((data?.contributions ?? []).map((item) => [item._id, item])), [data]);
   const groups = (data?.groups ?? []).filter((group) => !groupId || group._id === groupId);
   const locked = Boolean(data?.period.isLocked);
+  const isAdmin = Boolean(data?.isAdmin);
+  const weeks = data?.weeks ?? [];
   const viewingRows = (viewing?.ids ?? []).map((id) => byId.get(id)).filter(Boolean) as ContributionView[];
   const proxyPayer = Form.useWatch('payer', proxyForm);
   const proxyIsExternal = proxyGroup?.members.find((row) => row.member._id === proxyPayer)?.member.memberType === 'EXTERNAL';
+  const payerOf = (item: ContributionView) => item.member?._id ?? item.contributorId ?? item.memberId;
+  /** Có khoản Đã ghi nhận / Đang chờ trong kỳ (khoản "Chưa ghi nhận" coi như chưa có) */
+  const hasStatus = (row: Row, status: 'DONE' | 'PENDING') => Object.values(row.weeks).some((cell) => cell.status === status);
+  const matches = (row: Row) => statusFilter === 'ALL'
+    || (statusFilter === 'NONE' ? !hasStatus(row, 'DONE') && !hasStatus(row, 'PENDING') : hasStatus(row, statusFilter));
+  const statusOptions = [
+    { value: 'ALL', label: 'Tất cả' },
+    { value: 'DONE', label: 'Đã ghi nhận' },
+    { value: 'PENDING', label: 'Đang chờ xác nhận' },
+    ...(isAdmin ? [{ value: 'NONE', label: 'Chưa có ghi nhận' }] : [])
+  ];
+
+  const reviewButtons = (item: ContributionView, canReview: boolean, size: 'middle' | 'large' = 'middle') => canReview && !locked && item.status !== 'DONE' ? (
+    <div className="flex flex-wrap gap-2">
+      <Button size={size} type="primary" icon={<CheckOutlined />} loading={saving} onClick={() => review([item._id], 'DONE')}>Ghi nhận</Button>
+      {item.status === 'PENDING' && <Button size={size} onClick={() => setRejecting([item._id])}>Chưa ghi nhận</Button>}
+    </div>
+  ) : null;
+
+  /** Trạng thái kèm nút đổi trạng thái ngay bên dưới (ít cột, mắt không phải dò sang cột khác) */
+  const statusCell = (item: ContributionView | null, canReview = false) => item ? (
+    <div className="space-y-2">
+      <div><FundStatusTag status={item.status} detail large /></div>
+      {item.status === 'DONE' && <div className="fund-thanks"><HeartFilled aria-hidden />Cảm ơn khoản đóng góp</div>}
+      {item.status === 'NOT_DONE' && item.reviewNote && <div className="fund-sub">Cần bổ sung: {item.reviewNote}</div>}
+      {reviewButtons(item, canReview, 'large')}
+    </div>
+  ) : <FundStatusTag status="NONE" />;
+
+  /** Bảng dễ đọc cho nhóm HLC Fund của MTO và thầy cô: tên, kỳ, số tiền, trạng thái, ảnh minh chứng */
+  const easyTable = (group: Group) => {
+    const payerIds = new Set(group.members.map((row) => row.member._id));
+    const own = (data?.contributions ?? []).filter((item) => payerIds.has(payerOf(item) ?? ''));
+    const rows: EasyRow[] = group.members.filter(matches).flatMap((row): EasyRow[] => {
+      const items = own.filter((item) => payerOf(item) === row.member._id && (statusFilter === 'ALL' || statusFilter === 'NONE' || item.status === statusFilter));
+      return statusFilter === 'NONE' || !items.length ? [{ key: row.member._id, payer: row.member, item: null }] : items.map((item) => ({ key: item._id, payer: row.member, item }));
+    });
+    const recorded = group.members.reduce((total, row) => total + row.total, 0);
+    const name = (row: EasyRow) => (
+      <div>
+        <div className="fund-name">{row.payer.fullName}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1">{payerTag(row.payer.memberType)}{row.payer.organization && <span className="fund-sub">{row.payer.organization}</span>}</div>
+        {row.item?.isProxy && <div className="fund-sub mt-1">Nộp hộ: {row.item.proxyByName}</div>}
+      </div>
+    );
+    const periodCell = (row: EasyRow) => row.item ? <div><div>{periodOf(row.item, weeks)}</div><div className="fund-sub">{FUND_CYCLE_LABEL[row.item.cycleType ?? 'ONCE']}</div></div> : <span className="fund-sub">{data ? periodLabel(data.period.code) : ''}</span>;
+    return (
+      <div className="space-y-3">
+        <Table<EasyRow>
+          className="fund-easy-table has-cards"
+          rowKey="key"
+          pagination={false}
+          dataSource={rows}
+          scroll={{ x: 'max-content' }}
+          locale={{ emptyText: statusFilter === 'ALL' ? 'Nhóm chưa có người đóng góp' : 'Không có khoản nào ở trạng thái này' }}
+          columns={[
+            { title: 'Người đóng góp', render: (_: unknown, row: EasyRow) => name(row) },
+            { title: 'Kỳ', width: 190, render: (_: unknown, row: EasyRow) => periodCell(row) },
+            { title: 'Số tiền', align: 'right' as const, render: (_: unknown, row: EasyRow) => row.item ? <span className="fund-amount">{money(row.item.amount)}</span> : <FundStatusTag status="NONE" /> },
+            { title: 'Trạng thái', width: 300, render: (_: unknown, row: EasyRow) => statusCell(row.item, group.canReview) },
+            { title: 'Ảnh minh chứng', render: (_: unknown, row: EasyRow) => row.item ? <EvidenceButton files={row.item.files} size="large" /> : <FundStatusTag status="NONE" /> }
+          ]}
+        />
+        <div className="fund-cards">
+          {!rows.length && <Empty description="Không có khoản nào ở trạng thái này" />}
+          {rows.map((row) => (
+            <div key={row.key} className="fund-card">
+              <div className="fund-card-top">{name(row)}{statusCell(row.item)}</div>
+              <div className="fund-sub mt-2">Kỳ: {row.item ? periodOf(row.item, weeks) : data ? periodLabel(data.period.code) : ''}</div>
+              {row.item && <div className="fund-amount">{money(row.item.amount)}</div>}
+              {row.item && <div className="fund-card-actions"><EvidenceButton files={row.item.files} size="large" />{reviewButtons(row.item, group.canReview, 'large')}</div>}
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2 text-base">
+          <span className="fund-sub">Tổng đã ghi nhận của nhóm trong {data ? periodLabel(data.period.code).toLowerCase() : 'kỳ'}:</span>
+          <strong className="text-lg">{money(recorded)}</strong>
+        </div>
+      </div>
+    );
+  };
 
   const contributionTable = (rows: ContributionView[], canReview: boolean) => (
     <Table<ContributionView>
+      className="fund-easy-table"
       rowKey="_id"
-      size="small"
       pagination={false}
       dataSource={rows}
       scroll={{ x: 'max-content' }}
       columns={[
-        { title: 'Người đóng', render: (_: unknown, row: ContributionView) => <span>{row.member?.fullName} {payerTag(row.member?.memberType)}</span> },
-        { title: 'Ngày đóng', render: (_: unknown, row: ContributionView) => formatDate(row.contributionDate) },
-        { title: 'Số tiền', align: 'right' as const, render: (_: unknown, row: ContributionView) => money(row.amount) },
-        { title: 'Chu kỳ', render: (_: unknown, row: ContributionView) => `${FUND_CYCLE_LABEL[row.cycleType ?? 'ONCE']}${row.coverUntil ? ` · đến ${formatDate(row.coverUntil)}` : ''}` },
-        { title: 'Ảnh', render: (_: unknown, row: ContributionView) => <FileThumbs files={row.files} size={48} /> },
-        { title: 'Gửi', render: (_: unknown, row: ContributionView) => <div>{formatDateTime(row.submittedAt)}{row.isProxy && <div><Tag color="orange">Nộp hộ: {row.proxyByName}</Tag></div>}</div> },
-        { title: 'Trạng thái', render: (_: unknown, row: ContributionView) => <div><Tag color={FUND_STATUS_COLOR[row.status]}>{FUND_STATUS_LABEL[row.status]}</Tag>{row.reviewNote && <div className="text-xs text-red-500">{row.reviewNote}</div>}</div> },
-        {
-          title: '', render: (_: unknown, row: ContributionView) => canReview && !locked ? (
-            <Space>
-              {row.status !== 'DONE' && <Button size="small" type="primary" loading={saving} onClick={() => review([row._id], 'DONE')}>Đã xong</Button>}
-              {row.status !== 'NOT_DONE' && <Button size="small" danger onClick={() => setRejecting([row._id])}>Chưa xong</Button>}
-            </Space>
-          ) : null
-        }
+        { title: 'Người đóng góp', render: (_: unknown, row: ContributionView) => <div><div className="fund-name">{row.member?.fullName}</div><div className="mt-1">{payerTag(row.member?.memberType)}{row.isProxy && <span className="fund-sub">Nộp hộ: {row.proxyByName}</span>}</div></div> },
+        { title: 'Kỳ', render: (_: unknown, row: ContributionView) => <div><div>{periodOf(row, weeks)}</div><div className="fund-sub">{FUND_CYCLE_LABEL[row.cycleType ?? 'ONCE']} · gửi {formatDateTime(row.submittedAt)}</div></div> },
+        { title: 'Số tiền', align: 'right' as const, render: (_: unknown, row: ContributionView) => <span className="fund-amount">{money(row.amount)}</span> },
+        { title: 'Trạng thái', render: (_: unknown, row: ContributionView) => statusCell(row, canReview) },
+        { title: 'Ảnh minh chứng', render: (_: unknown, row: ContributionView) => <EvidenceButton files={row.files} /> }
       ]}
     />
   );
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="fund-filter">
         <MonthPicker value={code} onChange={setCode} />
         {showKindFilter && (
-          <Segmented value={kind} onChange={(value) => { setKind(value as GroupKind | 'ALL'); setGroupId(''); }} options={[{ value: 'ALL', label: 'Tất cả nhóm' }, { value: 'FUND', label: 'Nhóm MTO' }, { value: 'MENTEE', label: 'Nhóm MTE' }]} />
+          <Segmented value={kind} onChange={(value) => { setKind(value as GroupKind | 'ALL'); setGroupId(''); }} options={[{ value: 'ALL', label: 'Tất cả nhóm' }, { value: 'FUND', label: 'Nhóm MTO & thầy cô' }, { value: 'MENTEE', label: 'Nhóm MTE' }]} />
         )}
+        <Segmented value={statusFilter} onChange={(value) => setStatusFilter(value as StatusFilter)} options={statusOptions} />
         {(data?.groups.length ?? 0) > 1 && (
-          <Select className="min-w-56" allowClear placeholder="Tất cả nhóm" value={groupId || undefined} onChange={(value) => setGroupId(value ?? '')} options={data?.groups.map((group) => ({ value: group._id, label: `${group.name}${group.pending ? ` (${group.pending} chờ)` : ''}` }))} />
+          <Select className="min-w-56" size="large" allowClear placeholder="Tất cả nhóm" value={groupId || undefined} onChange={(value) => setGroupId(value ?? '')} options={data?.groups.map((group) => ({ value: group._id, label: `${group.name}${group.pending ? ` (${group.pending} đang chờ)` : ''}` }))} />
         )}
         {locked && <Tag color="purple">Kỳ đã chốt</Tag>}
       </div>
-      <Typography.Text type="secondary">Mỗi tuần thành viên gửi ảnh minh chứng (hoặc khai báo đóng trước đến ngày nào). Leader nhóm duyệt Chờ → Đã xong / Chưa xong và có thể nộp hộ. Bấm ô tuần để xem ảnh.</Typography.Text>
+      <Typography.Paragraph className="!mb-0 text-base" type="secondary">
+        Mỗi khoản đóng góp tình nguyện kèm ảnh minh chứng. Leader nhóm xem ảnh rồi bấm <b>Ghi nhận</b> để ghi vào sổ quỹ; có thể nộp hộ cho thành viên và thầy cô.
+      </Typography.Paragraph>
       {!loading && !groups.length && <Empty description="Chưa có nhóm" />}
       {groups.map((group) => {
         const payerIds = new Set(group.members.map((row) => row.member._id));
-        const pendingRows = (data?.contributions ?? []).filter((item) => item.status === 'PENDING' && payerIds.has(item.member?._id ?? ''));
+        const pendingRows = (data?.contributions ?? []).filter((item) => item.status === 'PENDING' && payerIds.has(payerOf(item) ?? ''));
+        const isFund = group.groupKind === 'FUND';
         return (
           <Card
             key={group._id}
-            size="small"
             loading={loading}
-            title={<span>{group.name} <Tag color={group.groupKind === 'FUND' ? 'gold' : 'purple'}>{GROUP_KIND_LABEL[group.groupKind]}</Tag><span className="text-xs font-normal text-gray-500">Leader: {group.leader?.fullName ?? '—'} · Phó: {group.deputy?.fullName ?? '—'}</span></span>}
+            title={<span className="flex flex-wrap items-center gap-2">{group.name} <Tag color={isFund ? 'gold' : 'purple'}>{GROUP_KIND_LABEL[group.groupKind]}</Tag><span className="text-sm font-normal text-gray-500">Leader: {group.leader?.fullName ?? '—'} · Phó: {group.deputy?.fullName ?? '—'}</span></span>}
             extra={(
               <Space wrap>
-                {group.pending ? <Tag color="gold">{group.pending} chờ duyệt</Tag> : <Tag color="green">Không còn mục chờ</Tag>}
-                {(group.canProxy ?? group.canReview) && !locked && <Button size="small" icon={<PlusOutlined />} onClick={() => { proxyForm.resetFields(); proxyForm.setFieldsValue({ contributionDate: dayjs(getCurrentTime()), cycleType: 'WEEKLY', images: [] }); setProxyGroup(group); }}>Nộp hộ</Button>}
-                {(group.canProxy || group.canReview) && group.groupKind === 'FUND' && <Button size="small" icon={<UserAddOutlined />} onClick={() => { contributorForm.resetFields(); setContributorGroup(group); }}>Thêm thầy cô</Button>}
+                {group.pending > 0 && <FundStatusTag status="PENDING" />}
+                {group.pending > 0 && <span className="font-bold">{group.pending} khoản</span>}
+                {(group.canProxy ?? group.canReview) && !locked && <Button size="large" icon={<PlusOutlined />} onClick={() => { proxyForm.resetFields(); proxyForm.setFieldsValue({ contributionDate: dayjs(getCurrentTime()), cycleType: 'WEEKLY', images: [] }); setProxyGroup(group); }}>Nộp minh chứng hộ</Button>}
+                {(group.canProxy || group.canReview) && isFund && <Button size="large" icon={<UserAddOutlined />} onClick={() => { contributorForm.resetFields(); setContributorGroup(group); }}>Thêm thầy cô</Button>}
               </Space>
             )}
           >
-            {!group.canReview && <Alert className="mb-2" type="info" showIcon title="Vai trò của bạn trong nhóm này chỉ được xem (chưa có quyền duyệt minh chứng)." />}
-            <Table<Row>
-              rowKey={(row) => row.member._id}
-              size="small"
-              pagination={false}
-              dataSource={group.members}
-              scroll={{ x: 'max-content' }}
-              locale={{ emptyText: 'Nhóm chưa có thành viên đóng quỹ' }}
-              columns={[
-                { title: 'Người đóng', fixed: 'left' as const, render: (_: unknown, row: Row) => <div>{row.member.fullName}<div>{payerTag(row.member.memberType)}{row.member.organization && <span className="text-xs text-gray-500">{row.member.organization}</span>}</div></div> },
-                ...(data?.weeks ?? []).map((week) => ({
-                  title: weekLabel(week),
-                  render: (_: unknown, row: Row) => {
-                    const cell = row.weeks[week.weekKey];
-                    return (
-                      <Tag color={WEEK_STATUS_COLOR[cell.status]} className={cell.ids.length ? 'cursor-pointer' : ''} onClick={() => cell.ids.length && setViewing({ title: `${row.member.fullName} · ${weekLabel(week)}`, ids: cell.ids, canReview: group.canReview })}>
-                        {WEEK_STATUS_LABEL[cell.status]}{cell.amount ? ` · ${money(cell.amount)}` : ''}
-                      </Tag>
-                    );
-                  }
-                })),
-                { title: 'Đã đóng đến', render: (_: unknown, row: Row) => row.paidUntil ? formatDate(row.paidUntil) : '—' },
-                { title: 'Đã duyệt (tháng)', align: 'right' as const, render: (_: unknown, row: Row) => money(row.total) }
-              ]}
-            />
-            {pendingRows.length > 0 && (
-              <div className="mt-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <Typography.Text strong>Minh chứng chờ duyệt</Typography.Text>
-                  {group.canReview && !locked && <Button size="small" type="primary" loading={saving} onClick={() => review(pendingRows.map((row) => row._id), 'DONE')}>Đánh dấu tất cả Đã xong</Button>}
-                </div>
-                {contributionTable(pendingRows, group.canReview)}
+            {!group.canReview && <Alert className="mb-3" type="info" showIcon title="Vai trò của bạn trong nhóm này chỉ được xem (chưa có quyền xác nhận khoản đóng góp)." />}
+            {isFund ? easyTable(group) : (
+              <>
+                <Table<Row>
+                  rowKey={(row) => row.member._id}
+                  pagination={false}
+                  dataSource={group.members.filter(matches)}
+                  scroll={{ x: 'max-content' }}
+                  locale={{ emptyText: statusFilter === 'ALL' ? 'Nhóm chưa có thành viên đóng quỹ' : 'Không có thành viên ở trạng thái này' }}
+                  columns={[
+                    { title: 'Người đóng góp', fixed: 'left' as const, render: (_: unknown, row: Row) => <div><strong>{row.member.fullName}</strong><div>{payerTag(row.member.memberType)}{row.member.organization && <span className="text-xs text-gray-500">{row.member.organization}</span>}</div></div> },
+                    ...weeks.map((week) => ({
+                      title: weekLabel(week),
+                      render: (_: unknown, row: Row) => {
+                        const cell = row.weeks[week.weekKey];
+                        const shown = cell.status === 'DONE' || cell.status === 'PENDING';
+                        return (
+                          <button type="button" className={`border-0 bg-transparent p-0 text-left ${cell.ids.length ? 'cursor-pointer' : 'cursor-default'}`} disabled={!cell.ids.length} onClick={() => setViewing({ title: `${row.member.fullName} · ${weekLabel(week)}`, ids: cell.ids, canReview: group.canReview })}>
+                            <FundStatusTag status={cell.status} />
+                            {shown && cell.amount > 0 && <div className="mt-1 text-sm font-bold">{money(cell.amount)}</div>}
+                          </button>
+                        );
+                      }
+                    })),
+                    { title: 'Đã đóng đến', render: (_: unknown, row: Row) => row.paidUntil ? formatDate(row.paidUntil) : '—' },
+                    { title: 'Đã ghi nhận (tháng)', align: 'right' as const, render: (_: unknown, row: Row) => <strong>{row.total ? money(row.total) : '—'}</strong> }
+                  ]}
+                />
+                {pendingRows.length > 0 && (statusFilter === 'ALL' || statusFilter === 'PENDING') && (
+                  <div className="mt-4 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Typography.Text strong className="text-base">Khoản đang chờ xác nhận</Typography.Text>
+                      {group.canReview && !locked && <Button type="primary" icon={<CheckOutlined />} loading={saving} onClick={() => review(pendingRows.map((row) => row._id), 'DONE')}>Ghi nhận tất cả {pendingRows.length} khoản</Button>}
+                    </div>
+                    {contributionTable(pendingRows, group.canReview)}
+                  </div>
+                )}
+              </>
+            )}
+            {isFund && group.canReview && !locked && pendingRows.length > 1 && (
+              <div className="mt-3 flex justify-end">
+                <Button size="large" type="primary" icon={<CheckOutlined />} loading={saving} onClick={() => review(pendingRows.map((row) => row._id), 'DONE')}>Ghi nhận tất cả {pendingRows.length} khoản đang chờ</Button>
               </div>
             )}
           </Card>
         );
       })}
-      <Modal title={viewing?.title} open={Boolean(viewing)} onCancel={() => setViewing(null)} footer={null} width="min(1000px, calc(100vw - 24px))">
+      <Modal title={viewing?.title} open={Boolean(viewing)} onCancel={() => setViewing(null)} footer={null} width="min(1100px, calc(100vw - 24px))">
         {viewing && contributionTable(viewingRows, viewing.canReview)}
       </Modal>
-      <Modal title="Đánh dấu Chưa xong" open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Lưu" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden>
-        <Input.TextArea rows={3} placeholder="Lý do (người nộp sẽ thấy để gửi lại)" value={note} onChange={(event) => setNote(event.target.value)} />
+      <Modal title="Chưa ghi nhận khoản này" open={Boolean(rejecting)} onCancel={() => setRejecting(null)} onOk={() => rejecting && review(rejecting, 'NOT_DONE', note)} okText="Lưu" cancelText="Hủy" confirmLoading={saving} destroyOnHidden>
+        <Typography.Paragraph type="secondary">Dùng khi ảnh minh chứng chưa khớp (sai số tiền, ảnh mờ...). Người nộp sẽ thấy lời nhắn để bổ sung.</Typography.Paragraph>
+        <Input.TextArea rows={3} placeholder="Lời nhắn cho người nộp (ví dụ: ảnh chưa rõ số tiền, nhờ gửi lại giúp)" value={note} onChange={(event) => setNote(event.target.value)} />
       </Modal>
-      <Modal title={proxyGroup ? `Nộp hộ minh chứng · ${proxyGroup.name}` : ''} open={Boolean(proxyGroup)} onCancel={() => setProxyGroup(null)} onOk={() => proxyForm.submit()} okText="Nộp hộ" confirmLoading={saving} destroyOnHidden forceRender>
+      <Modal title={proxyGroup ? `Nộp minh chứng hộ · ${proxyGroup.name}` : ''} open={Boolean(proxyGroup)} onCancel={() => setProxyGroup(null)} onOk={() => proxyForm.submit()} okText="Nộp minh chứng" cancelText="Hủy" confirmLoading={saving} destroyOnHidden forceRender>
         <Form form={proxyForm} layout="vertical" onFinish={submitProxy}>
           <Typography.Paragraph type="secondary">Khoản nộp hộ được ghi rõ người nộp hộ để phân biệt với thành viên tự nộp.</Typography.Paragraph>
-          <Form.Item name="payer" label="Người đóng" rules={[{ required: true, message: 'Chọn người đóng' }]}>
+          <Form.Item name="payer" label="Người đóng góp" rules={[{ required: true, message: 'Chọn người đóng góp' }]}>
             <Select showSearch={{ optionFilterProp: 'label' }} options={(proxyGroup?.members ?? []).map((row) => ({ value: row.member._id, label: `${row.member.fullName}${row.member.memberType === 'EXTERNAL' ? ' (thầy cô)' : ` (${row.member.memberCode})`}` }))} />
           </Form.Item>
           <div className="grid grid-cols-2 gap-3">

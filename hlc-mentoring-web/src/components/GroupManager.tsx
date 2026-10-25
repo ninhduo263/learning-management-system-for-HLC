@@ -12,6 +12,7 @@ import {
   GROUP_KIND_LABEL, formatDate, fundApi, groupApi, memberDirectoryApi, roleApi,
   type FundContributor, type GroupHistory, type GroupKind, type GroupMember, type GroupRoleAssignment, type GroupView, type DirectoryMember, type RoleView
 } from '@/services/hlcApi';
+import PhoneLink from '@/components/PhoneLink';
 
 const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'green'}>{type === 'MENTOR' ? 'MTO' : 'MTE'}</Tag>;
 
@@ -155,6 +156,7 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
                 columns={[
                   { title: 'Thành viên', render: (_: unknown, row: GroupMember) => <span>{row.fullName} <span className="text-xs text-gray-400">{row.memberCode}</span></span> },
                   { title: 'Loại', render: (_: unknown, row: GroupMember) => typeTag(row.memberType) },
+                  { title: 'SĐT / Zalo', render: (_: unknown, row: GroupMember) => <PhoneLink phone={row.phone} hidden={row.phoneHidden} /> },
                   { title: 'Vào nhóm', dataIndex: 'joinedGroupAt', render: (value: string) => formatDate(value) },
                   { title: '', render: (_: unknown, row: GroupMember) => <Button size="small" type="link" onClick={() => { setMoveTarget(undefined); setMoving({ group, member: row }); }}>Chuyển nhóm</Button> }
                 ]}

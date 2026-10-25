@@ -33,7 +33,8 @@ export default function MemberEditModal({ memberId, onClose, onSaved }: { member
   const provinces = useProvinces();
   const provinceName = (code?: string | null) => provinces.find((item) => item.code === code)?.name ?? code ?? '—';
   const display = (row: ProfileLog, value: string | null) =>
-    value && (row.field === 'hometownCode' || row.field === 'addressCode') ? provinceName(value) : value ?? '—';
+    row.field === 'hidePhone' && value ? (value === 'true' ? 'Bật ẩn số' : 'Hiện số')
+      : value && (row.field === 'hometownCode' || row.field === 'addressCode') ? provinceName(value) : value ?? '—';
 
   useEffect(() => {
     if (!memberId) return;

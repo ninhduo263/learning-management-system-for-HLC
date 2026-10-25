@@ -24,6 +24,7 @@ import {
   type MySessionView
 } from '@/services/mentoringApi';
 import { getCurrentTime, quarterOf } from '@/utils/time';
+import PhoneLink from '@/components/PhoneLink';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -209,7 +210,8 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
         return other ? (
           <div>
             <strong>{other.fullName}</strong>
-            <div className="text-xs text-gray-500">{other.memberCode}{other.phone ? ` · ${other.phone}` : ''}</div>
+            <div className="text-sm text-gray-500">{other.memberCode}</div>
+            <div className="text-sm"><PhoneLink phone={other.phone} hidden={other.phoneHidden} empty="Chưa có SĐT" /></div>
             <ProfileLink url={other.profileUrl ?? undefined} />
           </div>
         ) : '—';

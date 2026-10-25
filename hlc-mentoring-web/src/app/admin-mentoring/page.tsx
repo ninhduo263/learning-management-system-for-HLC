@@ -31,6 +31,7 @@ import {
   type SessionView
 } from '@/services/mentoringApi';
 import { getCurrentTime, isNextQuarterPairingOpen, nextQuarterCode, quarterOf } from '@/utils/time';
+import PhoneLink from '@/components/PhoneLink';
 
 interface PairFormValues { month: number; mentorCode: string; menteeCode: string; }
 
@@ -522,8 +523,8 @@ function QuarterPanel({ quarterCode, kind, canManage }: { quarterCode: string; k
               <Descriptions.Item label="Mã quý">{selected.pair?.code}</Descriptions.Item>
               <Descriptions.Item label="Mentee">{selected.mentee?.fullName} ({selected.mentee?.memberCode})</Descriptions.Item>
               <Descriptions.Item label="Mentor">{selected.mentor?.fullName} ({selected.mentor?.memberCode})</Descriptions.Item>
-              <Descriptions.Item label="SĐT Mentee">{selected.mentee?.phone || '—'}</Descriptions.Item>
-              <Descriptions.Item label="SĐT Mentor">{selected.mentor?.phone || '—'}</Descriptions.Item>
+              <Descriptions.Item label="SĐT / Zalo Mentee"><PhoneLink phone={selected.mentee?.phone} hidden={selected.mentee?.phoneHidden} /></Descriptions.Item>
+              <Descriptions.Item label="SĐT / Zalo Mentor"><PhoneLink phone={selected.mentor?.phone} hidden={selected.mentor?.phoneHidden} /></Descriptions.Item>
             </Descriptions>
             <div>
               <div className="mb-2 flex items-center justify-between">

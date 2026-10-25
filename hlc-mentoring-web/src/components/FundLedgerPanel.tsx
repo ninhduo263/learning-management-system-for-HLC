@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Statistic, Table, Tag, Tooltip, Typography } from 'antd';
+import { Alert, App, Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import { BarElement, CategoryScale, Chart as ChartJS, Legend, LinearScale, Tooltip as ChartTooltip } from 'chart.js';
@@ -9,6 +9,7 @@ import { Bar } from 'react-chartjs-2';
 import { errorMessage } from '@/lib/api';
 import { PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, formatDate, fundApi, money, type FundLedger, type GroupKind, type PayoutExpense } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
+import { BRAND } from '@/lib/brand';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ChartTooltip, Legend);
 
@@ -18,7 +19,7 @@ const SOURCE_LABEL = { MTE: 'Nhóm MTE', MTO: 'Nhóm HLC Fund của MTO', EXTERN
 const openSheet = (periodCode: string) => window.open(`/admin-points?period=${periodCode}`, '_blank');
 
 /**
- * Dashboard thu chi HLC Fund. Thu: minh chứng đã duyệt theo ngày đóng. Chi: theo ngày chi thực tế; chi phụ cấp
+ * Dashboard thu chi HLC Fund. Thu: khoản đã ghi nhận theo ngày đóng. Chi: theo ngày chi thực tế; chi phụ cấp
  * sinh tự động khi bảng phụ cấp được "Xác nhận đã chi" (gắn mã PC-YYYY-MM), khớp với bảng tổng hợp và file xuất.
  */
 export default function FundLedgerPanel() {
@@ -78,11 +79,18 @@ export default function FundLedgerPanel() {
       </Space>
       {data && totals && (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Card size="small"><Statistic title={`Tổng thu${sourceLabel}`} value={money(totals.income)} /></Card>
-            <Card size="small"><Statistic title="Tổng chi (theo ngày chi thực tế)" value={money(totals.expense)} /></Card>
-            <Card size="small"><Statistic title="Chênh lệch kỳ" value={money(totals.net)} /><div className="text-xs text-gray-500">Tồn quỹ cuối kỳ: {money(totals.balance)}</div></Card>
-          </div>
+          {/* Tổng đã ghi nhận nổi bật: minh bạch với nhà tài trợ */}
+          <section className="fund-hero" aria-label="Tổng đã ghi nhận">
+            <div>
+              <div className="fund-hero-label">Tổng đóng góp đã ghi nhận{sourceLabel}</div>
+              <div className="fund-hero-value">{money(totals.income)}</div>
+              <div className="fund-hero-note">Tồn quỹ cuối kỳ: {money(totals.balance)}</div>
+            </div>
+            <div className="fund-hero-side">
+              <div className="fund-hero-chip">Tổng chi (ngày chi thực tế)<b>{money(totals.expense)}</b></div>
+              <div className="fund-hero-chip is-green">Chênh lệch kỳ<b>{money(totals.net)}</b></div>
+            </div>
+          </section>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <Card size="small" title="Nguồn thu">
               <Table size="small" pagination={false} rowKey="key" dataSource={(['MTE', 'MTO', 'EXTERNAL'] as const).map((key) => ({ key, label: SOURCE_LABEL[key], amount: totals.incomeByKind[key] }))} columns={[
@@ -107,11 +115,11 @@ export default function FundLedgerPanel() {
                 data={{
                   labels: data.byMonth.map((row) => `T${row.month}`),
                   datasets: [
-                    { label: SOURCE_LABEL.MTE, data: data.byMonth.map((row) => row.income.MTE), backgroundColor: '#6d5dfc', stack: 'thu' },
-                    { label: SOURCE_LABEL.MTO, data: data.byMonth.map((row) => row.income.MTO), backgroundColor: '#4b91eb', stack: 'thu' },
-                    { label: SOURCE_LABEL.EXTERNAL, data: data.byMonth.map((row) => row.income.EXTERNAL), backgroundColor: '#ec9a50', stack: 'thu' },
-                    { label: 'Chi phụ cấp', data: data.byMonth.map((row) => row.expenseByType.ALLOWANCE), backgroundColor: '#e5484d', stack: 'chi' },
-                    { label: 'Chi khác', data: data.byMonth.map((row) => row.expenseByType.OTHER), backgroundColor: '#f59e9e', stack: 'chi' }
+                    { label: SOURCE_LABEL.MTE, data: data.byMonth.map((row) => row.income.MTE), backgroundColor: BRAND.blue, stack: 'thu' },
+                    { label: SOURCE_LABEL.MTO, data: data.byMonth.map((row) => row.income.MTO), backgroundColor: BRAND.sky, stack: 'thu' },
+                    { label: SOURCE_LABEL.EXTERNAL, data: data.byMonth.map((row) => row.income.EXTERNAL), backgroundColor: BRAND.green, stack: 'thu' },
+                    { label: 'Chi phụ cấp', data: data.byMonth.map((row) => row.expenseByType.ALLOWANCE), backgroundColor: BRAND.navy, stack: 'chi' },
+                    { label: 'Chi khác', data: data.byMonth.map((row) => row.expenseByType.OTHER), backgroundColor: '#8C9BB8', stack: 'chi' }
                   ]
                 }}
                 options={{ responsive: true, scales: { x: { stacked: true }, y: { stacked: true } } }}
@@ -192,7 +200,7 @@ export default function FundLedgerPanel() {
           </Card>
         </>
       )}
-      <Typography.Text type="secondary" className="text-xs">Thu tính theo ngày đóng của các khoản đã duyệt. Chi phụ cấp lấy tự động từ bảng tổng hợp (điểm x đơn giá + bù chênh lệch), không nhập tay. Tồn quỹ = mọi khoản thu đã duyệt trừ mọi khoản chi tính đến cuối kỳ đang xem.</Typography.Text>
+      <Typography.Text type="secondary" className="text-xs">Thu tính theo ngày đóng của các khoản đã ghi nhận. Chi phụ cấp lấy tự động từ bảng tổng hợp (điểm x đơn giá + bù chênh lệch), không nhập tay. Tồn quỹ = mọi khoản thu đã ghi nhận trừ mọi khoản chi tính đến cuối kỳ đang xem.</Typography.Text>
       <Modal title={editing && editing !== 'new' ? 'Sửa khoản chi' : 'Thêm khoản chi khác'} open={Boolean(editing)} onCancel={() => setEditing(null)} onOk={() => form.submit()} destroyOnHidden>
         <Form form={form} layout="vertical" onFinish={save}>
           <Form.Item name="expenseDate" label="Ngày chi" rules={[{ required: true }]}><DatePicker className="w-full" format="DD/MM/YYYY" /></Form.Item>

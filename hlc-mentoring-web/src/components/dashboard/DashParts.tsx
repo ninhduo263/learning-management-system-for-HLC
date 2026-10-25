@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { ArrowDownOutlined, ArrowUpOutlined, MinusOutlined } from '@ant-design/icons';
 import { PAIR_STATUS_LABEL, type PairRecapStatus } from '@/services/mentoringApi';
+import { BRAND } from '@/lib/brand';
 
 export type Tone = 'purple' | 'blue' | 'green' | 'orange' | 'teal' | 'rose';
 
@@ -46,12 +47,12 @@ export function KpiCard({ icon, tone, label, value, unit, hint, delta }: {
 
 /** Màu thật cho từng trạng thái cặp (Tag của antd dùng tên màu, thanh trạng thái cần mã màu). */
 const STATUS_HEX: Record<PairRecapStatus, string> = {
-  DONE: '#22a06b',
-  PENDING: '#f5a524',
-  LATE: '#f08a24',
-  MISSING: '#e5484d',
-  NO_SCHEDULE: '#b8c0d0',
-  CANCELLED: '#d5d9e4'
+  DONE: BRAND.green,
+  PENDING: BRAND.yellow,
+  LATE: '#F2B33D',
+  MISSING: '#E07A6F',
+  NO_SCHEDULE: '#C3CCDA',
+  CANCELLED: '#DDE3EC'
 };
 
 export function StatusBar({ counts }: { counts: Partial<Record<PairRecapStatus, number>> }) {

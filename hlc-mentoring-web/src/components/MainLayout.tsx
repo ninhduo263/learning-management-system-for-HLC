@@ -25,7 +25,7 @@ import {
 } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
-import { apiFetch, apiJson, clearSession, getSessionUser } from '@/lib/api';
+import { apiFetch, apiJson, clearSession, getSessionUser, SESSION_CHANGE_EVENT } from '@/lib/api';
 import { getCurrentTime, syncServerTime } from '@/utils/time';
 import { proposalApi, type AdminScope } from '@/services/hlcApi';
 import { loadAccess } from '@/lib/useAccess';
@@ -76,6 +76,23 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       window.clearInterval(timer);
       window.removeEventListener('hlc-mock-date-change', handleMockDateChange);
     };
+  }, []);
+
+  // Đăng xuất / đăng nhập tài khoản khác: xóa sạch quyền, menu, huy hiệu của tài khoản trước (không cần tải lại trang)
+  useEffect(() => {
+    const reset = () => {
+      setUser(null);
+      setScopes([]);
+      setIsGroupLeader(false);
+      setActions([]);
+      setModuleIds([]);
+      setProposalAbility({ canPropose: 0, canDecide: 0, pending: 0 });
+      setMustChangePassword(false);
+      setCanApproveProfile(false);
+      setPendingProfile(0);
+    };
+    window.addEventListener(SESSION_CHANGE_EVENT, reset);
+    return () => window.removeEventListener(SESSION_CHANGE_EVENT, reset);
   }, []);
 
   useEffect(() => {
@@ -379,7 +396,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           {children}
         </Content>
       </Layout>
-      <Drawer title="HLC LMS" placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} className={roleTheme}>
+      <Drawer title={<span className="brand-lockup !m-0 !h-auto"><span className="brand-mark">H</span><span>HLC <b>LMS</b></span></span>} placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} rootClassName={`nav-drawer ${roleTheme}`}>
         {navigation}
       </Drawer>
       <Modal

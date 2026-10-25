@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Alert, App, Button, Card, DatePicker, Form, Input, Popconfirm, Select, Table, Tag, Typography } from 'antd';
+import { Alert, App, Button, Card, Checkbox, DatePicker, Form, Input, Popconfirm, Select, Table, Tag, Typography } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
 import CatalogSelect, { useCatalog } from '@/components/CatalogSelect';
 import ProvinceSelect, { useProvinces } from '@/components/ProvinceSelect';
+import { zaloUrl } from '@/components/PhoneLink';
 import { errorMessage } from '@/lib/api';
 import { setUnsavedGuard } from '@/lib/unsavedGuard';
 import { loadAccess } from '@/lib/useAccess';
@@ -16,12 +17,12 @@ import {
 } from '@/services/hlcApi';
 
 type Values = {
-  dateOfBirth?: Dayjs | null; gender?: string | null; phone?: string | null; email?: string | null;
+  dateOfBirth?: Dayjs | null; gender?: string | null; phone?: string | null; hidePhone?: boolean; email?: string | null;
   hometownCode?: string | null; addressCode?: string | null; majorCodes?: string[]; occupationCodes?: string[];
   bankAccount?: string | null; bankCode?: string | null; nationalId?: string | null; profileUrl?: string | null;
 };
 type PasswordValues = { oldPass: string; newPass: string; confirmPass: string };
-const FIELDS: (keyof Values)[] = ['dateOfBirth', 'gender', 'phone', 'email', 'hometownCode', 'addressCode', 'majorCodes', 'occupationCodes', 'bankAccount', 'bankCode', 'nationalId', 'profileUrl'];
+const FIELDS: (keyof Values)[] = ['dateOfBirth', 'gender', 'phone', 'hidePhone', 'email', 'hometownCode', 'addressCode', 'majorCodes', 'occupationCodes', 'bankAccount', 'bankCode', 'nationalId', 'profileUrl'];
 /** Thay đổi cần Admin duyệt trước khi thành chính thức */
 const APPROVAL_FIELDS: (keyof Values)[] = ['bankAccount', 'bankCode', 'nationalId'];
 
@@ -35,7 +36,7 @@ const norm = (value: unknown): string => {
 };
 const fromMember = (member: Member): Values => ({
   dateOfBirth: member.dateOfBirth ? dayjs(member.dateOfBirth) : null,
-  gender: member.gender, phone: member.phone, email: member.email,
+  gender: member.gender, phone: member.phone, hidePhone: Boolean(member.hidePhone), email: member.email,
   hometownCode: member.hometownCode, addressCode: member.addressCode,
   majorCodes: member.majorCodes ?? [], occupationCodes: member.occupationCodes ?? [],
   bankAccount: member.bankAccount, bankCode: member.bankCode ?? null, nationalId: member.nationalId ?? null, profileUrl: member.profileUrl
@@ -74,6 +75,7 @@ export default function ProfilePage() {
   const [profileUrlEditable, setProfileUrlEditable] = useState(false);
   const [dirtyFields, setDirtyFields] = useState<(keyof Values)[]>([]);
   const [form] = Form.useForm<Values>();
+  const zaloLink = zaloUrl(Form.useWatch('phone', form));
   const [passwordForm] = Form.useForm<PasswordValues>();
   const official = useRef<Values>({});
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -200,6 +202,7 @@ export default function ProfilePage() {
     if (field === 'hometownCode' || field === 'addressCode') return provinceName(value);
     if (field === 'majorCodes' || field === 'occupationCodes') return careerNames(value);
     if (field === 'bankCode') return bankName(value);
+    if (field === 'hidePhone') return value === 'true' ? 'Bật ẩn số' : 'Hiện số';
     return value;
   };
   const review = member ? catalogNeedsReview(member) : { major: false, occupation: false, bank: false };
@@ -305,8 +308,11 @@ export default function ProfilePage() {
           <div className="grid grid-cols-1 gap-x-4 md:grid-cols-2">
             <Form.Item name="dateOfBirth" label={label('Ngày sinh', 'dateOfBirth')}><DatePicker className="w-full" format="DD/MM/YYYY" inputReadOnly /></Form.Item>
             <Form.Item name="gender" label={label('Giới tính', 'gender')}><Select allowClear options={[{ value: 'MALE', label: 'Nam' }, { value: 'FEMALE', label: 'Nữ' }, { value: 'OTHER', label: 'Khác' }]} /></Form.Item>
-            <Form.Item name="phone" label={label('Số điện thoại', 'phone')}><Input inputMode="tel" /></Form.Item>
+            <Form.Item name="phone" label={label('Số điện thoại', 'phone')} extra={zaloLink ? <span>Zalo cá nhân (tạo tự động từ số điện thoại): <a href={zaloLink} target="_blank" rel="noopener noreferrer" className="phone-zalo">{zaloLink}</a></span> : 'Nhập số điện thoại để có liên kết Zalo cá nhân.'}><Input inputMode="tel" /></Form.Item>
             <Form.Item name="email" label={label('Email', 'email')} rules={[{ type: 'email', message: 'Email không hợp lệ' }]}><Input inputMode="email" /></Form.Item>
+            <Form.Item className="md:col-span-2" name="hidePhone" valuePropName="checked" extra="Khi bật, số điện thoại và liên kết Zalo chỉ hiện với bạn, người trong cặp mentoring, người cùng nhóm, Admin và các Trưởng ban. Khi tắt, mọi thành viên đều thấy. Có hiệu lực ngay khi Lưu và được ghi lịch sử.">
+              <Checkbox><span className="font-semibold">{label('Ẩn số điện thoại với người ngoài cặp và nhóm của tôi', 'hidePhone')}</span></Checkbox>
+            </Form.Item>
             <Form.Item name="hometownCode" label={label('Quê quán (tỉnh, thành phố)', 'hometownCode')}><ProvinceSelect /></Form.Item>
             <Form.Item name="addressCode" label={label('Địa chỉ hiện tại (tỉnh, thành phố)', 'addressCode')}><ProvinceSelect /></Form.Item>
             <Form.Item name="majorCodes" label={label('Ngành học (chọn nhiều)', 'majorCodes')}><CatalogSelect type="CAREER" multiple /></Form.Item>

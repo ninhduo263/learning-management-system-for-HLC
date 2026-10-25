@@ -10,6 +10,8 @@ export interface MemberView {
   memberType: 'MENTOR' | 'MENTEE';
   fullName: string;
   phone: string | null;
+  /** Thành viên đã ẩn số với người ngoài cặp / nhóm (máy chủ không trả số cho người xem này) */
+  phoneHidden?: boolean;
   email: string | null;
   profileUrl: string | null;
   status: 'ACTIVE' | 'INACTIVE';

@@ -38,6 +38,13 @@ export class MemberModel extends Model implements Member {
     @Column({ type: DataType.STRING(20), allowNull: true })
     phone?: string;
 
+    /**
+     * Ẩn số điện thoại (và liên kết Zalo tạo từ số) với người ngoài cặp và nhóm của mình. Mặc định hiển thị.
+     * Vẫn thấy: chính chủ, người trong cặp, người cùng nhóm, Admin toàn cục và các Trưởng ban (PhonePrivacyService).
+     */
+    @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false })
+    hidePhone?: boolean;
+
     @Column({ type: DataType.STRING(255), allowNull: true })
     email?: string;
 

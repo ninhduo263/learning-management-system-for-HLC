@@ -7,6 +7,7 @@ import {
     IsString,
     MaxLength,
     IsArray,
+    IsBoolean,
 } from "class-validator";
 import { Gender, MemberStatus, MemberType } from "../common/constant";
 
@@ -52,6 +53,13 @@ export class Member implements BaseEntity {
     @IsOptional()
     @EntityDefinition.field({ label: "Số điện thoại" })
     phone?: string;
+
+    @IsBoolean()
+    @IsOptional()
+    @EntityDefinition.field({
+        label: "Ẩn số điện thoại với người ngoài cặp và nhóm",
+    })
+    hidePhone?: boolean;
 
     @IsString()
     @MaxLength(255)

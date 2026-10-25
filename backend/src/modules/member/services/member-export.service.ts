@@ -141,7 +141,13 @@ export class MemberExportService {
                 ] ?? "",
             ...(personal && {
                 "Ngày sinh": dmy(member.dateOfBirth),
-                "Số điện thoại": member.phone ?? "",
+                // Thành viên đã chọn ẩn số: chỉ Admin toàn cục và Trưởng ban xuất được số
+                "Số điện thoại":
+                    member.hidePhone && !caps.superAdmin && !caps.departmentHead
+                        ? member.phone
+                            ? "(đã ẩn)"
+                            : ""
+                        : (member.phone ?? ""),
                 Email: member.email ?? "",
                 "Quê quán": member.hometownCode
                     ? (provinces.get(member.hometownCode) ??

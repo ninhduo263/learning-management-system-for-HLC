@@ -116,8 +116,8 @@ export default function MemberDashboard({ role }: { role: 'MENTOR' | 'MENTEE' })
               <div className="fund-box">
                 <Progress type="circle" size={110} percent={fundPercent} status={data.fund.reached ? 'success' : 'active'} />
                 <div className="fund-stats">
-                  <div><span className="dash-note">Đã duyệt</span><strong>{money(data.fund.approvedAmount)}</strong><span className="dash-note">/ {money(data.fund.target.minApprovedAmount)}</span></div>
-                  {data.fund.pendingAmount > 0 && <div><span className="dash-note">Chờ duyệt</span><strong>{money(data.fund.pendingAmount)}</strong></div>}
+                  <div><span className="dash-note">Đã ghi nhận</span><strong>{money(data.fund.approvedAmount)}</strong><span className="dash-note">/ {money(data.fund.target.minApprovedAmount)}</span></div>
+                  {data.fund.pendingAmount > 0 && <div><span className="dash-note">Đang chờ xác nhận</span><strong>{money(data.fund.pendingAmount)}</strong></div>}
                   <div>{data.fund.reached ? <Tag color="green" className="!m-0">Đã đạt +{data.fund.target.points} điểm</Tag> : <Tag color="gold" className="!m-0">Chưa đạt mức</Tag>}</div>
                 </div>
               </div>

@@ -58,6 +58,14 @@ export interface LeaderGroup {
 }
 
 /** Quyền tổng hợp của 1 tài khoản */
+/** Phạm vi quản trị cấp ban (Trưởng ban HLC Fund, Mentoring, MTE, Học tập) */
+const DEPARTMENT_HEAD_SCOPES: string[] = [
+    AdminScope.FUND,
+    AdminScope.MENTORING,
+    AdminScope.MENTEE,
+    AdminScope.LEARNING,
+];
+
 export interface Capabilities {
     superAdmin: boolean;
     memberId: string | null;
@@ -69,6 +77,11 @@ export interface Capabilities {
     actions: Set<string>;
     /** Module học tập được quản lý: null = mọi module (Admin toàn cục, Trưởng ban Học tập, Trưởng ban MTE) */
     moduleIds: string[] | null;
+    /**
+     * Là Trưởng ban (HLC Fund, Mentoring, MTE, Học tập): phạm vi quản trị cấp ban được giao trực tiếp hoặc từ chức
+     * vụ. Ví dụ: vẫn thấy số điện thoại thành viên đã chọn ẩn (cần số để làm việc).
+     */
+    departmentHead: boolean;
 }
 
 /** Phạm vi người duyệt: isAdmin = toàn quyền */
@@ -427,6 +440,7 @@ export class GroupAccessService {
                 writeScopes: new Set(all),
                 actions: new Set(GLOBAL_PERMISSIONS),
                 moduleIds: null,
+                departmentHead: true,
             } as Capabilities;
         const grants = await this.permissionModel.findAll({
             where: { userId: user._id },
@@ -517,6 +531,9 @@ export class GroupAccessService {
             writeScopes,
             actions,
             moduleIds,
+            departmentHead: DEPARTMENT_HEAD_SCOPES.some((scope) =>
+                directScopes.has(scope),
+            ),
         } as Capabilities;
     }
 

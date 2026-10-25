@@ -1,5 +1,6 @@
 import {
     IsArray,
+    IsBoolean,
     IsEmail,
     IsEnum,
     IsOptional,
@@ -23,6 +24,11 @@ export class SelfProfileDto {
     @MaxLength(20)
     @IsOptional()
     phone?: string;
+
+    /** Ẩn số điện thoại (và Zalo) với người ngoài cặp và nhóm của mình; có hiệu lực ngay, ghi lịch sử */
+    @IsBoolean()
+    @IsOptional()
+    hidePhone?: boolean;
 
     @IsEmail()
     @IsOptional()

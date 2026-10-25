@@ -85,7 +85,7 @@ export default function AdminDashboardPage() {
             <KpiCard tone="blue" icon={<ScheduleOutlined />} label="Buổi mentoring" value={sessions} delta={deltaOf(sessions, previous?.mentoringSessions)} hint="Chưa có dữ liệu tháng trước" />
             <KpiCard tone="green" icon={<CheckCircleOutlined />} label="Tỉ lệ cặp đã xong" value={data.mentoring.doneRate} unit="%" delta={deltaOf(data.mentoring.doneRate, prevDoneRate, true)} hint="Chưa có dữ liệu tháng trước" />
             <KpiCard tone="orange" icon={<ReadOutlined />} label="Bài nộp học tập" value={submissionsTotal} delta={deltaOf(submissionsTotal, previous?.submissions)} hint="Chưa có dữ liệu tháng trước" />
-            <KpiCard tone="teal" icon={<WalletOutlined />} label="Quỹ đã duyệt" value={money(data.fund.totals.approvedAmount)} delta={deltaOf(data.fund.totals.approvedAmount, previous?.fundAmount)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="teal" icon={<WalletOutlined />} label="Quỹ đã ghi nhận" value={money(data.fund.totals.approvedAmount)} delta={deltaOf(data.fund.totals.approvedAmount, previous?.fundAmount)} hint="Chưa có dữ liệu tháng trước" />
             <KpiCard tone="rose" icon={<DollarOutlined />} label="Tổng chi phụ cấp" value={money(data.points.totals.amount)} delta={deltaOf(data.points.totals.amount, previous?.totalAmount)} hint="Chưa có dữ liệu tháng trước" />
           </div>
 
@@ -146,9 +146,10 @@ export default function AdminDashboardPage() {
               <div className="fund-box">
                 <Progress type="dashboard" size={150} percent={data.fund.totals.mentees ? Math.round((data.fund.totals.reached / data.fund.totals.mentees) * 100) : 0} />
                 <div className="fund-stats">
+                  <div><span className="dash-note">Tổng đã ghi nhận</span><strong className="!text-2xl">{money(data.fund.totals.approvedAmount)}</strong></div>
                   <div><span className="dash-note">Mentee đạt mức</span><strong>{data.fund.totals.reached}/{data.fund.totals.mentees}</strong></div>
-                  <div><span className="dash-note">Chưa đóng</span><strong>{data.fund.totals.notContributed}</strong></div>
-                  <div><span className="dash-note">Minh chứng chờ duyệt</span><strong>{data.fund.totals.pending}</strong></div>
+                  <div><span className="dash-note">Chưa có ghi nhận</span><strong>{data.fund.totals.notContributed}</strong></div>
+                  <div><span className="dash-note">Khoản đang chờ xác nhận</span><strong>{data.fund.totals.pending}</strong></div>
                 </div>
               </div>
             </Card>
@@ -162,8 +163,8 @@ export default function AdminDashboardPage() {
                     data={{
                       labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
                       datasets: [
-                        { label: 'Tổng điểm', data: data.trend.map((item) => item.totalPoints), borderColor: CHART_COLORS.purple, backgroundColor: CHART_COLORS.purple, yAxisID: 'y', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 },
-                        { label: 'Chi phụ cấp (nghìn đ)', data: data.trend.map((item) => Math.round(item.totalAmount / 1000)), borderColor: CHART_COLORS.teal, backgroundColor: CHART_COLORS.teal, yAxisID: 'y1', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 }
+                        { label: 'Tổng điểm', data: data.trend.map((item) => item.totalPoints), borderColor: CHART_COLORS.primary, backgroundColor: CHART_COLORS.primary, yAxisID: 'y', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 },
+                        { label: 'Chi phụ cấp (nghìn đ)', data: data.trend.map((item) => Math.round(item.totalAmount / 1000)), borderColor: CHART_COLORS.green, backgroundColor: CHART_COLORS.green, yAxisID: 'y1', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 }
                       ]
                     }}
                     options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { position: 'left', beginAtZero: true }, y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }, x: { grid: { display: false } } } }}
@@ -176,9 +177,9 @@ export default function AdminDashboardPage() {
                     data={{
                       labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
                       datasets: [
-                        { label: 'Buổi mentoring', data: data.trend.map((item) => item.mentoringSessions), backgroundColor: CHART_COLORS.purpleSoft, borderRadius: 6, maxBarThickness: 30 },
-                        { label: 'Cặp đã xong', data: data.trend.map((item) => item.mentoringDone), backgroundColor: CHART_COLORS.purple, borderRadius: 6, maxBarThickness: 30 },
-                        { label: 'Bài nộp học tập', data: data.trend.map((item) => item.submissions), backgroundColor: CHART_COLORS.orange, borderRadius: 6, maxBarThickness: 30 }
+                        { label: 'Buổi mentoring', data: data.trend.map((item) => item.mentoringSessions), backgroundColor: CHART_COLORS.primarySoft, borderRadius: 6, maxBarThickness: 30 },
+                        { label: 'Cặp đã xong', data: data.trend.map((item) => item.mentoringDone), backgroundColor: CHART_COLORS.primary, borderRadius: 6, maxBarThickness: 30 },
+                        { label: 'Bài nộp học tập', data: data.trend.map((item) => item.submissions), backgroundColor: CHART_COLORS.navy, borderRadius: 6, maxBarThickness: 30 }
                       ]
                     }}
                     options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } }}

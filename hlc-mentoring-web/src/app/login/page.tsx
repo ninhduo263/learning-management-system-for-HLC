@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Form, Input, Button, Card, App } from 'antd';
+import { Form, Input, Button, App } from 'antd';
 import { LockOutlined, UserOutlined, LoadingOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
 import { apiJson, clearSession, saveSession, type AppRole } from '@/lib/api';
@@ -87,9 +87,12 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-4">
-      <Card title="Đăng nhập HLC Mentoring" className="w-full max-w-md shadow-md">
-        <Form layout="vertical" onFinish={onFinish} disabled={isAuthenticating}>
+    <main className="login-screen">
+      <section className="login-card">
+        <div className="login-brand"><span className="login-wait-mark">H</span><span>HLC Mentoring</span></div>
+        <h1>Đăng nhập</h1>
+        <p className="login-lead">Kết nối để cùng tiến xa: mentoring, học tập và HLC Fund trong một nơi.</p>
+        <Form layout="vertical" size="large" onFinish={onFinish} disabled={isAuthenticating} requiredMark={false}>
           <Form.Item name="userId" label="Mã thành viên" rules={[{ required: true, message: 'Nhập mã thành viên' }]}>
             <Input prefix={<UserOutlined />} placeholder="HLC-MTE-00001" autoComplete="username" />
           </Form.Item>
@@ -97,11 +100,12 @@ export default function LoginPage() {
             <Input.Password prefix={<LockOutlined />} autoComplete="current-password" />
           </Form.Item>
           <Button type="primary" htmlType="submit" block loading={isAuthenticating}>Đăng nhập</Button>
-          <p className="mt-4 text-center text-xs text-gray-500">
+          <p className="login-hint">
             Mật khẩu mặc định là ngày sinh dạng ddmmyyyy (ví dụ 20052003), hoặc do quản trị viên cung cấp.
           </p>
         </Form>
-      </Card>
+        <div className="login-stripe" aria-hidden="true"><span /><span /><span /><span /></div>
+      </section>
     </main>
   );
 }

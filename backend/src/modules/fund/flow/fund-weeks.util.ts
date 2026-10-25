@@ -68,7 +68,7 @@ export function coveredWeeks(row: {
     return weeks;
 }
 
-/** Trạng thái tuần: Đã xong nếu có khoản được duyệt bao phủ; Chờ nếu đang chờ; Chưa xong nếu chỉ có khoản bị từ chối */
+/** Trạng thái tuần: DONE (Đã ghi nhận) nếu có khoản được ghi nhận bao phủ; PENDING (Đang chờ xác nhận); NOT_DONE nếu chỉ có khoản trả lại (giao diện hiện như chưa có) */
 export function weekStatus(rows: { status?: string }[]): WeekStatus {
     if (rows.some((row) => row.status === FundContributionStatus.DONE))
         return FundContributionStatus.DONE;

@@ -155,7 +155,7 @@ export class FundFlowController {
         return this.flowService.removeExpense(id);
     }
 
-    /** Leader duyệt minh chứng của nhóm: Đã xong / Chưa xong */
+    /** Leader xác nhận minh chứng của nhóm: DONE = Đã ghi nhận, NOT_DONE = Chưa ghi nhận (trả lại để bổ sung) */
     @Put("groups/review")
     @AllowSystemRoles(SystemRole.ADMIN, SystemRole.MENTOR, SystemRole.MENTEE)
     groupReview(@ReqUser() user: User, @Body() dto: BulkReviewContributionDto) {

@@ -9,6 +9,7 @@ import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import ProposalModal, { type ProposalPreset } from '@/components/ProposalModal';
 import { Avatar, DashHeader, KpiCard } from '@/components/dashboard/DashParts';
 import { CHART_COLORS, applyChartTheme } from '@/lib/chartTheme';
+import { BRAND } from '@/lib/brand';
 import { errorMessage } from '@/lib/api';
 import {
   dashboardApi, periodLabel, proposalApi,
@@ -21,7 +22,7 @@ applyChartTheme();
 
 const fmt = (value: number | null | undefined) => (value === null || value === undefined ? '—' : value.toLocaleString('vi-VN', { maximumFractionDigits: 2 }));
 /** Màu theo mức điểm (thang 100) */
-const levelColor = (value: number | null) => (value === null ? '#b8c0d0' : value >= 80 ? '#22a06b' : value >= 60 ? '#f5a524' : '#e5484d');
+const levelColor = (value: number | null) => (value === null ? '#C3CCDA' : value >= 80 ? BRAND.green : value >= 60 ? '#E2C90F' : '#E07A6F');
 
 function quarterOptions() {
   const now = quarterOf(getCurrentTime());
@@ -124,9 +125,9 @@ export default function LearningDashboardPage() {
                   data={{
                     labels: data.byMonth.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
                     datasets: [
-                      { label: 'Trung bình chung', data: data.byMonth.map((item) => item.average), borderColor: CHART_COLORS.purple, backgroundColor: CHART_COLORS.purple, tension: 0.35, borderWidth: 3, pointRadius: 4, spanGaps: true },
-                      { label: 'Module học tập', data: data.byMonth.map((item) => item.learningAverage), borderColor: CHART_COLORS.teal, backgroundColor: CHART_COLORS.teal, tension: 0.35, borderWidth: 2, pointRadius: 3, spanGaps: true },
-                      ...(data.canViewAll ? [{ label: 'Recap mentoring', data: data.byMonth.map((item) => item.recapAverage), borderColor: CHART_COLORS.orange, backgroundColor: CHART_COLORS.orange, tension: 0.35, borderWidth: 2, pointRadius: 3, spanGaps: true }] : [])
+                      { label: 'Trung bình chung', data: data.byMonth.map((item) => item.average), borderColor: CHART_COLORS.primary, backgroundColor: CHART_COLORS.primary, tension: 0.35, borderWidth: 3, pointRadius: 4, spanGaps: true },
+                      { label: 'Module học tập', data: data.byMonth.map((item) => item.learningAverage), borderColor: CHART_COLORS.green, backgroundColor: CHART_COLORS.green, tension: 0.35, borderWidth: 2, pointRadius: 3, spanGaps: true },
+                      ...(data.canViewAll ? [{ label: 'Recap mentoring', data: data.byMonth.map((item) => item.recapAverage), borderColor: CHART_COLORS.primarySoft, backgroundColor: CHART_COLORS.primarySoft, tension: 0.35, borderWidth: 2, pointRadius: 3, spanGaps: true }] : [])
                     ]
                   }}
                   options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { min: 0, max: 100 }, x: { grid: { display: false } } } }}

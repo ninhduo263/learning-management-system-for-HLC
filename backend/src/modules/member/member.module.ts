@@ -3,6 +3,7 @@ import { RepositoryProvider } from "@module/repository/common/repository";
 import { TransactionProvider } from "@module/repository/common/transaction";
 import { SqlTransaction } from "@module/repository/sequelize/sql.transaction";
 import { Global, Module } from "@nestjs/common";
+import { APP_INTERCEPTOR } from "@nestjs/core";
 import { SequelizeModule } from "@nestjs/sequelize";
 import { MemberController } from "./controllers/member.controller";
 import { MemberModel } from "./models/member.model";
@@ -21,11 +22,22 @@ import { ProfileApprovalController } from "./controllers/profile-approval.contro
 import { ProfileApprovalService } from "./services/profile-approval.service";
 import { BankHistoryService } from "./services/bank-history.service";
 import { MemberAdminService } from "./services/member-admin.service";
+import { PhonePrivacyService } from "./services/phone-privacy.service";
+import { PhonePrivacyInterceptor } from "./phone-privacy.interceptor";
+import { MentoringPairModel } from "@module/mentoring/models/mentoring-pair.model";
+import { GroupMembershipModel } from "@module/organization/models/group-membership.model";
 
 /** Global: bảng phụ cấp dùng thông tin ngân hàng theo kỳ (BankHistoryService) */
 @Global()
 @Module({
-    imports: [SequelizeModule.forFeature([MemberModel, MemberProfileLogModel])],
+    imports: [
+        SequelizeModule.forFeature([
+            MemberModel,
+            MemberProfileLogModel,
+            MentoringPairModel,
+            GroupMembershipModel,
+        ]),
+    ],
     controllers: [
         MemberController,
         ProvinceController,
@@ -43,6 +55,9 @@ import { MemberAdminService } from "./services/member-admin.service";
         MemberAdminService,
         ProfileApprovalService,
         BankHistoryService,
+        PhonePrivacyService,
+        // Ẩn số điện thoại theo người xem cho mọi API (vòng 9)
+        { provide: APP_INTERCEPTOR, useClass: PhonePrivacyInterceptor },
         RepositoryProvider(Entity.MEMBER, MemberSqlRepository),
         SqlTransaction,
         TransactionProvider(SqlTransaction),
@@ -52,6 +67,7 @@ import { MemberAdminService } from "./services/member-admin.service";
         MemberProfileService,
         ProvinceService,
         BankHistoryService,
+        PhonePrivacyService,
     ],
 })
 export class MemberModule {}
