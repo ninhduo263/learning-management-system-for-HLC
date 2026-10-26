@@ -19,6 +19,11 @@ export interface ProposalPreset {
   periodCode?: string;
   /** MENTORING_DATA: SESSION | RECAP_MENTEE | RECAP_MENTOR | MEMBER_SCORE */
   dataTarget?: string;
+  points?: number;
+  pointTypeCode?: string;
+  reason?: string;
+  /** MENTORING_POINT có gốc là một recap (ví dụ đề xuất trừ điểm thưởng sớm khi nghi gian lận mốc nộp) */
+  recap?: { id: string; sessionCode: string };
 }
 
 interface Values {
@@ -88,7 +93,10 @@ export default function ProposalModal({ open, allowed, preset, onClose, onDone }
       memberId: preset?.memberId,
       sessionId: preset?.sessionId,
       dataTarget: preset?.dataTarget ?? 'SESSION',
-      periodCode: preset?.periodCode ?? currentPeriodCode(getCurrentTime())
+      periodCode: preset?.periodCode ?? currentPeriodCode(getCurrentTime()),
+      points: preset?.points,
+      pointTypeCode: preset?.pointTypeCode,
+      reason: preset?.reason
     });
     return () => { active = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -119,7 +127,7 @@ export default function ProposalModal({ open, allowed, preset, onClose, onDone }
         }
       } else {
         const payload: Record<string, unknown> = { periodCode: values.periodCode, points: values.points, ...(values.pointTypeCode && { pointTypeCode: values.pointTypeCode }) };
-        if (values.type === 'MENTORING_POINT') Object.assign(payload, { sourceType: 'SESSION', sourceId: values.sessionId });
+        if (values.type === 'MENTORING_POINT') Object.assign(payload, preset?.recap ? { sourceType: 'RECAP', sourceId: preset.recap.id } : { sourceType: 'SESSION', sourceId: values.sessionId });
         body = { type: values.type, reason: values.reason, targetId: values.memberId!, payload };
       }
       await proposalApi.create(body);
@@ -133,7 +141,8 @@ export default function ProposalModal({ open, allowed, preset, onClose, onDone }
     }
   };
 
-  const needsSession = type === 'PAIR_CHANGE' || type === 'MENTORING_POINT' || (type === 'MENTORING_DATA' && dataTarget !== 'MEMBER_SCORE');
+  const fromRecap = type === 'MENTORING_POINT' && Boolean(preset?.recap);
+  const needsSession = type === 'PAIR_CHANGE' || (type === 'MENTORING_POINT' && !fromRecap) || (type === 'MENTORING_DATA' && dataTarget !== 'MEMBER_SCORE');
   const needsMember = type === 'POINT_ADJUST' || type === 'MENTORING_POINT' || (type === 'MENTORING_DATA' && dataTarget === 'MEMBER_SCORE');
 
   return (
@@ -146,6 +155,7 @@ export default function ProposalModal({ open, allowed, preset, onClose, onDone }
         {type === 'MENTORING_DATA' && (
           <Form.Item name="dataTarget" label="Dữ liệu mentoring cần điều chỉnh" rules={[{ required: true }]}><Select options={DATA_TARGETS} /></Form.Item>
         )}
+        {fromRecap && <Alert className="!mb-4" type="warning" showIcon title={`Gốc của điểm: recap buổi ${preset?.recap?.sessionCode}`} description="Trưởng ban HLC Fund xem nhật ký nộp / sửa của recap này rồi duyệt hoặc từ chối; nếu duyệt, điểm được trừ kèm lý do và ghi vào nhật ký điểm." />}
         {needsSession && (
           <Form.Item name="sessionId" label={type === 'MENTORING_POINT' ? 'Buổi mentoring làm gốc của điểm' : 'Buổi mentoring'} rules={[{ required: true, message: 'Chọn buổi mentoring' }]}>
             <Select showSearch={{ optionFilterProp: 'label' }} options={sessionOptions} placeholder="Chọn buổi trong quý hiện tại" />

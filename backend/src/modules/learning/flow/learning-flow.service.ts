@@ -1012,6 +1012,7 @@ export class LearningFlowService {
                     _id: member._id,
                     memberCode: member.memberCode,
                     fullName: member.fullName,
+                    phone: member.phone ?? null,
                 },
                 submitted: mine.length,
                 approved: mine.filter(

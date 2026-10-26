@@ -69,6 +69,12 @@ export class LeaderController {
         return this.recapScoreService.rubric();
     }
 
+    /** Nhật ký nộp / sửa recap + mốc nộp lần đầu + điểm thưởng sớm (người duyệt / chấm recap) */
+    @Get("recaps/:id/history")
+    history(@ReqUser() user: User, @Param("id") id: string) {
+        return this.recapScoreService.history(user, id);
+    }
+
     @Put("recaps/:id/score")
     score(
         @ReqUser() user: User,

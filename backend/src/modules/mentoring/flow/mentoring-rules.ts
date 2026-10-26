@@ -4,8 +4,12 @@
  */
 
 export const VN_OFFSET_MS = 7 * 3600_000;
-/** Hạn nộp recap: thời điểm mentoring (giờ bắt đầu) + 24h */
+/** Hạn nộp recap: thời điểm buổi mentoring KẾT THÚC + 24h (vòng 10), tính riêng từng buổi */
 export const RECAP_WINDOW_MS = 24 * 3600_000;
+
+/** Hạn nộp recap của một buổi: giờ kết thúc + 24h (ví dụ kết thúc 20:00 ngày 10 -> hạn 20:00 ngày 11) */
+export const recapDeadlineOf = (endAt: Date) =>
+    new Date(endAt.getTime() + RECAP_WINDOW_MS);
 
 export type RoleRecapStatus =
     | "NO_SCHEDULE"

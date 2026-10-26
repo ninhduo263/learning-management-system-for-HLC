@@ -21,10 +21,10 @@ export const zaloUrl = (phone?: string | null) => {
  * Hiển thị số điện thoại; bấm vào số thì mở Zalo ở tab mới. Không có số: để trống. Số bị chủ số ẩn (máy chủ không trả
  * số cho người ngoài cặp / nhóm): hiện dấu ẩn.
  */
-export default function PhoneLink({ phone, hidden, empty = '—' }: { phone?: string | null; hidden?: boolean; empty?: string }) {
+export default function PhoneLink({ phone, hidden, empty = '—', hiddenTitle = 'Thành viên đã ẩn số điện thoại với người ngoài cặp và nhóm' }: { phone?: string | null; hidden?: boolean; empty?: string; hiddenTitle?: string }) {
   if (!phone) {
     return hidden
-      ? <span className="inline-flex items-center gap-1 text-gray-500" title="Thành viên đã ẩn số điện thoại với người ngoài cặp và nhóm"><LockOutlined aria-hidden />Đã ẩn số</span>
+      ? <span className="inline-flex items-center gap-1 text-gray-500" title={hiddenTitle}><LockOutlined aria-hidden />Đã ẩn số</span>
       : <span className="text-gray-500">{empty}</span>;
   }
   const url = zaloUrl(phone);

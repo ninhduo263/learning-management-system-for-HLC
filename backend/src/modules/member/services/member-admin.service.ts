@@ -4,6 +4,7 @@ import { ApiError } from "@config/exception/api-error";
 import { ActivityLogService } from "@module/activity-log/activity-log.service";
 import { GroupFlowService } from "@module/organization/flow/group-flow.service";
 import { UserModel } from "@module/repository/sequelize/model/user.model";
+import { AuthModel } from "@module/repository/sequelize/model/auth.model";
 import { TimeService } from "@module/time/time.service";
 import { SystemRole } from "@module/user/common/constant";
 import { User } from "@module/user/entities/user.entity";
@@ -71,7 +72,59 @@ export class MemberAdminService {
         private readonly memberModel: typeof MemberModel,
         @InjectModel(UserModel)
         private readonly userModel: typeof UserModel,
+        @InjectModel(AuthModel)
+        private readonly authModel: typeof AuthModel,
     ) {}
+
+    /**
+     * Ghi đè mật khẩu (vòng 10, chỉ Admin toàn cục): hệ thống tự sinh mật khẩu mới, trả về MỘT LẦN để Admin chuyển cho
+     * thành viên; chỉ lưu dạng băm. Không xem được mật khẩu cũ. Đăng xuất mọi phiên cũ của thành viên và bắt buộc
+     * thành viên đổi lại ở lần đăng nhập kế tiếp. Nhật ký ghi ai làm, cho ai, lúc nào (không ghi mật khẩu).
+     */
+    async resetPassword(actor: User, memberId: string) {
+        const member = await this.memberModel.findByPk(memberId, { raw: true });
+        if (!member) throw ApiError.NotFound("error-record-not-found");
+        if (!member.userId)
+            throw ApiError.BadRequest("error-member-no-account");
+        if (member.userId === actor._id)
+            throw ApiError.BadRequest("error-password-reset-self");
+        const account = await this.userModel.findByPk(member.userId);
+        if (!account) throw ApiError.BadRequest("error-member-no-account");
+        const password = initialPassword();
+        const now = this.timeService.now();
+        await this.sequelize.transaction(async (t) => {
+            await account.update(
+                {
+                    password: await createUserPassword(password),
+                    mustChangePassword: true,
+                    passwordResetAt: now,
+                },
+                { transaction: t },
+            );
+            // Đăng xuất mọi phiên: xóa phiên làm mới token; token truy cập cũ bị chặn theo passwordResetAt
+            await this.authModel.destroy({
+                where: { user: account._id },
+                transaction: t,
+            });
+            await this.activityLog.log(
+                actor,
+                {
+                    module: "MEMBER",
+                    action: "PASSWORD_RESET",
+                    targetId: member._id,
+                    targetName: `${member.fullName} (${member.memberCode})`,
+                    summary: `Ghi đè mật khẩu cho ${member.fullName} (${member.memberCode}), tài khoản ${account.username}. Thành viên phải đổi lại ở lần đăng nhập kế tiếp; các phiên đăng nhập cũ đã bị đăng xuất.`,
+                },
+                t,
+            );
+        });
+        return {
+            username: account.username,
+            /** Chỉ trả một lần, không lưu dạng đọc được */
+            password,
+            resetAt: now,
+        };
+    }
 
     /**
      * Mã kế tiếp: đếm toàn bộ hồ sơ (MTE + MTO, kể cả ngừng hoạt động) + 1. Nếu không khớp số lớn nhất đã dùng

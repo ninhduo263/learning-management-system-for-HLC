@@ -12,7 +12,7 @@ import {
   GROUP_KIND_LABEL, formatDate, fundApi, groupApi, memberDirectoryApi, roleApi,
   type FundContributor, type GroupHistory, type GroupKind, type GroupMember, type GroupRoleAssignment, type GroupView, type DirectoryMember, type RoleView
 } from '@/services/hlcApi';
-import PhoneLink from '@/components/PhoneLink';
+import PhoneLink, { zaloNumber } from '@/components/PhoneLink';
 
 const typeTag = (type?: string) => <Tag color={type === 'MENTOR' ? 'blue' : 'green'}>{type === 'MENTOR' ? 'MTO' : 'MTE'}</Tag>;
 
@@ -170,7 +170,8 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
                   <Table<FundContributor> rowKey="_id" size="small" pagination={false} dataSource={groupContributors} locale={{ emptyText: 'Chưa có' }} columns={[
                     { title: 'Họ tên', dataIndex: 'fullName' },
                     { title: 'Đơn vị', dataIndex: 'organization', render: (value: string | null) => value ?? '—' },
-                    { title: 'Liên hệ', dataIndex: 'contact', render: (value: string | null) => value ?? '—' },
+                    { title: 'SĐT / Zalo', render: (_: unknown, row: FundContributor) => <PhoneLink phone={row.phone} hidden={row.phoneHidden} hiddenTitle="Số của thầy cô chỉ Trưởng ban HLC Fund, Admin toàn cục và trưởng nhóm xem được" /> },
+                    { title: 'Liên hệ khác', dataIndex: 'contact', render: (value: string | null) => value ?? '—' },
                     { title: '', render: (_: unknown, row: FundContributor) => <Space>{!row.isActive && <Tag>Ngừng</Tag>}<Button size="small" type="link" onClick={() => { contributorForm.setFieldsValue(row); setContributor({ group, item: row }); }}>Sửa</Button></Space> }
                   ]} />
                 </>
@@ -241,8 +242,16 @@ export default function GroupManager({ kind, canDelete = true }: { kind: GroupKi
           if (ok) setContributor(null);
         }}>
           <Form.Item name="fullName" label="Họ tên" rules={[{ required: true, message: 'Nhập họ tên' }]}><Input /></Form.Item>
+          <Form.Item
+            name="phone"
+            label="Số điện thoại có đăng ký Zalo"
+            extra={contributor?.item ? 'Bỏ trống để giữ số đang lưu.' : 'Bấm số trong bảng sẽ mở Zalo. Chỉ Trưởng ban HLC Fund, Admin toàn cục và trưởng nhóm xem được số này.'}
+            rules={[{ required: !contributor?.item, message: 'Nhập số điện thoại có đăng ký Zalo' }, { validator: (_, value?: string) => (!value || zaloNumber(value) ? Promise.resolve() : Promise.reject(new Error('Số điện thoại chưa hợp lệ (cần ít nhất 9 chữ số)'))) }]}
+          >
+            <Input inputMode="tel" autoComplete="tel" placeholder="Số điện thoại có đăng ký Zalo" />
+          </Form.Item>
           <Form.Item name="organization" label="Đơn vị"><Input /></Form.Item>
-          <Form.Item name="contact" label="Liên hệ"><Input /></Form.Item>
+          <Form.Item name="contact" label="Liên hệ khác (email...)"><Input /></Form.Item>
           {contributor?.item && <Form.Item name="groupId" label="Nhóm"><Select options={groups.map((group) => ({ value: group._id, label: group.name }))} /></Form.Item>}
           {contributor?.item && <Form.Item name="isActive" label="Đang đóng quỹ" valuePropName="checked"><Switch /></Form.Item>}
         </Form>

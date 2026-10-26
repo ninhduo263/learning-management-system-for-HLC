@@ -28,6 +28,9 @@ const PASSWORD_CHANGE_ALLOWED: [string, RegExp][] = [
     ["GET", /\/access\/me$/],
     ["GET", /\/system-config$/],
     ["GET", /\/member\/me(\/profile)?$/],
+    // Trang Hồ sơ (nơi đổi mật khẩu) tải kèm bản nháp, yêu cầu đổi và lịch sử hồ sơ của chính mình (chỉ đọc)
+    ["GET", /\/member\/me\/profile\/(draft|requests)$/],
+    ["GET", /\/member\/me\/profile-logs$/],
     ["GET", /\/time\/mock$/],
     ["GET", /\/provinces$/],
 ];
@@ -49,24 +52,38 @@ export class SystemRoleGuard implements CanActivate {
      */
     private async assertPasswordChanged(request: Request) {
         const auth = request.user;
-        if (!(auth instanceof RequestAuthData) || !this.securityConfig) return;
+        if (!(auth instanceof RequestAuthData)) return;
         const user = await auth.getUser();
+        if (!user) return;
+        // Admin toàn cục ghi đè mật khẩu: phiên đăng nhập cấp trước lúc ghi đè bị đăng xuất ngay
+        // (iat tính theo giây, làm tròn lên để token cấp cùng giây với lúc ghi đè cũng bị chặn)
+        const issuedAt = Number(auth.getPayload()?.iat ?? 0);
         if (
-            !user ||
+            user.passwordResetAt &&
+            issuedAt &&
+            issuedAt <
+                Math.ceil(new Date(user.passwordResetAt).getTime() / 1000)
+        )
+            throw new UnauthorizedException();
+        const path = (request.originalUrl || request.url || "").split("?")[0];
+        const allowed = PASSWORD_CHANGE_ALLOWED.some(
+            ([method, pattern]) =>
+                request.method === method && pattern.test(path),
+        );
+        // Sau khi bị ghi đè: bắt buộc tự đổi lại mật khẩu (mọi tài khoản, không phụ thuộc công tắc)
+        if (user.mustChangePassword) {
+            if (allowed) return;
+            throw ApiError.Forbidden("error-password-change-required");
+        }
+        if (
+            !this.securityConfig ||
             user.systemRole === SystemRole.ADMIN ||
             user.passwordChangedAt
         )
             return;
         const config = await this.securityConfig.get();
         if (!config.forcePasswordChangeOnFirstLogin) return;
-        const path = (request.originalUrl || request.url || "").split("?")[0];
-        if (
-            PASSWORD_CHANGE_ALLOWED.some(
-                ([method, pattern]) =>
-                    request.method === method && pattern.test(path),
-            )
-        )
-            return;
+        if (allowed) return;
         throw ApiError.Forbidden("error-password-change-required");
     }
 

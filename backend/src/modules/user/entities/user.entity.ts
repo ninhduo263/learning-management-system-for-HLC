@@ -110,6 +110,12 @@ export class User implements BaseEntity {
 
     /** Lần tự đổi mật khẩu gần nhất */
     passwordChangedAt?: Date;
+
+    /** Admin toàn cục vừa ghi đè mật khẩu: bắt buộc tự đổi lại ở lần đăng nhập kế tiếp */
+    mustChangePassword?: boolean;
+
+    /** Lần Admin toàn cục ghi đè mật khẩu gần nhất: phiên đăng nhập cấp trước thời điểm này bị đăng xuất */
+    passwordResetAt?: Date;
 }
 
 export type UserDocument = HydratedDocument<User>;

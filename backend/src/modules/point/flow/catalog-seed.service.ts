@@ -122,10 +122,13 @@ export const ROLE_RULE_CODES = [
     "POSITION_ALLOWANCE",
     "POSITION_COMPLETION_BONUS",
 ];
+/** Mốc thưởng sớm tuần 2 (vòng 10): trước 23:59 ngày 14 (trước đây ngày 13). Mã rule giữ nguyên để không đổi id */
+const EARLY_WEEK2_NAME =
+    "Mentee nộp recap lần đầu từ ngày 8 đến 23:59 ngày 14 của tháng";
 const RULES = [
     rule(
         "MENTORING_EARLY_D1_7",
-        "Mentee nộp recap trong ngày 1-7 của tháng",
+        "Mentee nộp recap lần đầu trước 23:59 ngày 7 của tháng",
         "MENTORING_EARLY",
         PointRuleKind.AUTO,
         PointSourceType.MENTORING_RECAP,
@@ -141,14 +144,14 @@ const RULES = [
     ),
     rule(
         "MENTORING_EARLY_D8_13",
-        "Mentee nộp recap từ ngày 8 đến 23:59 ngày 13 của tháng",
+        EARLY_WEEK2_NAME,
         "MENTORING_EARLY",
         PointRuleKind.AUTO,
         PointSourceType.MENTORING_RECAP,
         {
             recapRole: "MENTEE",
             submittedDayFrom: 8,
-            submittedDayTo: 13,
+            submittedDayTo: 14,
             timezone: "Asia/Ho_Chi_Minh",
         },
         1,
@@ -653,6 +656,21 @@ export class CatalogSeedService implements OnApplicationBootstrap {
             },
         );
         changed += legacy;
+        // Vòng 10: mốc thưởng sớm tuần 2 kéo tới hết ngày 14 (rule cũ còn để ngày 13)
+        const week2 = await this.pointRuleModel.findOne({
+            where: { code: "MENTORING_EARLY_D8_13" },
+        });
+        const week2Conditions = (week2?.conditions ?? {}) as Record<
+            string,
+            unknown
+        >;
+        if (week2 && Number(week2Conditions.submittedDayTo) === 13) {
+            await week2.update({
+                name: EARLY_WEEK2_NAME,
+                conditions: { ...week2Conditions, submittedDayTo: 14 },
+            });
+            changed += 1;
+        }
         for (const kind of Object.values(GroupKind)) {
             const [, created] = await this.kindConfigModel.findOrCreate({
                 where: { groupKind: kind },

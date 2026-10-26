@@ -9,6 +9,7 @@ import ModuleAudienceModal from '@/components/ModuleAudienceModal';
 import ModuleAdminsModal from '@/components/ModuleAdminsModal';
 import RecapGradingPanel from '@/components/RecapGradingPanel';
 import SubmissionData from '@/components/SubmissionData';
+import PhoneLink from '@/components/PhoneLink';
 import { errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/services/mentoringApi';
 import {
@@ -435,6 +436,7 @@ function ProgressPanel({ module, moduleSelect }: { module: LearningModule; modul
         pagination={{ pageSize: 30 }}
         columns={[
           { title: 'Thành viên', render: (_: unknown, row: ModuleProgress['members'][number]) => <div>{row.member.fullName}<div className="text-xs text-gray-500">{row.member.memberCode}</div></div> },
+          { title: 'SĐT / Zalo', render: (_: unknown, row: ModuleProgress['members'][number]) => <PhoneLink phone={row.member.phone} hidden={row.member.phoneHidden} empty="" /> },
           { title: 'Đã nộp', dataIndex: 'submitted' },
           { title: 'Đã duyệt', dataIndex: 'approved' },
           { title: 'Tiến độ', width: 220, render: (_: unknown, row: ModuleProgress['members'][number]) => <Progress size="small" percent={Math.min(100, Math.round((row.submitted / Math.max(1, data?.min || data?.max || 1)) * 100))} status={row.reached ? 'success' : 'exception'} /> }

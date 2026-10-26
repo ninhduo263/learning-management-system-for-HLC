@@ -16,7 +16,7 @@ import { FileModel } from "@module/repository/sequelize/model/file.model";
 import { UserModel } from "@module/repository/sequelize/model/user.model";
 import { TimeService } from "@module/time/time.service";
 import { User } from "@module/user/entities/user.entity";
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
 import { ModuleRef } from "@nestjs/core";
 import { PointFlowService } from "@module/point/flow/point-flow.service";
 import { ConfigService } from "@nestjs/config";
@@ -38,6 +38,7 @@ import { MentorPreferenceItemModel } from "../models/mentor-preference-item.mode
 import { MentorPreferenceModel } from "../models/mentor-preference.model";
 import { MentoringAwardModel } from "../models/mentoring-award.model";
 import { MentoringPairLogModel } from "../models/mentoring-pair-log.model";
+import { MentoringRecapLogModel } from "../models/mentoring-recap-log.model";
 import { MentoringPairModel } from "../models/mentoring-pair.model";
 import { MentoringQuarterModel } from "../models/mentoring-quarter.model";
 import { MentoringRecapModel } from "../models/mentoring-recap.model";
@@ -54,7 +55,7 @@ import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
 import {
     PairRecapStatus,
     QuarterRef,
-    RECAP_WINDOW_MS,
+    recapDeadlineOf,
     RoleRecapStatus,
     canAdminPair,
     canChoosePreference,
@@ -159,7 +160,7 @@ export interface MySessionView extends SessionView {
 }
 
 @Injectable()
-export class MentoringFlowService {
+export class MentoringFlowService implements OnApplicationBootstrap {
     private readonly logger = new Logger(MentoringFlowService.name);
 
     constructor(
@@ -181,6 +182,8 @@ export class MentoringFlowService {
         private readonly awardModel: typeof MentoringAwardModel,
         @InjectModel(MentoringPairLogModel)
         private readonly pairLogModel: typeof MentoringPairLogModel,
+        @InjectModel(MentoringRecapLogModel)
+        private readonly recapLogModel: typeof MentoringRecapLogModel,
         @InjectModel(MentorPreferenceModel)
         private readonly preferenceModel: typeof MentorPreferenceModel,
         @InjectModel(MentorPreferenceItemModel)
@@ -200,6 +203,64 @@ export class MentoringFlowService {
 
     now() {
         return this.timeService.now();
+    }
+
+    /**
+     * Vòng 10: hạn recap = giờ KẾT THÚC buổi + 24h (trước đây tính từ giờ bắt đầu). Khởi động thì sửa hạn của các buổi
+     * đã có lịch, tính lại trạng thái nộp muộn, và ghi mốc nộp lần đầu cho recap cũ chưa có mốc. Chạy lại không đổi gì.
+     */
+    async onApplicationBootstrap() {
+        try {
+            const sessions = await this.sessionModel.findAll({
+                where: { scheduledEndAt: { [Op.ne]: null } },
+                attributes: [
+                    "_id",
+                    "periodId",
+                    "scheduledEndAt",
+                    "recapDeadlineAt",
+                ],
+                raw: true,
+            });
+            const changed = sessions.filter(
+                (session) =>
+                    !session.recapDeadlineAt ||
+                    new Date(session.recapDeadlineAt).getTime() !==
+                        recapDeadlineOf(
+                            new Date(session.scheduledEndAt),
+                        ).getTime(),
+            );
+            for (const session of changed) {
+                const deadline = recapDeadlineOf(
+                    new Date(session.scheduledEndAt),
+                );
+                await this.sessionModel.update(
+                    { recapDeadlineAt: deadline },
+                    { where: { _id: session._id } },
+                );
+                for (const recap of await this.recapModel.findAll({
+                    where: { sessionId: session._id },
+                })) {
+                    const isLate =
+                        new Date(recap.firstSubmittedAt).getTime() >
+                        deadline.getTime();
+                    if (recap.isLate !== isLate) await recap.update({ isLate });
+                }
+            }
+            const [backfilled] = await this.recapModel.update(
+                { initialSubmittedAt: Sequelize.col("firstSubmittedAt") },
+                { where: { initialSubmittedAt: null } },
+            );
+            if (changed.length || backfilled)
+                this.logger.log(
+                    `Hạn recap: cập nhật ${changed.length} buổi theo giờ kết thúc + 24h; ghi mốc nộp lần đầu cho ${backfilled} recap`,
+                );
+            if (changed.length)
+                await this.recalculatePoints(
+                    changed.map((session) => session.periodId),
+                );
+        } catch (error) {
+            this.logger.warn(`Không cập nhật được hạn recap: ${error}`);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1457,7 +1518,7 @@ export class MentoringFlowService {
     ) {
         const { session } = context;
         const now = this.now();
-        const recapDeadlineAt = new Date(startAt.getTime() + RECAP_WINDOW_MS);
+        const recapDeadlineAt = recapDeadlineOf(endAt);
         const run = async (t: Transaction) => {
             await this.sessionModel.update(
                 {
@@ -1635,6 +1696,19 @@ export class MentoringFlowService {
         // Bị từ chối rồi nộp lại = nộp mới: tính lại thời điểm nộp và nộp muộn
         const resetTiming =
             !existing || existing.reviewStatus === RecapReviewStatus.REJECTED;
+        const filesBefore = existing
+            ? (
+                  await this.attachmentModel.findAll({
+                      where: {
+                          ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                          ownerId: existing._id,
+                      },
+                      order: [["sortOrder", "ASC"]],
+                      attributes: ["fileId", "fileName"],
+                      raw: true,
+                  })
+              ).map((row) => ({ fileId: row.fileId, fileName: row.fileName }))
+            : null;
         await this.sequelize.transaction(async (t) => {
             let recapId = existing?._id;
             if (existing) {
@@ -1667,12 +1741,37 @@ export class MentoringFlowService {
                         content: dto.content.trim(),
                         firstSubmittedAt: now,
                         lastSubmittedAt: now,
+                        // Mốc thưởng sớm: chỉ ghi ở lần nộp đầu tiên, sửa / nộp lại về sau không đổi
+                        initialSubmittedAt: now,
                         isLate,
                     },
                     { transaction: t },
                 );
                 recapId = created._id;
             }
+            await this.recapLogModel.create(
+                {
+                    recapId,
+                    sessionId: session._id,
+                    action: !existing
+                        ? "SUBMIT"
+                        : existing.reviewStatus === RecapReviewStatus.REJECTED
+                          ? "RESUBMIT"
+                          : "EDIT",
+                    contentBefore: existing?.content ?? null,
+                    contentAfter: dto.content.trim(),
+                    filesBefore,
+                    filesAfter: fileIds.map((fileId) => ({
+                        fileId,
+                        fileName:
+                            files.find((item) => item._id === fileId)?.name ??
+                            null,
+                    })),
+                    at: now,
+                    actorUserId: user._id,
+                },
+                { transaction: t },
+            );
             await this.attachmentModel.destroy({
                 where: {
                     ownerType: AttachmentOwnerType.MENTORING_RECAP,
@@ -1750,6 +1849,7 @@ export class MentoringFlowService {
                     content: dto.content.trim(),
                     firstSubmittedAt: submittedAt,
                     lastSubmittedAt: submittedAt,
+                    initialSubmittedAt: submittedAt,
                     isLate:
                         submittedAt.getTime() >
                         new Date(session.recapDeadlineAt).getTime(),
@@ -1758,6 +1858,23 @@ export class MentoringFlowService {
                     proxyReason: auth.behalf
                         ? `[Theo ủy quyền của ${auth.behalf.name}] ${dto.reason.trim()}`
                         : dto.reason.trim(),
+                },
+                { transaction: t },
+            );
+            await this.recapLogModel.create(
+                {
+                    recapId: recap._id,
+                    sessionId,
+                    action: "PROXY",
+                    contentBefore: null,
+                    contentAfter: dto.content.trim(),
+                    filesBefore: null,
+                    filesAfter: files.map((file) => ({
+                        fileId: file._id,
+                        fileName: file.name,
+                    })),
+                    at: submittedAt,
+                    actorUserId: user._id,
                 },
                 { transaction: t },
             );

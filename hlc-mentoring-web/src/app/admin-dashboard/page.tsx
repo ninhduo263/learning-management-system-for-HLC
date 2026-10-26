@@ -19,6 +19,7 @@ import { errorMessage } from '@/lib/api';
 import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL, formatDateTime } from '@/services/mentoringApi';
 import { PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, dashboardApi, money, periodLabel, points, type AdminDashboard, type DashboardPair } from '@/services/hlcApi';
 import { getCurrentTime } from '@/utils/time';
+import PhoneLink from '@/components/PhoneLink';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend);
 applyChartTheme();
@@ -56,8 +57,8 @@ export default function AdminDashboardPage() {
       title: 'Mentor · Mentee',
       render: (_: unknown, row: DashboardPair) => (
         <div className="leading-snug">
-          <div><span className="text-gray-500">Mentor:</span> <strong>{row.mentor?.fullName}</strong></div>
-          <div><span className="text-gray-500">Mentee:</span> <strong>{row.mentee?.fullName}</strong></div>
+          <div><span className="text-gray-500">Mentor:</span> <strong>{row.mentor?.fullName}</strong> <PhoneLink phone={row.mentor?.phone} hidden={row.mentor?.phoneHidden} empty="" /></div>
+          <div><span className="text-gray-500">Mentee:</span> <strong>{row.mentee?.fullName}</strong> <PhoneLink phone={row.mentee?.phone} hidden={row.mentee?.phoneHidden} empty="" /></div>
         </div>
       )
     },

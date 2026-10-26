@@ -59,6 +59,7 @@ export const MENTORING_IMPORT_BATCH = "MentoringImportBatch";
 export const PERIOD_LOG = "PeriodLog";
 export const GROUP_KIND_CONFIG = "GroupKindConfig";
 export const MENTORING_PAIR_LOG = "MentoringPairLog";
+export const MENTORING_RECAP_LOG = "MentoringRecapLog";
 export const ACTIVITY_LOG = "ActivityLog";
 export const GROUP_DELEGATION = "GroupDelegation";
 export const MODULE_AUDIENCE = "ModuleAudience";

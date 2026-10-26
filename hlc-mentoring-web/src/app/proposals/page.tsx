@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, App, Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import ProposalModal from '@/components/ProposalModal';
+import RecapHistoryModal from '@/components/RecapHistoryModal';
 import { DashHeader } from '@/components/dashboard/DashParts';
 import { useAccess } from '@/lib/useAccess';
 import { errorMessage } from '@/lib/api';
@@ -25,6 +26,7 @@ export default function ProposalsPage() {
   const [status, setStatus] = useState<string | undefined>();
   const [type, setType] = useState<ProposalType | undefined>();
   const [rows, setRows] = useState<ProposalView[]>([]);
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deciding, setDeciding] = useState<{ row: ProposalView; status: 'APPROVED' | 'REJECTED' } | null>(null);
@@ -122,7 +124,16 @@ export default function ProposalsPage() {
           }}
           columns={[
             { title: 'Loại', render: (_: unknown, row: ProposalView) => <Tag color="purple" className="!m-0">{PROPOSAL_TYPE_LABEL[row.type]}</Tag> },
-            { title: 'Nội dung đề xuất', render: (_: unknown, row: ProposalView) => <div className="max-w-xs">{row.title}</div> },
+            {
+              title: 'Nội dung đề xuất',
+              render: (_: unknown, row: ProposalView) => (
+                <div className="max-w-xs">
+                  {row.title}
+                  {/* Đề xuất có gốc là một recap (ví dụ trừ điểm thưởng sớm): xem nhật ký nộp / sửa trước khi duyệt */}
+                  {row.payload?.sourceType === 'RECAP' && Boolean(row.payload.sourceId) && <div><Button type="link" size="small" className="!px-0" onClick={() => setHistoryOf(String(row.payload.sourceId))}>Xem nhật ký nộp / sửa recap</Button></div>}
+                </div>
+              )
+            },
             { title: 'Người gửi', render: (_: unknown, row: ProposalView) => <div><strong>{row.proposerName}</strong><div className="text-xs text-gray-500">{row.proposerRole}</div></div> },
             ...(box === 'inbox' ? [] : [{ title: 'Gửi đến', dataIndex: 'deciderLabel' }]),
             { title: 'Trạng thái', render: (_: unknown, row: ProposalView) => <Tag color={PROPOSAL_STATUS_COLOR[row.status]} className="!m-0">{PROPOSAL_STATUS_LABEL[row.status]}</Tag> },
@@ -144,6 +155,7 @@ export default function ProposalsPage() {
         />
       </Card>
 
+      <RecapHistoryModal recapId={historyOf} onClose={() => setHistoryOf(null)} />
       <ProposalModal open={creating} allowed={summary.canPropose} onClose={() => setCreating(false)} onDone={() => { setCreating(false); void changed(); }} />
       <Modal
         title={deciding ? `${deciding.status === 'APPROVED' ? 'Duyệt' : 'Từ chối'} đề xuất` : ''}

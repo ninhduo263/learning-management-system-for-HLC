@@ -32,6 +32,14 @@ export class MentoringRecapModel extends Model implements MentoringRecap {
     @Column({ type: DataType.DATE, allowNull: false })
     lastSubmittedAt: Date;
 
+    /**
+     * Mốc nộp recap LẦN ĐẦU TIÊN (vòng 10): ghi một lần, không đổi khi sửa hay nộp lại sau khi bị trả.
+     * Dùng so với mốc thưởng mentoring sớm (23:59 ngày 7 / ngày 14). Khác `firstSubmittedAt` (mốc của bản đang xét,
+     * dùng cho trạng thái nộp muộn).
+     */
+    @Column({ type: DataType.DATE, allowNull: true })
+    initialSubmittedAt?: Date;
+
     @Column({ type: DataType.BOOLEAN, allowNull: false })
     isLate: boolean;
 

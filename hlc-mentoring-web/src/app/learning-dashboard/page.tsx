@@ -6,6 +6,7 @@ import { AuditOutlined, BookOutlined, FileDoneOutlined, StarOutlined, TeamOutlin
 import { CategoryScale, Chart as ChartJS, Legend, LinearScale, LineElement, PointElement, BarElement, Tooltip } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
+import PhoneLink from '@/components/PhoneLink';
 import ProposalModal, { type ProposalPreset } from '@/components/ProposalModal';
 import { Avatar, DashHeader, KpiCard } from '@/components/dashboard/DashParts';
 import { CHART_COLORS, applyChartTheme } from '@/lib/chartTheme';
@@ -163,7 +164,7 @@ export default function LearningDashboardPage() {
                 scroll={{ x: 'max-content' }}
                 locale={{ emptyText: 'Chưa có điểm trong kỳ này' }}
                 columns={[
-                  { title: 'Thành viên', render: (_: unknown, row: AverageMemberRow) => <div className="flex items-center gap-2"><Avatar name={row.member.fullName} /><div><strong>{row.member.fullName}</strong><div className="text-xs text-gray-500">{row.member.memberCode}</div></div></div> },
+                  { title: 'Thành viên', render: (_: unknown, row: AverageMemberRow) => <div className="flex items-center gap-2"><Avatar name={row.member.fullName} /><div><strong>{row.member.fullName}</strong><div className="text-xs text-gray-500">{row.member.memberCode}</div><div className="text-sm"><PhoneLink phone={row.member.phone} hidden={row.member.phoneHidden} empty="" /></div></div></div> },
                   { title: 'Nhóm', render: (_: unknown, row: AverageMemberRow) => row.group?.name ?? '—' },
                   ...(data.range.months.length > 1 ? data.range.months.map((code) => ({
                     title: `T${Number(code.slice(5))}`, align: 'right' as const,

@@ -315,7 +315,7 @@ export default function MemberMentoringView({ role }: { role: 'MENTOR' | 'MENTEE
           <>
             <Typography.Paragraph type="secondary">
               Hai bên tự hẹn lịch qua điện thoại/tin nhắn rồi một người gửi lịch đã chốt lên đây. Lịch chỉ sửa được trước thời điểm đã chốt lần đầu.
-              Recap viết sau khi buổi kết thúc, cần ít nhất 1 ảnh; nộp trong 24 giờ kể từ giờ mentoring là đúng hạn.
+              Recap viết sau khi buổi kết thúc, cần ít nhất 1 ảnh; hạn nộp là 24 giờ sau khi buổi kết thúc (ví dụ kết thúc 20:00 ngày 10 thì hạn 20:00 ngày 11). Nộp muộn chỉ hiện trạng thái “Nộp muộn”, không trừ điểm. Thưởng mentoring sớm tính theo lần nộp đầu tiên: trước 23:59 ngày 7 được +2 điểm, trước 23:59 ngày 14 được +1 điểm (sau khi recap được duyệt).
             </Typography.Paragraph>
             <Table rowKey="_id" loading={loading} dataSource={upcoming} columns={columns} pagination={false} scroll={{ x: 'max-content' }} locale={{ emptyText: 'Không có buổi mentoring sắp tới' }} />
           </>

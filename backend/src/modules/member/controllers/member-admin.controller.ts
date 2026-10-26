@@ -40,6 +40,12 @@ export class MemberAdminController {
         return this.adminService.create(user, dto);
     }
 
+    /** Ghi đè mật khẩu: hệ thống tự sinh mật khẩu mới, chỉ hiện một lần */
+    @Post("members/:id/reset-password")
+    resetPassword(@ReqUser() user: User, @Param("id") id: string) {
+        return this.adminService.resetPassword(user, id);
+    }
+
     @Get("members/:id/sensitive")
     sensitive(@ReqUser() user: User, @Param("id") id: string) {
         return this.adminService.sensitive(user, id);

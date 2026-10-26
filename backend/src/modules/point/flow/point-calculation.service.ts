@@ -264,9 +264,13 @@ export class PointCalculationService {
         for (const recap of data.recaps) {
             // Chỉ tính khi recap đã được duyệt (recap MTE được chấm điểm)
             if (recap.reviewStatus !== RecapReviewStatus.APPROVED) continue;
-            if (new Date(recap.firstSubmittedAt) > now) continue;
+            // Mốc so sánh: lần nộp ĐẦU TIÊN (sửa / nộp lại sau không đổi mốc; dữ liệu cũ chưa có mốc thì dùng firstSubmittedAt)
+            const submittedAt = new Date(
+                recap.initialSubmittedAt ?? recap.firstSubmittedAt,
+            );
+            if (submittedAt > now) continue;
             const session = sessionMap.get(recap.sessionId);
-            const local = vnParts(new Date(recap.firstSubmittedAt));
+            const local = vnParts(submittedAt);
             if (
                 !session ||
                 local.year !== period.year ||
@@ -293,8 +297,8 @@ export class PointCalculationService {
                     points: Number(rule.points),
                     sourceType: PointSourceType.MENTORING_RECAP,
                     sourceId: recap._id,
-                    // Mốc: lần nộp của bản recap được duyệt (nộp lại sau khi bị trả thì tính từ lần nộp lại)
-                    description: `${rule.name}: recap ${session.code} nộp lúc ${formatVn(recap.firstSubmittedAt)} (lần nộp được duyệt${recap.reviewedAt ? ` ${formatVn(recap.reviewedAt)}` : ""})`,
+                    // Mốc: lần nộp đầu tiên của recap (vòng 10), ghi kèm lúc được duyệt để truy vết
+                    description: `${rule.name}: recap ${session.code} nộp lần đầu lúc ${formatVn(submittedAt)}${recap.reviewedAt ? ` (duyệt ${formatVn(recap.reviewedAt)})` : ""}`,
                     group: rule.exclusiveGroup ?? null,
                     priority: Number(rule.priority ?? 0),
                 });

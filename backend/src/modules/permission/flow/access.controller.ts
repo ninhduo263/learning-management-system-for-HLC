@@ -56,9 +56,12 @@ export class AccessController {
             leaderGroups: await this.leaderGroupsOf(user),
             /** Công tắc "bắt buộc đổi mật khẩu lần đầu" đang bật và tài khoản chưa tự đổi lần nào */
             mustChangePassword:
-                !isSuperAdmin &&
-                config.forcePasswordChangeOnFirstLogin &&
-                !user.passwordChangedAt,
+                Boolean(user.mustChangePassword) ||
+                (!isSuperAdmin &&
+                    config.forcePasswordChangeOnFirstLogin &&
+                    !user.passwordChangedAt),
+            /** Mật khẩu vừa được Admin toàn cục ghi đè (lời nhắc riêng trên màn hình đổi mật khẩu) */
+            passwordWasReset: Boolean(user.mustChangePassword),
             profileUrlEditable: config.memberCanEditProfileUrl,
         };
     }

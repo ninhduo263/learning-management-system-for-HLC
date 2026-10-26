@@ -33,6 +33,21 @@ import { confirmLeave } from '@/lib/unsavedGuard';
 import { profileApprovalApi } from '@/services/hlcApi';
 
 const { Header, Sider, Content } = Layout;
+
+/**
+ * Logo HLC trên menu: biểu tượng tròn chính thức (nền trong suốt) kèm chữ navy. Menu thu gọn chỉ hiện biểu tượng tròn.
+ * File logo ngang (Logo_HLC_text.png) hiện chưa dùng được (chữ trắng trên nền trắng); khi có bản nền trong suốt chữ navy
+ * thì thay phần chữ bằng ảnh đó.
+ */
+function BrandLogo({ compact = false }: { compact?: boolean }) {
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className="brand-logo" src="/brand/hlc-logo-256.png" alt="HLC – Happy Leadership Community" width={44} height={44} />
+      {!compact && <span className="brand-wordmark"><strong>HLC</strong><small>Happy Leadership Community</small></span>}
+    </>
+  );
+}
 const { useBreakpoint } = Grid;
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
@@ -296,7 +311,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   const navigation = (
     <Menu
-      theme="dark"
+      theme="light"
       mode="inline"
       selectedKeys={menuItems.some((item) => routeMap[item.key] === pathname) ? [menuItems.find((item) => routeMap[item.key] === pathname)?.key ?? ''] : []}
       items={menuItems}
@@ -311,9 +326,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   return (
     <Layout className={`min-h-screen app-shell ${roleTheme}`}>
       {!isMobile && <Sider className="role-sider" collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)} width={260}>
-        <div className="brand-lockup">
-          <span className="brand-mark">H</span>
-          {!collapsed && <span>HLC <b>LMS</b></span>}
+        <div className={`brand-lockup${collapsed ? ' is-collapsed' : ''}`}>
+          <BrandLogo compact={collapsed} />
         </div>
         {!collapsed && <div className="role-caption">{roleLabel}</div>}
         {navigation}
@@ -396,7 +410,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           {children}
         </Content>
       </Layout>
-      <Drawer title={<span className="brand-lockup !m-0 !h-auto"><span className="brand-mark">H</span><span>HLC <b>LMS</b></span></span>} placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} rootClassName={`nav-drawer ${roleTheme}`}>
+      <Drawer title={<span className="brand-lockup !m-0 !h-auto"><BrandLogo /></span>} placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} rootClassName={`nav-drawer ${roleTheme}`}>
         {navigation}
       </Drawer>
       <Modal

@@ -342,6 +342,7 @@ export class LearningAverageService {
                         memberCode: member.memberCode,
                         fullName: member.fullName,
                         memberType: member.memberType,
+                        phone: member.phone ?? null,
                     },
                     group: groupOfMember.get(memberId) ?? null,
                     /** Tháng: điểm của tháng; quý: trung bình các điểm tháng */

@@ -17,6 +17,13 @@ export class FundContributorModel extends Model {
     @Column({ type: DataType.STRING(100), allowNull: true })
     contact?: string;
 
+    /**
+     * Số điện thoại có đăng ký Zalo (vòng 10, bắt buộc khi thêm mới): bấm số mở https://zalo.me/<số>. Chỉ Trưởng ban
+     * HLC Fund, Admin toàn cục và trưởng nhóm HLC Fund của thầy cô xem được.
+     */
+    @Column({ type: DataType.STRING(20), allowNull: true })
+    phone?: string;
+
     /** Nhóm HLC Fund phụ trách (Leader nhóm được nộp hộ, duyệt) */
     @Column({ type: DataType.STRING(24), allowNull: true })
     groupId?: string;

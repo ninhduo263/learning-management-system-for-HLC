@@ -72,6 +72,8 @@ export default function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [changing, setChanging] = useState(false);
   const [mustChange, setMustChange] = useState(false);
+  /** Mật khẩu vừa được Admin toàn cục ghi đè: phải đổi lại */
+  const [wasReset, setWasReset] = useState(false);
   const [profileUrlEditable, setProfileUrlEditable] = useState(false);
   const [dirtyFields, setDirtyFields] = useState<(keyof Values)[]>([]);
   const [form] = Form.useForm<Values>();
@@ -89,6 +91,7 @@ export default function ProfilePage() {
       setLogs(history);
       setRequests(myRequests);
       setMustChange(Boolean(access.mustChangePassword));
+      setWasReset(Boolean(access.passwordWasReset));
       setProfileUrlEditable(Boolean(access.profileUrlEditable));
       official.current = fromMember(profile);
       form.setFieldsValue(official.current);
@@ -184,6 +187,7 @@ export default function ProfilePage() {
       passwordForm.resetFields();
       const access = await loadAccess(true);
       setMustChange(Boolean(access.mustChangePassword));
+      setWasReset(Boolean(access.passwordWasReset));
       window.dispatchEvent(new Event('hlc-access-change'));
       if (window.location.search.includes('doiMatKhau')) router.push('/');
     } catch (error) {
@@ -218,7 +222,7 @@ export default function ProfilePage() {
 
   const passwordCard = (
     <Card title="Đổi mật khẩu">
-      {mustChange && <Alert className="!mb-3" type="warning" showIcon title="Bạn cần đổi mật khẩu được cấp trước khi dùng các chức năng khác." />}
+      {mustChange && <Alert className="!mb-3" type="warning" showIcon title={wasReset ? 'Mật khẩu của bạn vừa được Admin đặt lại. Hãy đổi sang mật khẩu mới của riêng bạn trước khi dùng các chức năng khác.' : 'Bạn cần đổi mật khẩu được cấp trước khi dùng các chức năng khác.'} />}
       <Form form={passwordForm} name="changePassword" layout="vertical" onFinish={changePassword} className="max-w-md">
         <Form.Item name="oldPass" label="Mật khẩu hiện tại" rules={[{ required: true, message: 'Nhập mật khẩu hiện tại' }]}><Input.Password autoComplete="current-password" /></Form.Item>
         <Form.Item
@@ -273,7 +277,7 @@ export default function ProfilePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [careers, banks, provinces, load, message]);
 
-  if (mustChange) return <div className="space-y-4"><Typography.Title level={3} className="!mb-0">Đổi mật khẩu lần đầu</Typography.Title>{passwordCard}</div>;
+  if (mustChange) return <div className="space-y-4"><Typography.Title level={3} className="!mb-0">{wasReset ? 'Đổi lại mật khẩu' : 'Đổi mật khẩu lần đầu'}</Typography.Title>{passwordCard}</div>;
 
   return (
     <div className="space-y-4 pb-24">

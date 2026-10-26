@@ -122,7 +122,7 @@ export default function AdminMentoringPage() {
 }
 
 function memberLabel(member?: MemberView | null) {
-  return member ? <div><strong>{member.fullName}</strong><div className="text-xs text-gray-500">{member.memberCode}</div></div> : '—';
+  return member ? <div><strong>{member.fullName}</strong><div className="text-xs text-gray-500">{member.memberCode}</div><div className="text-sm"><PhoneLink phone={member.phone} hidden={member.phoneHidden} empty="" /></div></div> : '—';
 }
 
 function QuarterPanel({ quarterCode, kind, canManage }: { quarterCode: string; kind: 'current' | 'next'; canManage: boolean }) {
@@ -550,7 +550,7 @@ function QuarterPanel({ quarterCode, kind, canManage }: { quarterCode: string; k
                 {(['mentee', 'mentor'] as const).map((role) => (
                   <Tag key={role} color={ROLE_STATUS_COLOR[selected.recapStatus[role]]}>{role === 'mentee' ? 'Mentee' : 'Mentor'}: {ROLE_STATUS_LABEL[selected.recapStatus[role]]}</Tag>
                 ))}
-                {selected.recapDeadlineAt && <Typography.Text type="secondary">Hạn recap (giờ mentoring + 24h): {formatDateTime(selected.recapDeadlineAt)}</Typography.Text>}
+                {selected.recapDeadlineAt && <Typography.Text type="secondary">Hạn recap (giờ kết thúc + 24 giờ): {formatDateTime(selected.recapDeadlineAt)}</Typography.Text>}
               </Space>
               {(['mentee', 'mentor'] as const).map((role) => selected.recaps[role] && (
                 <RecapCard key={role} recap={selected.recaps[role]!} />

@@ -15,6 +15,7 @@ const theme: ThemeConfig = {
     colorWarning: '#D9A400',
     colorError: BRAND.danger,
     colorBgLayout: BRAND.bg,
+    colorBgContainer: BRAND.white,
     colorText: BRAND.navy,
     colorTextHeading: BRAND.navy,
     colorTextSecondary: BRAND.muted,
@@ -57,13 +58,16 @@ const theme: ThemeConfig = {
     },
     Statistic: { titleFontSize: 15, contentFontSize: 30 },
     Tag: { fontSizeSM: 14 },
+    // Menu tone sáng (vòng 10): nền trắng, chữ navy; mục đang chọn nền xanh dương nhạt, chữ xanh đậm
     Menu: {
       itemHeight: 48,
-      darkItemBg: 'transparent',
-      darkItemColor: '#C9D3EA',
-      darkItemHoverColor: BRAND.white,
-      darkItemSelectedBg: BRAND.blue,
-      darkItemSelectedColor: BRAND.white
+      itemBg: 'transparent',
+      itemColor: BRAND.muted,
+      itemHoverColor: BRAND.navy,
+      itemHoverBg: BRAND.skySoft,
+      itemSelectedBg: BRAND.blueSoft,
+      itemSelectedColor: BRAND.blueDeep,
+      itemActiveBg: BRAND.skySoft
     },
     Tabs: { itemSelectedColor: BRAND.blueDeep, itemColor: BRAND.muted, itemHoverColor: BRAND.blue, inkBarColor: BRAND.blue, titleFontSize: 16 },
     Segmented: { itemSelectedColor: BRAND.navy },

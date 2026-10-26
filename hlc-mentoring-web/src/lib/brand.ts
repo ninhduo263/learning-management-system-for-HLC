@@ -31,7 +31,7 @@ export const BRAND = {
   faint: '#5A6480',
   border: '#D5DEEA',
   line: '#E6ECF3',
-  bg: '#F4F8FB',
+  bg: '#F6FAFD',
   // Cảnh báo dịu (không dùng cho khoản đóng góp tình nguyện chưa có)
   warn: '#8A5A00',
   danger: '#B42318',

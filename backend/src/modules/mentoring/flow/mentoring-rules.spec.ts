@@ -1,5 +1,5 @@
 import {
-    RECAP_WINDOW_MS,
+    recapDeadlineOf,
     canAdminPair,
     canChoosePreference,
     canEditSchedule,
@@ -82,6 +82,13 @@ describe("mentoring rules", () => {
         );
     });
 
+    it("hạn recap = giờ kết thúc buổi + 24h (giờ VN)", () => {
+        // Kết thúc 20:00 ngày 10 -> hạn 20:00 ngày 11
+        expect(recapDeadlineOf(vn("2026-10-10T20:00:00"))).toEqual(
+            vn("2026-10-11T20:00:00"),
+        );
+    });
+
     describe("trạng thái recap", () => {
         const start = vn("2026-10-02T10:00:00");
         const session = {
@@ -89,7 +96,7 @@ describe("mentoring rules", () => {
             scheduledStartAt: start,
             scheduledEndAt: vn("2026-10-02T11:00:00"),
             firstScheduledStartAt: start,
-            recapDeadlineAt: new Date(start.getTime() + RECAP_WINDOW_MS),
+            recapDeadlineAt: recapDeadlineOf(vn("2026-10-02T11:00:00")),
         };
         const recap = (
             at: string,

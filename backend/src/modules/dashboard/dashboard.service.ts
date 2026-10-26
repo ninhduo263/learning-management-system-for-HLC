@@ -155,6 +155,8 @@ export class DashboardService {
                     memberCode: member.memberCode,
                     fullName: member.fullName,
                     memberType: member.memberType,
+                    // Bấm số mở Zalo; ẩn số theo lựa chọn của thành viên (PhonePrivacyInterceptor)
+                    phone: member.phone ?? null,
                 },
             ]),
         );

@@ -55,6 +55,22 @@ export interface ContributionQuery {
 /** Loại người đóng trong sổ quỹ */
 export type PayerKind = "MTO" | "MTE" | "EXTERNAL";
 
+/** Chuẩn hóa số điện thoại thầy cô: bỏ khoảng trắng / dấu, +84 -> 0, giữ số 0 đầu. Không hợp lệ: null */
+export function normalizeZaloPhone(value?: string | null) {
+    let digits = String(value ?? "").replace(/[^\d+]/g, "");
+    if (digits.startsWith("+84")) digits = `0${digits.slice(3)}`;
+    else if (digits.startsWith("84") && digits.length === 11)
+        digits = `0${digits.slice(2)}`;
+    digits = digits.replace(/\D/g, "");
+    return digits.length >= 9 && digits.length <= 12 ? digits : null;
+}
+
+/** Số của thầy cô (dữ liệu cũ chưa có trường phone: lấy từ ô liên hệ nếu là số điện thoại) */
+const contributorPhone = (item: {
+    phone?: string | null;
+    contact?: string | null;
+}) => item.phone || normalizeZaloPhone(item.contact);
+
 export interface ProxyContributionInput extends ContributionDto {
     memberId?: string;
     contributorId?: string;
@@ -115,7 +131,37 @@ export class FundFlowService {
         };
     }
 
-    private async views(rows: FundContribution[]) {
+    /** Số điện thoại thầy cô theo quyền xem: không được xem thì trả dấu ẩn (phoneHidden) */
+    private contributorPhoneView(
+        item: { phone?: string | null; contact?: string | null },
+        visible: boolean,
+    ) {
+        const phone = contributorPhone(item);
+        return visible
+            ? { phone: phone ?? null }
+            : { phone: null, phoneHidden: Boolean(phone) };
+    }
+
+    /** Ai xem được số thầy cô của nhóm: Admin HLC Fund (Trưởng ban, Admin toàn cục) hoặc trưởng nhóm (Leader) */
+    private contributorPhoneRule(
+        managed: { selfId: string } | null,
+        leaders: Map<string, { leaderId: string | null }>,
+    ) {
+        return (groupId?: string | null) =>
+            !managed ||
+            (Boolean(groupId) &&
+                leaders.get(groupId)?.leaderId === managed.selfId);
+    }
+
+    /**
+     * `canSeeContributorPhone(groupId)`: người xem được thấy số điện thoại thầy cô của nhóm đó (Trưởng ban HLC Fund,
+     * Admin toàn cục, trưởng nhóm HLC Fund). Mặc định không trả số thầy cô.
+     */
+    private async views(
+        rows: FundContribution[],
+        canSeeContributorPhone: (groupId?: string | null) => boolean = () =>
+            false,
+    ) {
         const files = await this.attachments.listFor(
             AttachmentOwnerType.FUND_CONTRIBUTION,
             rows.map((row) => row._id),
@@ -180,6 +226,7 @@ export class FundFlowService {
                           memberCode: member.memberCode,
                           fullName: member.fullName,
                           memberType: member.memberType,
+                          phone: member.phone ?? null,
                       }
                     : contributor
                       ? {
@@ -188,6 +235,10 @@ export class FundFlowService {
                             fullName: contributor.fullName,
                             memberType: "EXTERNAL",
                             organization: contributor.organization ?? null,
+                            ...this.contributorPhoneView(
+                                contributor,
+                                canSeeContributorPhone(contributor.groupId),
+                            ),
                         }
                       : null,
                 /** Người nộp hộ (Leader / admin) */
@@ -553,7 +604,13 @@ export class FundFlowService {
                 memberCode: member.memberCode,
                 fullName: member.fullName,
                 memberType: member.memberType,
+                // Ẩn số theo lựa chọn của thành viên: PhonePrivacyInterceptor xử lý chung cho mọi API
+                phone: member.phone ?? null,
             };
+        const canSeeContributorPhone = this.contributorPhoneRule(
+            managed,
+            leaders,
+        );
         const payerRow = (
             payer: {
                 _id: string;
@@ -561,6 +618,8 @@ export class FundFlowService {
                 fullName: string;
                 memberType: string;
                 organization?: string | null;
+                phone?: string | null;
+                phoneHidden?: boolean;
             },
             own: FundContribution[],
         ) => ({
@@ -638,6 +697,10 @@ export class FundFlowService {
                                 fullName: item.fullName,
                                 memberType: "EXTERNAL",
                                 organization: item.organization ?? null,
+                                ...this.contributorPhoneView(
+                                    item,
+                                    canSeeContributorPhone(item.groupId),
+                                ),
                             },
                             rows.filter(
                                 (row) => row.contributorId === item._id,
@@ -666,7 +729,7 @@ export class FundFlowService {
                     members: memberRows,
                 };
             }),
-            contributions: await this.views(rows),
+            contributions: await this.views(rows, canSeeContributorPhone),
         };
     }
 
@@ -747,11 +810,21 @@ export class FundFlowService {
         if (groupId)
             where.groupId =
                 managed && !managed.view.has(groupId) ? [] : groupId;
-        return this.contributorModel.findAll({
+        const rows = await this.contributorModel.findAll({
             where,
             order: [["fullName", "ASC"]],
             raw: true,
         });
+        const leaders = managed
+            ? await this.groupAccess.leadersOf([
+                  ...new Set(rows.map((row) => row.groupId).filter(Boolean)),
+              ])
+            : new Map();
+        const canSee = this.contributorPhoneRule(managed, leaders);
+        return rows.map((row) => ({
+            ...row,
+            ...this.contributorPhoneView(row, canSee(row.groupId)),
+        }));
     }
 
     async saveContributor(
@@ -760,6 +833,7 @@ export class FundFlowService {
             fullName: string;
             organization?: string;
             contact?: string;
+            phone?: string;
             groupId?: string;
             note?: string;
             isActive?: boolean;
@@ -782,9 +856,14 @@ export class FundFlowService {
                 ))
         )
             throw ApiError.Forbidden("error-forbidden");
+        // Số điện thoại có đăng ký Zalo: bắt buộc khi thêm mới; khi sửa bỏ trống thì giữ số cũ
+        const phone = normalizeZaloPhone(dto.phone);
+        if ((dto.phone?.trim() || !id) && !phone)
+            throw ApiError.BadRequest("error-fund-contributor-phone-required");
         const values = {
             fullName: dto.fullName.trim(),
             organization: dto.organization?.trim() || null,
+            ...(phone && { phone }),
             contact: dto.contact?.trim() || null,
             groupId: dto.groupId || null,
             note: dto.note?.trim() || null,
@@ -802,14 +881,34 @@ export class FundFlowService {
             )
                 throw ApiError.Forbidden("error-forbidden");
             await row.update(values);
-            return row.get({ plain: true });
+            return this.maskContributor(managed, row.get({ plain: true }));
         }
-        return (
-            await this.contributorModel.create({
-                ...values,
-                createdBy: user._id,
-            })
-        ).get({ plain: true });
+        return this.maskContributor(
+            managed,
+            (
+                await this.contributorModel.create({
+                    ...values,
+                    createdBy: user._id,
+                })
+            ).get({ plain: true }),
+        );
+    }
+
+    private async maskContributor(
+        managed: { selfId: string } | null,
+        row: FundContributorModel,
+    ) {
+        const leaders =
+            managed && row.groupId
+                ? await this.groupAccess.leadersOf([row.groupId])
+                : new Map();
+        return {
+            ...row,
+            ...this.contributorPhoneView(
+                row,
+                this.contributorPhoneRule(managed, leaders)(row.groupId),
+            ),
+        };
     }
 
     // ------------------------------------------------------------------
@@ -835,7 +934,8 @@ export class FundFlowService {
             limit: 1000,
             raw: true,
         });
-        return this.views(rows);
+        // Chỉ Ban HLC Fund (Trưởng ban, Admin toàn cục) gọi được: thấy số thầy cô
+        return this.views(rows, () => true);
     }
 
     async review(
@@ -910,6 +1010,7 @@ export class FundFlowService {
                     _id: member._id,
                     memberCode: member.memberCode,
                     fullName: member.fullName,
+                    phone: member.phone ?? null,
                 },
                 approved,
                 pending: sum(

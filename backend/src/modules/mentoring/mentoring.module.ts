@@ -40,6 +40,7 @@ import { MentoringScheduleLogSqlRepository } from "./repositories/mentoring-sche
 import { MentoringScheduleLogService } from "./services/mentoring-schedule-log.service";
 import { MentoringRecapController } from "./controllers/mentoring-recap.controller";
 import { MentoringRecapModel } from "./models/mentoring-recap.model";
+import { MentoringRecapLogModel } from "./models/mentoring-recap-log.model";
 import { MentoringRecapSqlRepository } from "./repositories/mentoring-recap-sql.repository";
 import { MentoringRecapService } from "./services/mentoring-recap.service";
 import { MentoringAwardController } from "./controllers/mentoring-award.controller";
@@ -57,6 +58,7 @@ import { MentoringAwardService } from "./services/mentoring-award.service";
             MentoringSessionModel,
             MentoringScheduleLogModel,
             MentoringRecapModel,
+            MentoringRecapLogModel,
             MentoringAwardModel,
             MentoringImportBatchModel,
             RecapDelegationModel,

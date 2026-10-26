@@ -20,6 +20,12 @@ export class ContributorDto {
     @IsOptional()
     contact?: string;
 
+    /** Số điện thoại có đăng ký Zalo (bắt buộc khi thêm mới; khi sửa bỏ trống thì giữ số cũ) */
+    @IsString()
+    @IsOptional()
+    @MaxLength(20)
+    phone?: string;
+
     /** Nhóm HLC Fund phụ trách */
     @IsString()
     @IsOptional()

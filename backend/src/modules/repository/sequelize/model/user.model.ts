@@ -53,4 +53,12 @@ export class UserModel extends Model implements User {
     /** Lần tự đổi mật khẩu gần nhất (null = chưa đổi từ khi được cấp) */
     @Column({ type: DataType.DATE, allowNull: true })
     passwordChangedAt?: Date;
+
+    /** Admin toàn cục vừa ghi đè mật khẩu: bắt buộc tự đổi lại ở lần đăng nhập kế tiếp (vòng 10) */
+    @Column({ type: DataType.BOOLEAN, allowNull: false, defaultValue: false })
+    mustChangePassword?: boolean;
+
+    /** Lần ghi đè mật khẩu gần nhất: mọi phiên đăng nhập cấp trước thời điểm này bị đăng xuất */
+    @Column({ type: DataType.DATE, allowNull: true })
+    passwordResetAt?: Date;
 }

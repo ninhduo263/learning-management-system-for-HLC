@@ -5,6 +5,7 @@ import { App, Button, Card, DatePicker, Input, Modal, Progress, Segmented, Space
 import { CheckOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import FundGroupReport from '@/components/FundGroupReport';
+import PhoneLink from '@/components/PhoneLink';
 import { EvidenceButton, FundStatusTag } from '@/components/fund/FundStatus';
 import ResponsiveTabs from '@/components/ResponsiveTabs';
 import FundLedgerPanel from '@/components/FundLedgerPanel';
@@ -134,6 +135,7 @@ export default function AdminFundPage() {
         pagination={{ pageSize: 30 }}
         columns={[
           { title: 'Mentee', render: (_: unknown, row: FundStats['members'][number]) => <div>{row.member.fullName}<div className="text-xs text-gray-500">{row.member.memberCode}</div></div> },
+          { title: 'SĐT / Zalo', render: (_: unknown, row: FundStats['members'][number]) => <PhoneLink phone={row.member.phone} hidden={row.member.phoneHidden} empty="" /> },
           { title: 'Đã ghi nhận', align: 'right' as const, sorter: (a: FundStats['members'][number], b: FundStats['members'][number]) => a.approved - b.approved, render: (_: unknown, row: FundStats['members'][number]) => money(row.approved) },
           { title: 'Đang chờ xác nhận', align: 'right' as const, render: (_: unknown, row: FundStats['members'][number]) => row.pending ? money(row.pending) : '—' },
           { title: 'Tiến độ', width: 200, render: (_: unknown, row: FundStats['members'][number]) => <Progress size="small" percent={Math.min(100, Math.round((row.approved / Math.max(1, stats.target.minApprovedAmount)) * 100))} status={row.reached ? 'success' : 'active'} /> },

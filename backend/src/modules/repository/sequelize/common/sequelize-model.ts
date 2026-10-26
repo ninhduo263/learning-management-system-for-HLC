@@ -28,6 +28,7 @@ import { ProposalModel } from "@module/proposal/models/proposal.model";
 import { RecapDelegationModel } from "@module/mentoring/models/recap-delegation.model";
 import { GroupKindConfigModel } from "@module/organization/models/group-kind-config.model";
 import { MentoringPairLogModel } from "@module/mentoring/models/mentoring-pair-log.model";
+import { MentoringRecapLogModel } from "@module/mentoring/models/mentoring-recap-log.model";
 import { PeriodModel } from "@module/period/models/period.model";
 import { AttachmentModel } from "@module/attachment/models/attachment.model";
 import { MentoringQuarterModel } from "@module/mentoring/models/mentoring-quarter.model";
@@ -124,6 +125,7 @@ export const SequelizeModel: ModelCtor<Model>[] = [
     PeriodLogModel,
     GroupKindConfigModel,
     MentoringPairLogModel,
+    MentoringRecapLogModel,
     ActivityLogModel,
     GroupDelegationModel,
     ModuleAudienceModel,

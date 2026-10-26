@@ -18,6 +18,7 @@ import {
   type QuarterReport
 } from '@/services/mentoringApi';
 import PhoneLink from '@/components/PhoneLink';
+import ResetPasswordButton from '@/components/ResetPasswordButton';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 type ReportRow = QuarterReport['rows'][number];
@@ -189,7 +190,7 @@ export default function AdminMembersPage() {
         },
         { title: 'PROFILE', dataIndex: 'profileUrl', render: (value?: string) => <ProfileLink url={value} /> },
         { title: 'TỈNH, THÀNH', render: (_: unknown, member: MemberView) => provinceNeedsReview(member as unknown as Member) ? <Tag color="orange">Cần chọn lại tỉnh</Tag> : null },
-        { title: '', render: (_: unknown, member: MemberView) => <Button size="small" onClick={() => setEditingMember(member._id)}>Sửa hồ sơ</Button> }
+        { title: '', render: (_: unknown, member: MemberView) => <Space size="small"><Button size="small" onClick={() => setEditingMember(member._id)}>Sửa hồ sơ</Button>{isSuperAdmin && <ResetPasswordButton member={member} />}</Space> }
       ]}
     />
   );

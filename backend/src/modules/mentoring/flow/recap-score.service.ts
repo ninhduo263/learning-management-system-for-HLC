@@ -33,6 +33,14 @@ import { MentoringPairModel } from "../models/mentoring-pair.model";
 import { MentoringRecapModel } from "../models/mentoring-recap.model";
 import { MentoringSessionModel } from "../models/mentoring-session.model";
 import { MentoringQuarterModel } from "../models/mentoring-quarter.model";
+import { MentoringRecapLogModel } from "../models/mentoring-recap-log.model";
+import {
+    PointEntryStatus,
+    PointSourceType,
+} from "@module/point/common/constant";
+import { PointEntryModel } from "@module/point/models/point-entry.model";
+import { PointTypeModel } from "@module/point/models/point-type.model";
+import { UserModel } from "@module/repository/sequelize/model/user.model";
 import { ScoreRecapDto } from "./dto/score-recap.dto";
 import { RecapAccessService } from "./recap-access.service";
 import { pairRecapStatus, roleRecapStatus } from "./mentoring-rules";
@@ -76,6 +84,12 @@ export class RecapScoreService {
         private readonly quarterModel: typeof MentoringQuarterModel,
         @InjectModel(MemberModel)
         private readonly memberModel: typeof MemberModel,
+        @InjectModel(MentoringRecapLogModel)
+        private readonly recapLogModel: typeof MentoringRecapLogModel,
+        @InjectModel(PointEntryModel)
+        private readonly pointEntryModel: typeof PointEntryModel,
+        @InjectModel(PointTypeModel)
+        private readonly pointTypeModel: typeof PointTypeModel,
     ) {}
 
     /** Module RECAP + tiêu chí chấm */
@@ -520,6 +534,115 @@ export class RecapScoreService {
         return {
             ...updated,
             score: updated.score === null ? null : Number(updated.score),
+        };
+    }
+
+    /**
+     * Nhật ký nộp / sửa recap (vòng 10) cho người duyệt: mọi lần nộp, sửa, nộp lại kèm nội dung trước / sau, mốc nộp lần
+     * đầu (mốc so với hạn thưởng sớm) và điểm thưởng sớm đang được tính từ recap này. Người duyệt dùng để phát hiện nộp
+     * sơ sài giữ mốc rồi sửa lại, và đề xuất Trưởng ban HLC Fund trừ thủ công nếu cần.
+     */
+    async history(user: User, recapId: string) {
+        const recap = await this.recapModel.findByPk(recapId, { raw: true });
+        if (!recap) throw ApiError.NotFound("error-record-not-found");
+        const session = await this.sessionModel.findByPk(recap.sessionId, {
+            raw: true,
+        });
+        const pair = await this.pairModel.findByPk(session.pairId, {
+            raw: true,
+        });
+        // Trưởng ban HLC Fund (quyền sửa điểm) xem để quyết định đề xuất trừ điểm thưởng sớm
+        const caps = await this.groupAccess.capabilities(user);
+        if (
+            user.systemRole === SystemRole.ADMIN ||
+            caps.actions.has(RolePermission.EDIT_POINTS)
+        ) {
+            // được xem
+        } else if (recap.role === MentoringRole.MENTOR) {
+            await this.recapAccess.authorize(user, pair, "REVIEW");
+        } else if (
+            !(await this.isGlobalReviewer(
+                user,
+                (await this.rubric()).module._id,
+            ))
+        ) {
+            const scope = await this.groupAccess.reviewerScope(user, {
+                permission: RolePermission.SCORE_RECAP,
+                kind: GroupKind.MENTEE,
+            });
+            if (!scope.memberIds.has(pair.menteeId))
+                throw ApiError.Forbidden("error-forbidden");
+        }
+        const logs = await this.recapLogModel.findAll({
+            where: { recapId },
+            order: [["at", "ASC"]],
+            raw: true,
+        });
+        const actorIds = [
+            ...new Set(logs.map((row) => row.actorUserId).filter(Boolean)),
+        ];
+        const actors = new Map(
+            (actorIds.length
+                ? await UserModel.findAll({
+                      where: { _id: actorIds },
+                      attributes: ["_id", "username", "fullname"],
+                      raw: true,
+                  })
+                : []
+            ).map((row) => [row._id, row.fullname || row.username]),
+        );
+        const period = await this.periodFlow.getById(session.periodId);
+        const entries = await this.pointEntryModel.findAll({
+            where: {
+                sourceType: PointSourceType.MENTORING_RECAP,
+                sourceId: recapId,
+                status: PointEntryStatus.ACTIVE,
+            },
+            raw: true,
+        });
+        const earlyType = await this.pointTypeModel.findOne({
+            where: { code: "MENTORING_EARLY" },
+            raw: true,
+        });
+        const member = await this.memberModel.findByPk(recap.memberId, {
+            raw: true,
+        });
+        return {
+            recapId,
+            role: recap.role,
+            sessionCode: session.code,
+            periodCode: period?.code ?? null,
+            member: member && {
+                _id: member._id,
+                memberCode: member.memberCode,
+                fullName: member.fullName,
+            },
+            /** Mốc so với hạn thưởng sớm: lần nộp đầu tiên, không đổi khi sửa */
+            initialSubmittedAt:
+                recap.initialSubmittedAt ?? recap.firstSubmittedAt,
+            lastSubmittedAt: recap.lastSubmittedAt,
+            recapDeadlineAt: session.recapDeadlineAt ?? null,
+            isLate: recap.isLate,
+            reviewStatus: recap.reviewStatus,
+            /** Điểm thưởng mentoring sớm đang được tính từ recap này */
+            earlyBonus: entries
+                .filter((row) => row.pointTypeId === earlyType?._id)
+                .reduce((total, row) => total + Number(row.points), 0),
+            earlyBonusPointTypeCode: earlyType?.code ?? null,
+            /** Số lần sửa / nộp lại sau lần nộp đầu (gợi ý cho người duyệt) */
+            editCount: logs.filter(
+                (row) => row.action !== "SUBMIT" && row.action !== "PROXY",
+            ).length,
+            logs: logs.map((row) => ({
+                _id: row._id,
+                action: row.action,
+                at: row.at,
+                actorName: actors.get(row.actorUserId) ?? null,
+                contentBefore: row.contentBefore ?? null,
+                contentAfter: row.contentAfter,
+                filesBefore: row.filesBefore ?? null,
+                filesAfter: row.filesAfter ?? null,
+            })),
         };
     }
 }

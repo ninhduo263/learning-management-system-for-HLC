@@ -5,6 +5,7 @@ import { Alert, App, Button, Card, DatePicker, Empty, Form, Input, InputNumber, 
 import { CheckOutlined, HeartFilled, PlusOutlined, UserAddOutlined } from '@ant-design/icons';
 import dayjs, { type Dayjs } from 'dayjs';
 import ImageUpload, { type UploadedImage } from '@/components/ImageUpload';
+import PhoneLink, { zaloNumber } from '@/components/PhoneLink';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { EvidenceButton, FundStatusTag, periodOf, weekLabel } from '@/components/fund/FundStatus';
 import { errorMessage } from '@/lib/api';
@@ -19,6 +20,10 @@ type Group = Report['groups'][number];
 type Row = Group['members'][number];
 /** Bộ lọc trạng thái. NONE ("Chưa có ghi nhận") chỉ có ở chế độ xem quản trị để biết ai cần được nhắc nhẹ */
 type StatusFilter = 'ALL' | 'DONE' | 'PENDING' | 'NONE';
+/** Số điện thoại bấm mở Zalo. Số thầy cô chỉ Trưởng ban HLC Fund, Admin toàn cục và trưởng nhóm xem được */
+const payerPhone = (payer?: { phone?: string | null; phoneHidden?: boolean; memberType?: string } | null) => (
+  <PhoneLink phone={payer?.phone} hidden={payer?.phoneHidden} empty="" hiddenTitle={payer?.memberType === 'EXTERNAL' ? 'Số của thầy cô chỉ Trưởng ban HLC Fund, Admin toàn cục và trưởng nhóm xem được' : undefined} />
+);
 const payerTag = (type?: string) => type === 'EXTERNAL' ? <Tag color="gold">Thầy cô</Tag> : type === 'MENTOR' ? <Tag color="blue">MTO</Tag> : <Tag color="green">MTE</Tag>;
 /** Một dòng bảng dễ đọc: một khoản đóng góp, hoặc người chưa có khoản nào trong kỳ (ô để trống) */
 type EasyRow = { key: string; payer: Row['member']; item: ContributionView | null };
@@ -153,6 +158,7 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
       <div>
         <div className="fund-name">{row.payer.fullName}</div>
         <div className="mt-1 flex flex-wrap items-center gap-1">{payerTag(row.payer.memberType)}{row.payer.organization && <span className="fund-sub">{row.payer.organization}</span>}</div>
+        <div className="mt-1">{payerPhone(row.payer)}</div>
         {row.item?.isProxy && <div className="fund-sub mt-1">Nộp hộ: {row.item.proxyByName}</div>}
       </div>
     );
@@ -201,7 +207,7 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
       dataSource={rows}
       scroll={{ x: 'max-content' }}
       columns={[
-        { title: 'Người đóng góp', render: (_: unknown, row: ContributionView) => <div><div className="fund-name">{row.member?.fullName}</div><div className="mt-1">{payerTag(row.member?.memberType)}{row.isProxy && <span className="fund-sub">Nộp hộ: {row.proxyByName}</span>}</div></div> },
+        { title: 'Người đóng góp', render: (_: unknown, row: ContributionView) => <div><div className="fund-name">{row.member?.fullName}</div><div className="mt-1">{payerTag(row.member?.memberType)}{row.isProxy && <span className="fund-sub">Nộp hộ: {row.proxyByName}</span>}</div><div className="mt-1">{payerPhone(row.member)}</div></div> },
         { title: 'Kỳ', render: (_: unknown, row: ContributionView) => <div><div>{periodOf(row, weeks)}</div><div className="fund-sub">{FUND_CYCLE_LABEL[row.cycleType ?? 'ONCE']} · gửi {formatDateTime(row.submittedAt)}</div></div> },
         { title: 'Số tiền', align: 'right' as const, render: (_: unknown, row: ContributionView) => <span className="fund-amount">{money(row.amount)}</span> },
         { title: 'Trạng thái', render: (_: unknown, row: ContributionView) => statusCell(row, canReview) },
@@ -255,7 +261,7 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
                   scroll={{ x: 'max-content' }}
                   locale={{ emptyText: statusFilter === 'ALL' ? 'Nhóm chưa có thành viên đóng quỹ' : 'Không có thành viên ở trạng thái này' }}
                   columns={[
-                    { title: 'Người đóng góp', fixed: 'left' as const, render: (_: unknown, row: Row) => <div><strong>{row.member.fullName}</strong><div>{payerTag(row.member.memberType)}{row.member.organization && <span className="text-xs text-gray-500">{row.member.organization}</span>}</div></div> },
+                    { title: 'Người đóng góp', fixed: 'left' as const, render: (_: unknown, row: Row) => <div><strong>{row.member.fullName}</strong><div>{payerTag(row.member.memberType)}{row.member.organization && <span className="text-xs text-gray-500">{row.member.organization}</span>}</div><div className="text-sm">{payerPhone(row.member)}</div></div> },
                     ...weeks.map((week) => ({
                       title: weekLabel(week),
                       render: (_: unknown, row: Row) => {
@@ -327,10 +333,18 @@ export default function FundGroupReport({ showKindFilter = false, fixedKind }: {
             message.error(errorMessage(error));
           }
         }}>
-          <Typography.Paragraph type="secondary">Thầy cô tham gia đóng quỹ nhưng không có hồ sơ MTO. Chỉ cần họ tên; đơn vị và liên hệ không bắt buộc.</Typography.Paragraph>
+          <Typography.Paragraph type="secondary">Thầy cô tham gia đóng quỹ nhưng không có hồ sơ MTO. Cần họ tên và số điện thoại có đăng ký Zalo (bấm số trong bảng sẽ mở Zalo); đơn vị không bắt buộc.</Typography.Paragraph>
           <Form.Item name="fullName" label="Họ tên" rules={[{ required: true, message: 'Nhập họ tên' }]}><Input /></Form.Item>
+          <Form.Item
+            name="phone"
+            label="Số điện thoại có đăng ký Zalo"
+            extra="Ví dụ 0912 345 678. Chỉ Trưởng ban HLC Fund, Admin toàn cục và trưởng nhóm xem được số này."
+            rules={[{ required: true, message: 'Nhập số điện thoại có đăng ký Zalo' }, { validator: (_, value?: string) => (!value || zaloNumber(value) ? Promise.resolve() : Promise.reject(new Error('Số điện thoại chưa hợp lệ (cần ít nhất 9 chữ số)'))) }]}
+          >
+            <Input inputMode="tel" autoComplete="tel" placeholder="Số điện thoại có đăng ký Zalo" />
+          </Form.Item>
           <Form.Item name="organization" label="Đơn vị"><Input /></Form.Item>
-          <Form.Item name="contact" label="Liên hệ (SĐT / email)"><Input /></Form.Item>
+          <Form.Item name="contact" label="Liên hệ khác (email...)"><Input /></Form.Item>
           <Form.Item name="note" label="Ghi chú"><Input /></Form.Item>
         </Form>
       </Modal>

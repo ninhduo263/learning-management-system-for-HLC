@@ -203,6 +203,8 @@ export class UserService
         const res = await this.userRepository.updateById(user._id, {
             password: await createUserPassword(dto.newPass),
             passwordChangedAt: new Date(),
+            // Đã tự đổi sau khi bị Admin ghi đè: bỏ cờ bắt buộc đổi
+            mustChangePassword: false,
         });
         return this.omitPassword(res);
     }

@@ -21,7 +21,7 @@ import { MentoringScheduleLogModel } from "../models/mentoring-schedule-log.mode
 import { MentoringSessionModel } from "../models/mentoring-session.model";
 import { MentoringFlowService } from "./mentoring-flow.service";
 import {
-    RECAP_WINDOW_MS,
+    recapDeadlineOf,
     pad2,
     parseQuarterCode,
     quarterMonths,
@@ -591,9 +591,7 @@ export class MentoringHistoryService {
                     transaction: t,
                 });
                 if (!row.startAt) continue;
-                const deadline = new Date(
-                    row.startAt.getTime() + RECAP_WINDOW_MS,
-                );
+                const deadline = recapDeadlineOf(row.endAt ?? row.startAt);
                 await this.sessionModel.update(
                     {
                         scheduledStartAt: row.startAt,
@@ -634,6 +632,7 @@ export class MentoringHistoryService {
                             content: row.mentorRecap.content,
                             firstSubmittedAt: row.mentorRecap.submittedAt,
                             lastSubmittedAt: row.mentorRecap.submittedAt,
+                            initialSubmittedAt: row.mentorRecap.submittedAt,
                             isLate: row.mentorRecap.submittedAt > deadline,
                             reviewStatus: row.mentorRecap.review,
                             ...(row.mentorRecap.review !== "PENDING" && {
@@ -658,6 +657,7 @@ export class MentoringHistoryService {
                             content: row.menteeRecap.content,
                             firstSubmittedAt: row.menteeRecap.submittedAt,
                             lastSubmittedAt: row.menteeRecap.submittedAt,
+                            initialSubmittedAt: row.menteeRecap.submittedAt,
                             isLate: row.menteeRecap.submittedAt > deadline,
                             reviewStatus: scored
                                 ? RecapReviewStatus.APPROVED

@@ -10,6 +10,9 @@ export interface MemberBrief {
   /** EXTERNAL = thầy cô ngoài danh sách MTO */
   memberType?: 'MENTOR' | 'MENTEE' | 'EXTERNAL';
   organization?: string | null;
+  /** Số điện thoại (bấm mở Zalo). null + phoneHidden: chủ số đã ẩn hoặc người xem không có quyền xem số thầy cô */
+  phone?: string | null;
+  phoneHidden?: boolean;
 }
 
 export interface FileView {
@@ -340,7 +343,7 @@ export const FUND_CYCLE_LABEL: Record<FundCycle, string> = { ONCE: 'Một lần'
 export type PayerKind = 'MTO' | 'MTE' | 'EXTERNAL';
 export const PAYER_KIND_LABEL: Record<PayerKind, string> = { MTO: 'MTO', MTE: 'MTE', EXTERNAL: 'Thầy cô ngoài danh sách' };
 
-export interface FundContributor { _id: string; fullName: string; organization: string | null; contact: string | null; groupId: string | null; note: string | null; isActive: boolean }
+export interface FundContributor { _id: string; fullName: string; organization: string | null; contact: string | null; groupId: string | null; note: string | null; isActive: boolean; phone?: string | null; phoneHidden?: boolean }
 
 type IncomeByKind = { total: number; MTO: number; MTE: number; EXTERNAL: number };
 type ExpenseByType = { total: number; ALLOWANCE: number; OTHER: number };
@@ -648,6 +651,8 @@ export interface MyAccess {
   moduleIds: string[] | null;
   leaderGroups: LeaderGroupAccess[];
   mustChangePassword: boolean;
+  /** Mật khẩu vừa được Admin toàn cục ghi đè: phải đổi lại trước khi dùng tiếp */
+  passwordWasReset?: boolean;
   /** Phạm vi có quyền GHI (scopes gồm cả phạm vi chỉ xem như POINT của Trưởng ban MTE) */
   writeScopes: AdminScope[];
   profileUrlEditable: boolean;
@@ -717,7 +722,7 @@ export const dashboardApi = {
 // ---------- Dashboard điểm học tập trung bình ----------
 
 export interface AverageMemberRow {
-  member: { _id: string; memberCode: string; fullName: string; memberType: 'MENTOR' | 'MENTEE' };
+  member: { _id: string; memberCode: string; fullName: string; memberType: 'MENTOR' | 'MENTEE'; phone?: string | null; phoneHidden?: boolean };
   group: { _id: string; name: string } | null;
   average: number | null;
   /** Điểm trung bình từng tháng của khoảng xem (đơn vị gốc: 1 MTE x 1 tháng) */
@@ -982,6 +987,8 @@ export const memberAdminApi = {
   create: (body: NewMemberInput) =>
     apiJson<{ member: Member; group: { _id: string; name: string } | null; codeMethod: string; codeWarning: string | null; account: { username: string; password: string } }>('/member-admin/members', { method: 'POST', json: body }),
   /** Xem đầy đủ CCCD / số tài khoản (ghi nhật ký) */
+  /** Ghi đè mật khẩu (Admin toàn cục): hệ thống tự sinh, chỉ trả một lần */
+  resetPassword: (id: string) => apiJson<{ username: string; password: string; resetAt: string }>(`/member-admin/members/${id}/reset-password`, { method: 'POST' }),
   sensitive: (id: string) => apiJson<{ nationalId: string | null; bankAccount: string | null; bankName: string | null }>(`/member-admin/members/${id}/sensitive`)
 };
 
@@ -1060,8 +1067,39 @@ export const leaderApi = {
   overview: (code?: string) => apiJson<LeaderOverview>(`/leader/overview${q({ period: code })}`),
   recaps: (params: { period?: string; groupId?: string; filter?: string }) => apiJson<{ rubric: RecapRubric; rows: RecapToScore[]; missing: MissingMentorRecap[] }>(`/leader/recaps${q(params)}`),
   score: (id: string, body: { status: 'APPROVED' | 'REJECTED'; scores?: { criterionId: string; score: number }[]; feedback?: string }) =>
-    apiJson(`/leader/recaps/${id}/score`, { method: 'PUT', json: body })
+    apiJson(`/leader/recaps/${id}/score`, { method: 'PUT', json: body }),
+  /** Nhật ký nộp / sửa recap + mốc nộp lần đầu + điểm thưởng sớm đang tính */
+  recapHistory: (id: string) => apiJson<RecapHistory>(`/leader/recaps/${id}/history`)
 };
+
+export type RecapLogAction = 'SUBMIT' | 'EDIT' | 'RESUBMIT' | 'PROXY';
+export const RECAP_LOG_LABEL: Record<RecapLogAction, string> = { SUBMIT: 'Nộp lần đầu', EDIT: 'Sửa', RESUBMIT: 'Nộp lại sau khi bị trả', PROXY: 'Nộp hộ' };
+export interface RecapHistory {
+  recapId: string;
+  role: 'MENTOR' | 'MENTEE';
+  sessionCode: string;
+  periodCode: string | null;
+  member: { _id: string; memberCode: string; fullName: string } | null;
+  /** Mốc so với hạn thưởng sớm (23:59 ngày 7 / 14): lần nộp đầu tiên, không đổi khi sửa */
+  initialSubmittedAt: string;
+  lastSubmittedAt: string;
+  recapDeadlineAt: string | null;
+  isLate: boolean;
+  reviewStatus: string;
+  earlyBonus: number;
+  earlyBonusPointTypeCode: string | null;
+  editCount: number;
+  logs: {
+    _id: string;
+    action: RecapLogAction;
+    at: string;
+    actorName: string | null;
+    contentBefore: string | null;
+    contentAfter: string;
+    filesBefore: { fileId: string; fileName: string | null }[] | null;
+    filesAfter: { fileId: string; fileName: string | null }[] | null;
+  }[];
+}
 
 // ---------- Hồ sơ cá nhân ----------
 

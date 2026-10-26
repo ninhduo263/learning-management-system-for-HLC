@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, App, Button, Descriptions, Form, Input, InputNumber, Modal, Segmented, Space, Table, Tag, Typography } from 'antd';
+import { HistoryOutlined } from '@ant-design/icons';
 import FileThumbs from '@/components/FileThumbs';
 import ProxyRecapModal from '@/components/ProxyRecapModal';
+import RecapHistoryModal from '@/components/RecapHistoryModal';
 import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
 import { errorMessage } from '@/lib/api';
 import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL, REVIEW_STATUS_LABEL, formatDateTime } from '@/services/mentoringApi';
@@ -22,6 +24,7 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
   const [loading, setLoading] = useState(false);
   const [scoring, setScoring] = useState<RecapToScore | null>(null);
   const [saving, setSaving] = useState(false);
+  const [historyOf, setHistoryOf] = useState<string | null>(null);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -140,6 +143,7 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
           />
         </div>
       )}
+      <RecapHistoryModal recapId={historyOf} onClose={() => setHistoryOf(null)} />
       <ProxyRecapModal target={proxyTarget} onClose={() => setProxyTarget(null)} onSaved={() => void load()} />
       <Modal
         title={scoring ? `Recap ${scoring.role === 'MENTOR' ? 'MTO' : 'MTE'} · ${scoring.session.code}` : ''}
@@ -149,7 +153,8 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
         destroyOnHidden
         forceRender
         footer={scoring?.canScore ? (
-          <Space>
+          <Space wrap>
+            <Button icon={<HistoryOutlined />} onClick={() => setHistoryOf(scoring._id)}>Nhật ký nộp / sửa</Button>
             <Button onClick={() => setScoring(null)}>Đóng</Button>
             {scoring.mode === 'APPROVE' ? (
               <>
@@ -163,7 +168,7 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
               </>
             )}
           </Space>
-        ) : <Button onClick={() => setScoring(null)}>Đóng</Button>}
+        ) : <Space wrap>{scoring && <Button icon={<HistoryOutlined />} onClick={() => setHistoryOf(scoring._id)}>Nhật ký nộp / sửa</Button>}<Button onClick={() => setScoring(null)}>Đóng</Button></Space>}
       >
         {scoring && (
           <div className="space-y-4">
@@ -172,7 +177,7 @@ export default function RecapGradingPanel({ groupId, extra }: { groupId?: string
               { key: 'mentee', label: 'Mentee', children: scoring.mentee?.fullName },
               { key: 'mentor', label: 'Mentor', children: scoring.mentor?.fullName },
               { key: 'time', label: 'Buổi mentoring', children: formatDateTime(scoring.session.scheduledStartAt) },
-              { key: 'deadline', label: 'Hạn recap', children: formatDateTime(scoring.session.recapDeadlineAt) },
+              { key: 'deadline', label: 'Hạn recap (kết thúc + 24 giờ)', children: formatDateTime(scoring.session.recapDeadlineAt) },
               { key: 'status', label: 'Trạng thái duyệt', children: REVIEW_STATUS_LABEL[scoring.reviewStatus] }
             ]} />
             <div className="whitespace-pre-wrap rounded-lg bg-gray-50 p-3">{scoring.content}</div>
