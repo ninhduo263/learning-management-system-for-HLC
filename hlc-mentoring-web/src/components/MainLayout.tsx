@@ -35,18 +35,15 @@ import { profileApprovalApi } from '@/services/hlcApi';
 const { Header, Sider, Content } = Layout;
 
 /**
- * Logo HLC trên menu: biểu tượng tròn chính thức (nền trong suốt) kèm chữ navy. Menu thu gọn chỉ hiện biểu tượng tròn.
- * File logo ngang (Logo_HLC_text.png) hiện chưa dùng được (chữ trắng trên nền trắng); khi có bản nền trong suốt chữ navy
- * thì thay phần chữ bằng ảnh đó.
+ * Logo HLC trên menu: logo ngang (hlc-logo-horizontal.png, tạo từ Logo_HLC_text.png với phần chữ đổi sang navy để hiện trên nền trắng).
+ * Menu thu gọn chỉ hiện biểu tượng tròn (ảnh vuông).
  */
 function BrandLogo({ compact = false }: { compact?: boolean }) {
-  return (
-    <>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img className="brand-logo" src="/brand/hlc-logo-256.png" alt="HLC – Happy Leadership Community" width={44} height={44} />
-      {!compact && <span className="brand-wordmark"><strong>HLC</strong><small>Happy Leadership Community</small></span>}
-    </>
-  );
+  /* eslint-disable @next/next/no-img-element */
+  return compact
+    ? <img className="brand-logo" src="/brand/hlc-logo-256.png" alt="HLC – Happy Leadership Community" width={44} height={44} />
+    : <img className="brand-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={543} height={176} />;
+  /* eslint-enable @next/next/no-img-element */
 }
 const { useBreakpoint } = Grid;
 

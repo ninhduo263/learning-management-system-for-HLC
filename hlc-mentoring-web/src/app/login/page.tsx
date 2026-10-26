@@ -67,7 +67,7 @@ export default function LoginPage() {
         <div className="login-wait-glow login-wait-glow-one" />
         <div className="login-wait-glow login-wait-glow-two" />
         <section className="login-wait-card">
-          <div className="login-wait-brand"><Image className="login-logo" src="/brand/hlc-logo-256.png" alt="" width={40} height={40} priority /> HLC Mentoring</div>
+          <div className="login-wait-brand"><Image className="login-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={543} height={176} priority /></div>
           <div className="login-wait-spinner" aria-hidden="true">
             <LoadingOutlined />
           </div>
@@ -90,7 +90,7 @@ export default function LoginPage() {
   return (
     <main className="login-screen">
       <section className="login-card">
-        <div className="login-brand"><Image className="login-logo" src="/brand/hlc-logo-256.png" alt="" width={40} height={40} priority /><span>HLC Mentoring</span></div>
+        <div className="login-brand"><Image className="login-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={543} height={176} priority /></div>
         <h1>Đăng nhập</h1>
         <p className="login-lead">Kết nối để cùng tiến xa: mentoring, học tập và HLC Fund trong một nơi.</p>
         <Form layout="vertical" size="large" onFinish={onFinish} disabled={isAuthenticating} requiredMark={false}>

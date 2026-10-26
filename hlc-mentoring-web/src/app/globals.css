@@ -56,9 +56,9 @@ body {
   overflow: hidden;
   padding: 24px;
   background:
-    radial-gradient(ellipse at top left, rgba(80, 196, 241, .18), transparent 42%),
-    radial-gradient(ellipse at bottom right, rgba(155, 203, 101, .18), transparent 40%),
-    linear-gradient(145deg, #fbfdff, var(--page));
+    linear-gradient(135deg, rgba(14, 27, 77, .62), rgba(13, 92, 150, .38) 55%, rgba(155, 203, 101, .22)),
+    url('/brand/login-bg.jpg') center / cover no-repeat,
+    var(--brand-navy);
 }
 .login-wait-glow { position: absolute; width: 280px; height: 280px; border-radius: 50%; filter: blur(2px); pointer-events: none; }
 .login-wait-glow-one { top: -150px; right: 8%; background: rgba(80, 196, 241, .16); }
@@ -66,6 +66,7 @@ body {
 .login-wait-card { position: relative; width: min(100%, 460px); padding: 38px 36px 28px; border: 1px solid var(--line); border-radius: 24px; background: rgba(255, 255, 255, .95); box-shadow: 0 24px 70px rgba(14, 27, 77, .1); text-align: center; }
 .login-wait-brand { display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--ink); font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
 .login-logo { width: 40px; height: 40px; object-fit: contain; filter: drop-shadow(0 3px 8px rgba(14, 27, 77, .14)); }
+.login-logo-horizontal { width: auto; height: 56px; max-width: 100%; object-fit: contain; }
 .login-wait-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 11px; color: white; background: var(--brand-blue); font-size: 20px; font-weight: 900; }
 .login-wait-spinner { display: grid; width: 74px; height: 74px; margin: 34px auto 20px; place-items: center; border: 1px solid #CDE7F7; border-radius: 50%; color: var(--brand-blue); background: var(--brand-sky-soft); font-size: 34px; animation: login-wait-pulse 1.8s ease-in-out infinite; }
 .login-wait-eyebrow { margin: 0; color: var(--brand-blue-deep); font-size: 13px; font-weight: 800; letter-spacing: .16em; }
@@ -110,6 +111,7 @@ body {
 .brand-lockup { display: flex; align-items: center; gap: 11px; height: 72px; margin: 10px 14px 6px; color: var(--brand-navy); }
 .brand-lockup.is-collapsed { justify-content: center; margin-inline: 0; }
 .brand-logo { flex: 0 0 auto; width: 44px; height: 44px; object-fit: contain; filter: drop-shadow(0 3px 8px rgba(14, 27, 77, .14)); }
+.brand-logo-horizontal { display: block; width: auto; height: 60px; max-width: 100%; object-fit: contain; }
 .brand-wordmark { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
 .brand-wordmark strong { color: var(--brand-navy); font-size: 21px; font-weight: 900; letter-spacing: .02em; }
 .brand-wordmark small { color: var(--brand-blue-deep); font-size: 12px; font-weight: 700; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
