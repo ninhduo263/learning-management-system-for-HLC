@@ -1,14 +1,20 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Nunito } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
 import MainLayout from "@/components/MainLayout"; // Bổ sung dòng import này
 
-const inter = Inter({ subsets: ["latin"], preload: false });
+// Nunito: nét tròn, to, rõ (hướng giới trẻ) và đủ dấu tiếng Việt nhờ subset "vietnamese" (không rơi về font hệ thống).
+// Một họ font duy nhất cho toàn bộ giao diện; font biến thiên nên có đủ độ đậm cho tiêu đề và số liệu.
+const brandFont = Nunito({ subsets: ["latin", "vietnamese"], variable: "--font-brand", display: "swap", preload: false });
 
 export const metadata: Metadata = {
-  title: "HLC Mentoring System",
-  description: "Hệ thống quản lý học tập và Mentoring",
+  title: "HLC System",
+  description: "Hệ thống quản trị hoạt động HLC",
+  openGraph: {
+    title: "HLC System",
+    description: "Hệ thống quản trị hoạt động HLC",
+  },
 };
 
 export default function RootLayout({
@@ -17,8 +23,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi">
-      <body className={inter.className}>
+    <html lang="vi" className={brandFont.variable}>
+      <body className={brandFont.className}>
         <Providers>
           {/* Bọc MainLayout vào bên trong Providers */}
           <MainLayout>

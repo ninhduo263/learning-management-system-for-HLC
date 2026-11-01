@@ -1,403 +1,196 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { Alert, App, Button, Card, Spin, Table, Tabs, Tag, Typography } from 'antd';
-import { getCurrentTime } from '@/utils/time';
-import ProfileLink from '@/components/ProfileLink';
+import { useEffect, useState } from 'react';
+import { Alert, App, Card, Empty, Progress, Spin, Table, Tag } from 'antd';
 import {
-  getAdminMemberDirectory,
-  getAdminPairDashboardData,
-  getQuarterlyReportFile,
-  type AdminDashboardPair,
-  type AdminDashboardUser
-} from '@/services/adminDashboardApi';
+  CheckCircleOutlined,
+  DollarOutlined,
+  ReadOutlined,
+  ScheduleOutlined,
+  TeamOutlined,
+  WalletOutlined
+} from '@ant-design/icons';
+import { CategoryScale, Chart as ChartJS, Legend, LinearScale, LineElement, PointElement, BarElement, Tooltip } from 'chart.js';
+import { Bar, Line } from 'react-chartjs-2';
+import MonthPicker, { currentPeriodCode } from '@/components/MonthPicker';
+import { Avatar, DashHeader, KpiCard, StatusBar, deltaOf } from '@/components/dashboard/DashParts';
+import { CHART_COLORS, applyChartTheme } from '@/lib/chartTheme';
+import { errorMessage } from '@/lib/api';
+import { PAIR_STATUS_COLOR, PAIR_STATUS_LABEL, formatDateTime } from '@/services/mentoringApi';
+import { PERIOD_STATUS_COLOR, PERIOD_STATUS_LABEL, dashboardApi, money, periodLabel, points, type AdminDashboard, type DashboardPair } from '@/services/hlcApi';
+import { getCurrentTime } from '@/utils/time';
+import PhoneLink from '@/components/PhoneLink';
 
-type MemberRole = 'mentor' | 'mentee';
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend);
+applyChartTheme();
 
-type UserOption = AdminDashboardUser;
-type Pair = AdminDashboardPair;
-
-interface QuarterReport {
-  key: string;
-  quarter: number;
-  year: number;
-  quarterlyIds: Pair[][];
-  months: string[];
-  completed: boolean;
-}
-
-interface DisplayRow {
-  key: string;
-  serial: number | string;
-  quarterlyId: string;
-  role: 'Mentor' | 'Mentee';
-  userId: string;
-  fullName: string;
-  profileUrl: string;
-  [column: string]: string | number;
-}
-
-function quarterDetails(quarterlyId?: string) {
-  const match = /^Q([1-4])(\d{4})O\d{5}E\d{5}$/i.exec(String(quarterlyId || ''));
-  return match ? { quarter: Number(match[1]), year: Number(match[2]) } : null;
-}
-
-function monthFromMonthlyId(monthlyId?: string) {
-  const match = /^T(1[0-2]|[1-9])Q[1-4](\d{4})O\d{5}E\d{5}$/i.exec(String(monthlyId || ''));
-  return match ? `${String(Number(match[1])).padStart(2, '0')}/${match[2]}` : null;
-}
-
-function monthLabels(quarter: number, year: number) {
-  return [1, 2, 3].map((offset) => {
-    const month = (quarter - 1) * 3 + offset;
-    return `${String(month).padStart(2, '0')}/${year}`;
-  });
-}
-
-function statusLabel(value?: string) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (['đã xong', 'da xong', 'đã nộp/đã xong', 'completed', 'approved', 'xong'].includes(normalized)) return 'Đã nộp';
-  if (['nộp muộn', 'late'].includes(normalized)) return 'Nộp muộn';
-  if (['chờ', 'pending'].includes(normalized)) return 'Chờ';
-  return 'Chưa xong';
-}
-
-function getImportedMonthStatus(pair: Pair, month: string, role: MemberRole) {
-  const statuses = pair.importedRecapStatus || {};
-  const [monthNumber, year] = month.split('/');
-  const candidates = [
-    month,
-    `${monthNumber}${year}`,
-    `${monthNumber}-${year}`
-  ];
-  for (const key of candidates) {
-    const value = statuses[key]?.[role];
-    if (value !== undefined) return value;
-  }
-  return undefined;
-}
-
-function pairStatus(pair: Pair | undefined, month: string, role: MemberRole) {
-  if (!pair) return '';
-  const apiStatus = pair.recapStatusByRole?.[role];
-  if (apiStatus !== undefined) return statusLabel(apiStatus);
-  return statusLabel(getImportedMonthStatus(pair, month, role));
-}
-
-function buildRows(
-  pairs: Pair[][],
-  months: string[],
-  mentorNames: Map<string, string>,
-  menteeNames: Map<string, string>,
-  mentorProfiles: Map<string, string>,
-  menteeProfiles: Map<string, string>
-) {
-  return pairs.flatMap<DisplayRow>((monthlyPairs, index) => {
-    const firstPair = monthlyPairs[0];
-    const pairsByMonth = new Map(
-      monthlyPairs
-        .map((pair) => [monthFromMonthlyId(pair.monthlyId), pair] as const)
-        .filter((entry): entry is readonly [string, Pair] => Boolean(entry[0]))
-    );
-    const createRow = (role: MemberRole): DisplayRow => {
-      const isMentor = role === 'mentor';
-      const userId = isMentor ? firstPair.mentorId : firstPair.menteeId;
-      const row: DisplayRow = {
-        key: `${firstPair.quarterlyId}-${role}`,
-        serial: isMentor ? index + 1 : '',
-        quarterlyId: firstPair.quarterlyId || '',
-        role: isMentor ? 'Mentor' : 'Mentee',
-        userId,
-        fullName: (isMentor ? mentorNames : menteeNames).get(userId) || userId,
-        profileUrl: (isMentor ? mentorProfiles : menteeProfiles).get(userId) || ''
-      };
-
-      for (const month of months) {
-        const columnKey = month.replace('/', '_');
-        const pair = pairsByMonth.get(month);
-        row[`${columnKey}_monthlyId`] = pair?.monthlyId || '';
-        row[`${columnKey}_status`] = pairStatus(pair, month, role);
-      }
-      return row;
-    };
-
-    return [createRow('mentor'), createRow('mentee')];
-  });
-}
+const RANK = ['', '🥇 Nhất', '🥈 Nhì', '🥉 Ba'];
 
 export default function AdminDashboardPage() {
   const { message } = App.useApp();
-  const [isDataVisible, setIsDataVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [membersVisible, setMembersVisible] = useState(false);
-  const [membersLoading, setMembersLoading] = useState(false);
-  const [pairs, setPairs] = useState<Pair[]>([]);
-  const [mentors, setMentors] = useState<UserOption[]>([]);
-  const [mentees, setMentees] = useState<UserOption[]>([]);
-  const [directoryMentors, setDirectoryMentors] = useState<UserOption[]>([]);
-  const [directoryMentees, setDirectoryMentees] = useState<UserOption[]>([]);
-  const [exportingQuarter, setExportingQuarter] = useState<string | null>(null);
+  const [code, setCode] = useState(() => currentPeriodCode(getCurrentTime()));
+  const [data, setData] = useState<AdminDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const loadPairs = async () => {
-    setLoading(true);
-    try {
-      const result = await getAdminPairDashboardData();
-      setPairs(result.pairs || []);
-      setMentors(result.mentors || []);
-      setMentees(result.mentees || []);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : 'Không thể tải dữ liệu mentoring');
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    let active = true;
+    Promise.resolve()
+      .then(() => { if (active) setLoading(true); return dashboardApi.admin(code); })
+      .then((result) => { if (active) setData(result); })
+      .catch((error) => message.error(errorMessage(error, 'Không tải được dashboard')))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [code, message]);
 
-  const handleShowData = async () => {
-    if (isDataVisible) {
-      setIsDataVisible(false);
-      return;
-    }
-    setIsDataVisible(true);
-    await loadPairs();
-  };
+  const pairColumns = [
+    {
+      title: 'Cặp',
+      dataIndex: 'code',
+      render: (value: string, row: DashboardPair) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {row.rank ? <Tag color="gold" className="!m-0">{RANK[row.rank]}</Tag> : null}
+          <code className="text-xs">{value}</code>
+        </div>
+      )
+    },
+    {
+      title: 'Mentor · Mentee',
+      render: (_: unknown, row: DashboardPair) => (
+        <div className="leading-snug">
+          <div><span className="text-gray-500">Mentor:</span> <strong>{row.mentor?.fullName}</strong> <PhoneLink phone={row.mentor?.phone} hidden={row.mentor?.phoneHidden} empty="" /></div>
+          <div><span className="text-gray-500">Mentee:</span> <strong>{row.mentee?.fullName}</strong> <PhoneLink phone={row.mentee?.phone} hidden={row.mentee?.phoneHidden} empty="" /></div>
+        </div>
+      )
+    },
+    { title: 'Lịch', render: (_: unknown, row: DashboardPair) => formatDateTime(row.scheduledStartAt) },
+    { title: 'Trạng thái', render: (_: unknown, row: DashboardPair) => <Tag color={PAIR_STATUS_COLOR[row.status]}>{PAIR_STATUS_LABEL[row.status]}</Tag> }
+  ];
 
-  const exportQuarter = async (report: QuarterReport) => {
-    setExportingQuarter(report.key);
-    try {
-      const file = await getQuarterlyReportFile(report.year, report.quarter);
-      const url = URL.createObjectURL(file);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `hlc-mentoring-Q${report.quarter}-${report.year}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : 'Không thể xuất file báo cáo quý');
-    } finally {
-      setExportingQuarter(null);
-    }
-  };
-
-  const handleShowMembers = async () => {
-    if (membersVisible) {
-      setMembersVisible(false);
-      return;
-    }
-    setMembersVisible(true);
-    setMembersLoading(true);
-    try {
-      const result = await getAdminMemberDirectory();
-      setDirectoryMentors(result.mentors || []);
-      setDirectoryMentees(result.mentees || []);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : 'Không thể tải danh sách thành viên');
-    } finally {
-      setMembersLoading(false);
-    }
-  };
-
-  const mentorNames = useMemo(() => new Map(mentors.map((user) => [user.userId, user.fullName])), [mentors]);
-  const menteeNames = useMemo(() => new Map(mentees.map((user) => [user.userId, user.fullName])), [mentees]);
-  const mentorProfiles = useMemo(() => new Map(mentors.map((user) => [user.userId, user.profileUrl || ''])), [mentors]);
-  const menteeProfiles = useMemo(() => new Map(mentees.map((user) => [user.userId, user.profileUrl || ''])), [mentees]);
-
-  const reports = useMemo(() => {
-    const groups = new Map<string, Pair[]>();
-    for (const pair of pairs) {
-      if (!pair.quarterlyId) continue;
-      const group = groups.get(pair.quarterlyId) || [];
-      group.push(pair);
-      groups.set(pair.quarterlyId, group);
-    }
-
-    const quarters = new Map<string, Map<string, Pair[]>>();
-    for (const [quarterlyId, monthlyPairs] of groups) {
-      const details = quarterDetails(quarterlyId);
-      if (!details) continue;
-      const key = `Q${details.quarter}${details.year}`;
-      const quarterGroups = quarters.get(key) || new Map<string, Pair[]>();
-      quarterGroups.set(quarterlyId, monthlyPairs);
-      quarters.set(key, quarterGroups);
-    }
-
-    const now = getCurrentTime();
-    return [...quarters.entries()]
-      .map(([key, quarterGroups]) => {
-        const { quarter, year } = quarterDetails([...quarterGroups.keys()][0])!;
-        const monthlyPairs = [...quarterGroups.values()].flat();
-        const hasHistoricalStatuses = monthlyPairs.some(
-          (pair) => Object.keys(pair.importedRecapStatus || {}).length > 0
-        );
-        const quarterHasEnded = now.getTime() >= Date.UTC(year, quarter * 3, 1);
-        return {
-          key,
-          quarter,
-          year,
-          quarterlyIds: [...quarterGroups.values()],
-          months: monthLabels(quarter, year),
-          visible: hasHistoricalStatuses || quarterHasEnded,
-          completed: quarterHasEnded
-        };
-      })
-      .filter((report) => report.visible)
-      .sort((left, right) => left.year - right.year || left.quarter - right.quarter);
-  }, [pairs]);
-
-  const renderTable = (report: QuarterReport) => {
-    const rows = buildRows(report.quarterlyIds, report.months, mentorNames, menteeNames, mentorProfiles, menteeProfiles);
-    const columns = [
-      { title: 'STT', dataIndex: 'serial', width: 65 },
-      { title: 'QUÝ', render: () => `Q${report.quarter}/${report.year}`, width: 100 },
-      { title: 'CHỨC DANH', dataIndex: 'role', width: 110, render: (value: string) => <Tag color={value === 'Mentor' ? 'blue' : 'green'}>{value}</Tag> },
-      {
-        title: 'THÀNH VIÊN',
-        width: 250,
-        render: (_: unknown, row: DisplayRow) => (
-          <div><strong>{row.fullName}</strong><div className="text-xs text-gray-500">{row.userId}</div></div>
-        )
-      },
-      {
-        title: 'PROFILE',
-        dataIndex: 'profileUrl',
-        width: 130,
-        render: (value: string) => <ProfileLink url={value} />
-      },
-      ...report.months.map((month) => {
-        const columnKey = month.replace('/', '_');
-        return {
-          title: month,
-          children: [
-            { title: 'MÃ THEO THÁNG', dataIndex: `${columnKey}_monthlyId`, width: 250, render: (value: string) => value || '—' },
-            {
-              title: 'TRẠNG THÁI',
-              dataIndex: `${columnKey}_status`,
-              width: 115,
-              render: (value: string) => value
-                ? <Tag color={value === 'Đã nộp' ? 'green' : value === 'Nộp muộn' || value === 'Chờ' ? 'gold' : 'red'}>{value}</Tag>
-                : '—'
-            }
-          ]
-        };
-      })
-    ];
-
-    return (
-      <Table<DisplayRow>
-        rowKey="key"
-        columns={columns}
-        dataSource={rows}
-        loading={loading}
-        scroll={{ x: 'max-content' }}
-        pagination={{ pageSize: 20 }}
-        locale={{ emptyText: `Chưa có dữ liệu Quý ${report.quarter}` }}
-      />
-    );
-  };
+  // Kỳ liền trước (theo mã YYYY-MM) trong dữ liệu xu hướng, dùng để tính mức tăng giảm
+  const previous = data?.trend.filter((item) => item.period < code).sort((a, b) => a.period.localeCompare(b.period)).at(-1);
+  const sessions = data?.mentoring.sessions ?? 0;
+  const prevDoneRate = previous && previous.mentoringSessions ? (previous.mentoringDone / previous.mentoringSessions) * 100 : undefined;
+  const submissionsTotal = data?.learning.reduce((sum, item) => sum + item.submissions, 0) ?? 0;
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <Typography.Title level={3} className="!mb-0">Báo cáo danh sách mentoring</Typography.Title>
-        <div className="flex gap-2">
-          <Button type="primary" block className="sm:!w-auto" onClick={handleShowData}>
-            {isDataVisible ? 'Ẩn danh sách' : 'Xem danh sách'}
-          </Button>
-        </div>
-      </div>
-      {!isDataVisible ? (
-        <Card><Typography.Text type="secondary">Bấm “Xem danh sách” để tải dữ liệu mentoring.</Typography.Text></Card>
-      ) : loading ? (
-        <Card className="flex justify-center py-12"><Spin size="large" /></Card>
-      ) : reports.length === 0 ? (
-        <Card><Alert type="info" showIcon title="Chưa có báo cáo quý đã hoàn tất" /></Card>
-      ) : (
-        <Card title="Danh sách mentoring">
-          <Tabs items={reports.map((report) => ({
-            key: report.key,
-            label: `Danh sách Quý ${report.quarter} - ${report.year}`,
-            children: (
-              <div className="space-y-3">
-                {report.completed && (
-                  <div className="flex justify-end">
-                    <Button
-                      type="primary"
-                      loading={exportingQuarter === report.key}
-                      disabled={exportingQuarter !== null && exportingQuarter !== report.key}
-                      onClick={() => exportQuarter(report)}
-                    >
-                      Xuất file .xlsx
-                    </Button>
-                  </div>
-                )}
-                {renderTable(report)}
+    <div className="dash">
+      <DashHeader title="Dashboard tháng" subtitle={data ? `Tổng quan hoạt động ${periodLabel(data.period.code).toLowerCase()}` : 'Tổng quan hoạt động trong tháng'}>
+        <MonthPicker value={code} onChange={setCode} />
+        {data && <Tag color={PERIOD_STATUS_COLOR[data.period.status]} className="!m-0 !px-3 !py-1 !text-sm">{PERIOD_STATUS_LABEL[data.period.status]}</Tag>}
+      </DashHeader>
+
+      {loading && !data ? <Card className="flex justify-center py-12"><Spin size="large" /></Card> : data && (
+        <>
+          <div className="kpi-grid kpi-3">
+            <KpiCard tone="purple" icon={<TeamOutlined />} label="Thành viên hoạt động" value={data.members.total} hint={`${data.members.mentees} mentee · ${data.members.mentors} mentor`} />
+            <KpiCard tone="blue" icon={<ScheduleOutlined />} label="Buổi mentoring" value={sessions} delta={deltaOf(sessions, previous?.mentoringSessions)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="green" icon={<CheckCircleOutlined />} label="Tỉ lệ cặp đã xong" value={data.mentoring.doneRate} unit="%" delta={deltaOf(data.mentoring.doneRate, prevDoneRate, true)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="orange" icon={<ReadOutlined />} label="Bài nộp học tập" value={submissionsTotal} delta={deltaOf(submissionsTotal, previous?.submissions)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="teal" icon={<WalletOutlined />} label="Quỹ đã ghi nhận" value={money(data.fund.totals.approvedAmount)} delta={deltaOf(data.fund.totals.approvedAmount, previous?.fundAmount)} hint="Chưa có dữ liệu tháng trước" />
+            <KpiCard tone="rose" icon={<DollarOutlined />} label="Tổng chi phụ cấp" value={money(data.points.totals.amount)} delta={deltaOf(data.points.totals.amount, previous?.totalAmount)} hint="Chưa có dữ liệu tháng trước" />
+          </div>
+
+          {data.points.totals.pendingAdjustments > 0 && <Alert type="warning" showIcon title={`Có ${data.points.totals.pendingAdjustments} khiếu nại điểm đang chờ xử lý.`} />}
+
+          <div className="dash-grid cols-21">
+            <Card title="Mentoring trong tháng">
+              {sessions ? <StatusBar counts={data.mentoring.statusCount} /> : <p className="dash-note">Chưa có buổi mentoring trong tháng.</p>}
+              <h3 className="dash-subtitle">Cặp xuất sắc</h3>
+              <Table rowKey="sessionId" pagination={false} dataSource={data.mentoring.bestPairs} columns={pairColumns} locale={{ emptyText: 'Chưa xếp giải (bấm “Tính lại” ở trang Điểm)' }} scroll={{ x: 'max-content' }} />
+              <h3 className="dash-subtitle">Cặp chưa hoạt động / chưa xong</h3>
+              <Table rowKey="sessionId" pagination={{ pageSize: 5, hideOnSinglePage: true }} dataSource={data.mentoring.inactivePairs} columns={pairColumns} locale={{ emptyText: 'Không có' }} scroll={{ x: 'max-content' }} />
+            </Card>
+
+            <div className="flex flex-col gap-5">
+              <Card title="Top thành viên">
+                {data.points.topMembers.length ? (
+                  <ol className="rank-list">
+                    {data.points.topMembers.map((row, index) => (
+                      <li key={row.member._id} className="rank-item">
+                        <span className="rank-no">{index + 1}</span>
+                        <Avatar name={row.member.fullName} />
+                        <span className="rank-name">{row.member.fullName}</span>
+                        <span className="rank-score">{points(row.totalPoints)} <span className="font-normal text-gray-500">điểm</span></span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+              </Card>
+              <Card title="Cần cải thiện">
+                {data.points.needImprovement.length ? (
+                  <ol className="rank-list">
+                    {data.points.needImprovement.map((row) => (
+                      <li key={row.member._id} className="rank-item">
+                        <Avatar name={row.member.fullName} />
+                        <span className="rank-name">{row.member.fullName}</span>
+                        <span className="rank-score bad">{points(row.totalPoints)} <span className="font-normal text-gray-500">điểm</span></span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} />}
+              </Card>
+            </div>
+          </div>
+
+          <div className="dash-grid cols-32">
+            <Card title="Học tập">
+              <Table rowKey={(row) => row.module._id} pagination={false} dataSource={data.learning} locale={{ emptyText: 'Chưa có module' }} columns={[
+                { title: 'Module', render: (_: unknown, row: AdminDashboard['learning'][number]) => <div className="leading-snug"><strong>{row.module.name}</strong><div className="text-xs text-gray-500">{row.submitters} người nộp</div></div> },
+                { title: 'Bài nộp', dataIndex: 'submissions', align: 'right' as const },
+                { title: 'Đã duyệt', render: (_: unknown, row: AdminDashboard['learning'][number]) => <Progress percent={row.submissions ? Math.round((row.approved / row.submissions) * 100) : 0} size={[70, 8]} /> },
+                { title: 'Chờ duyệt', dataIndex: 'pending', align: 'right' as const, render: (value: number) => value ? <Tag color="gold" className="!m-0">{value}</Tag> : 0 },
+                { title: 'Điểm TB', dataIndex: 'averageScore', align: 'right' as const, render: (value: number | null) => value === null ? '—' : points(value) }
+              ]} />
+            </Card>
+
+            <Card title={`HLC Fund · mức ${money(data.fund.target.minApprovedAmount)}`}>
+              <div className="fund-box">
+                <Progress type="dashboard" size={150} percent={data.fund.totals.mentees ? Math.round((data.fund.totals.reached / data.fund.totals.mentees) * 100) : 0} />
+                <div className="fund-stats">
+                  <div><span className="dash-note">Tổng đã ghi nhận</span><strong className="!text-2xl">{money(data.fund.totals.approvedAmount)}</strong></div>
+                  <div><span className="dash-note">Mentee đạt mức</span><strong>{data.fund.totals.reached}/{data.fund.totals.mentees}</strong></div>
+                  <div><span className="dash-note">Chưa có ghi nhận</span><strong>{data.fund.totals.notContributed}</strong></div>
+                  <div><span className="dash-note">Khoản đang chờ xác nhận</span><strong>{data.fund.totals.pending}</strong></div>
+                </div>
               </div>
-            )
-          }))} />
-        </Card>
+            </Card>
+          </div>
+
+          {data.trend.length > 1 && (
+            <div className="dash-grid cols-2">
+              <Card title="Xu hướng điểm & chi phụ cấp">
+                <div className="chart-box">
+                  <Line
+                    data={{
+                      labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
+                      datasets: [
+                        { label: 'Tổng điểm', data: data.trend.map((item) => item.totalPoints), borderColor: CHART_COLORS.primary, backgroundColor: CHART_COLORS.primary, yAxisID: 'y', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 },
+                        { label: 'Chi phụ cấp (nghìn đ)', data: data.trend.map((item) => Math.round(item.totalAmount / 1000)), borderColor: CHART_COLORS.green, backgroundColor: CHART_COLORS.green, yAxisID: 'y1', tension: 0.35, borderWidth: 3, pointRadius: 4, pointHoverRadius: 6 }
+                      ]
+                    }}
+                    options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { position: 'left', beginAtZero: true }, y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false } }, x: { grid: { display: false } } } }}
+                  />
+                </div>
+              </Card>
+              <Card title="Hoạt động theo tháng">
+                <div className="chart-box">
+                  <Bar
+                    data={{
+                      labels: data.trend.map((item) => periodLabel(item.period).replace('Tháng ', 'T')),
+                      datasets: [
+                        { label: 'Buổi mentoring', data: data.trend.map((item) => item.mentoringSessions), backgroundColor: CHART_COLORS.primarySoft, borderRadius: 6, maxBarThickness: 30 },
+                        { label: 'Cặp đã xong', data: data.trend.map((item) => item.mentoringDone), backgroundColor: CHART_COLORS.primary, borderRadius: 6, maxBarThickness: 30 },
+                        { label: 'Bài nộp học tập', data: data.trend.map((item) => item.submissions), backgroundColor: CHART_COLORS.navy, borderRadius: 6, maxBarThickness: 30 }
+                      ]
+                    }}
+                    options={{ maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { beginAtZero: true }, x: { grid: { display: false } } } }}
+                  />
+                </div>
+              </Card>
+            </div>
+          )}
+        </>
       )}
-      <Card
-        title="Danh sách thành viên"
-        extra={(
-          <Button type="primary" onClick={handleShowMembers}>
-            {membersVisible ? 'Ẩn danh sách thành viên' : 'Xem danh sách thành viên'}
-          </Button>
-        )}
-      >
-        {!membersVisible ? (
-          <Typography.Text type="secondary">Bấm “Xem danh sách thành viên” để tải danh sách Mentor và Mentee.</Typography.Text>
-        ) : (
-          <Tabs
-            items={[
-              {
-                key: 'mentees',
-                label: `Danh sách Mentee (${directoryMentees.length})`,
-                children: (
-                  <Table<UserOption>
-                    rowKey="userId"
-                    size="small"
-                    loading={membersLoading}
-                    dataSource={directoryMentees}
-                    scroll={{ x: 'max-content' }}
-                    pagination={{ pageSize: 10 }}
-                    columns={[
-                      { title: 'STT', render: (_: unknown, _member: UserOption, index: number) => index + 1, width: 65 },
-                      { title: 'HỌ VÀ TÊN', dataIndex: 'fullName', render: (value: string) => value || 'Chưa có họ tên' },
-                      { title: 'HLC ID', dataIndex: 'userId' },
-                      { title: 'SỐ ĐIỆN THOẠI', dataIndex: 'phone', render: (value?: string) => value || '—' },
-                      { title: 'EMAIL', dataIndex: 'email', render: (value?: string) => value || '—' },
-                      { title: 'PROFILE', dataIndex: 'profileUrl', render: (value?: string) => <ProfileLink url={value} /> }
-                    ]}
-                  />
-                )
-              },
-              {
-                key: 'mentors',
-                label: `Danh sách Mentor (${directoryMentors.length})`,
-                children: (
-                  <Table<UserOption>
-                    rowKey="userId"
-                    size="small"
-                    loading={membersLoading}
-                    dataSource={directoryMentors}
-                    scroll={{ x: 'max-content' }}
-                    pagination={{ pageSize: 10 }}
-                    columns={[
-                      { title: 'STT', render: (_: unknown, _member: UserOption, index: number) => index + 1, width: 65 },
-                      { title: 'HỌ VÀ TÊN', dataIndex: 'fullName', render: (value: string) => value || 'Chưa có họ tên' },
-                      { title: 'HLC ID', dataIndex: 'userId' },
-                      { title: 'SỐ ĐIỆN THOẠI', dataIndex: 'phone', render: (value?: string) => value || '—' },
-                      { title: 'EMAIL', dataIndex: 'email', render: (value?: string) => value || '—' },
-                      { title: 'PROFILE', dataIndex: 'profileUrl', render: (value?: string) => <ProfileLink url={value} /> }
-                    ]}
-                  />
-                )
-              }
-            ]}
-          />
-        )}
-      </Card>
     </div>
   );
 }

@@ -1,7 +1,7 @@
-﻿'use client';
+'use client';
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { App, Layout, Menu, Button, Drawer, Grid, Modal, DatePicker, Tag } from 'antd';
+import { App, Badge, Layout, Menu, Button, Drawer, Grid, Modal, DatePicker, Tag } from 'antd';
 import {
   DashboardOutlined,
   TeamOutlined,
@@ -10,14 +10,41 @@ import {
   UserOutlined,
   CalendarOutlined,
   ClockCircleOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  TrophyOutlined,
+  WalletOutlined,
+  BookOutlined,
+  ApartmentOutlined,
+  IdcardOutlined,
+  CrownOutlined,
+  SolutionOutlined,
+  BarChartOutlined,
+  AuditOutlined,
+  EyeOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
-import { apiFetch } from '@/lib/api';
-import { getCurrentTime, setClientMockDate } from '@/utils/time';
+import { apiFetch, apiJson, clearSession, getSessionUser, SESSION_CHANGE_EVENT } from '@/lib/api';
+import { getCurrentTime, syncServerTime } from '@/utils/time';
+import { proposalApi, type AdminScope } from '@/services/hlcApi';
+import { loadAccess } from '@/lib/useAccess';
+import { confirmLeave } from '@/lib/unsavedGuard';
+import { profileApprovalApi } from '@/services/hlcApi';
 
 const { Header, Sider, Content } = Layout;
+
+/**
+ * Logo HLC trên menu: logo ngang (hlc-logo-horizontal.png, tạo từ Logo_HLC_text.png với phần chữ đổi sang navy để hiện trên nền trắng).
+ * Menu thu gọn chỉ hiện biểu tượng tròn (ảnh vuông).
+ */
+function BrandLogo({ compact = false }: { compact?: boolean }) {
+  /* eslint-disable @next/next/no-img-element */
+  return compact
+    ? <img className="brand-logo" src="/brand/hlc-logo-256.png" alt="HLC – Happy Leadership Community" width={44} height={44} />
+    : <img className="brand-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={1024} height={330} />;
+  /* eslint-enable @next/next/no-img-element */
+}
 const { useBreakpoint } = Grid;
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
@@ -30,7 +57,21 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [draftMockDate, setDraftMockDate] = useState<Dayjs | null>(null);
   const [savingMockDate, setSavingMockDate] = useState(false);
   const [user, setUser] = useState<{ userId: string; fullName: string; role: 'ADMIN' | 'MENTOR' | 'MENTEE' } | null>(null);
-  const { message } = App.useApp();
+  const [scopes, setScopes] = useState<AdminScope[]>([]);
+  const [isGroupLeader, setIsGroupLeader] = useState(false);
+  const [actions, setActions] = useState<string[]>([]);
+  const [moduleIds, setModuleIds] = useState<string[] | null>([]);
+  const [proposalAbility, setProposalAbility] = useState({ canPropose: 0, canDecide: 0, pending: 0 });
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const { message, modal } = App.useApp();
+  const [canApproveProfile, setCanApproveProfile] = useState(false);
+  const [pendingProfile, setPendingProfile] = useState(0);
+  /** Chuyển trang: hỏi lưu / bỏ nếu trang hiện tại còn thay đổi chưa lưu */
+  const go = async (target: string, replace = false) => {
+    if (!(await confirmLeave(modal))) return false;
+    if (replace) router.replace(target); else router.push(target);
+    return true;
+  };
   const router = useRouter();
   const pathname = usePathname();
   const screens = useBreakpoint();
@@ -49,21 +90,34 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     };
   }, []);
 
+  // Đăng xuất / đăng nhập tài khoản khác: xóa sạch quyền, menu, huy hiệu của tài khoản trước (không cần tải lại trang)
+  useEffect(() => {
+    const reset = () => {
+      setUser(null);
+      setScopes([]);
+      setIsGroupLeader(false);
+      setActions([]);
+      setModuleIds([]);
+      setProposalAbility({ canPropose: 0, canDecide: 0, pending: 0 });
+      setMustChangePassword(false);
+      setCanApproveProfile(false);
+      setPendingProfile(0);
+    };
+    window.addEventListener(SESSION_CHANGE_EVENT, reset);
+    return () => window.removeEventListener(SESSION_CHANGE_EVENT, reset);
+  }, []);
+
   useEffect(() => {
     if (pathname === '/login') return;
-    const token = localStorage.getItem('hlc_token');
-    const savedUser = localStorage.getItem('hlc_user');
-    if (!token || !savedUser) {
+    const savedUser = getSessionUser();
+    if (!localStorage.getItem('hlc_token') || !savedUser) {
+      clearSession();
       router.replace('/login');
       return;
     }
-    try {
-      setUser(JSON.parse(savedUser));
-    } catch {
-      localStorage.removeItem('hlc_token');
-      localStorage.removeItem('hlc_user');
-      router.replace('/login');
-    }
+    let active = true;
+    Promise.resolve().then(() => { if (active) setUser(savedUser); });
+    return () => { active = false; };
   }, [pathname, router]);
 
   useEffect(() => {
@@ -71,19 +125,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     let active = true;
     const loadMockDate = async () => {
       try {
-        const response = await apiFetch('/time/mock');
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-          throw new Error(result.message || 'Không thể đồng bộ ngày giả lập từ máy chủ');
-        }
-        if (!active) return;
-        const { date, source } = result.data as {
+        const { date, source, now } = await apiJson<{
           date: string | null;
           source: 'runtime' | 'environment' | 'real';
-        };
+          now: string;
+        }>('/time/mock');
+        if (!active) return;
         setMockDate(date);
         setMockDateSource(source);
-        setClientMockDate(date);
+        syncServerTime(now);
         setCurrentDateTime(getCurrentTime());
       } catch (error) {
         if (active) {
@@ -95,20 +145,119 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     return () => { active = false; };
   }, [message, pathname, user]);
 
+  // Quyền quản trị theo phạm vi (mentee/mentor được giao duyệt quỹ, quản lý module, vai trò cấp ban, ủy quyền...)
+  useEffect(() => {
+    if (!user || user.role === 'ADMIN') return;
+    let active = true;
+    const refresh = () => loadAccess(true).then((access) => {
+      if (!active) return;
+      setScopes(access.scopes);
+      setIsGroupLeader(access.leaderGroups.length > 0);
+      setActions(access.actions ?? []);
+      setModuleIds(access.moduleIds);
+      setMustChangePassword(Boolean(access.mustChangePassword));
+    }).catch(() => undefined);
+    void refresh();
+    window.addEventListener('hlc-access-change', refresh);
+    return () => { active = false; window.removeEventListener('hlc-access-change', refresh); };
+  }, [user]);
+
+  // Duyệt thay đổi hồ sơ nhạy cảm: Admin toàn cục và người được ủy quyền; huy hiệu = số yêu cầu chờ duyệt
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const ability = await profileApprovalApi.canApprove();
+        if (!active) return;
+        setCanApproveProfile(ability.canApprove);
+        if (ability.canApprove) {
+          const pending = await profileApprovalApi.list('PENDING');
+          if (active) setPendingProfile(pending.length);
+        }
+      } catch { /* bỏ qua */ }
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('hlc-profile-request-change', refresh);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('hlc-profile-request-change', refresh); };
+  }, [user]);
+
+  // Đề xuất giữa các chức vụ: hiện menu khi được gửi / duyệt, huy hiệu = số đề xuất đang chờ tôi duyệt
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const refresh = () => proposalApi.summary().then((summary) => {
+      if (active) setProposalAbility({ canPropose: summary.canPropose.length, canDecide: summary.canDecide.length, pending: summary.pendingInbox });
+    }).catch(() => undefined);
+    void refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('hlc-proposal-change', refresh);
+    window.addEventListener('hlc-access-change', refresh);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('hlc-proposal-change', refresh); window.removeEventListener('hlc-access-change', refresh); };
+  }, [user]);
+
+  // Công tắc "bắt buộc đổi mật khẩu lần đầu" (Admin bật khi lên production): chỉ cho ở trang hồ sơ
+  useEffect(() => {
+    if (mustChangePassword && pathname !== '/profile') router.replace('/profile?doiMatKhau=1');
+  }, [mustChangePassword, pathname, router]);
+
   if (pathname === '/login') return <>{children}</>;
   if (!user) return null;
 
+  const proposalLabel = (text: string) => (
+    <span className="flex items-center justify-between gap-2">{text}{proposalAbility.pending > 0 && <Badge count={proposalAbility.pending} size="small" />}</span>
+  );
+
+  const profileApprovalLabel = (
+    <span className="flex items-center justify-between gap-2">Duyệt hồ sơ{pendingProfile > 0 && <Badge count={pendingProfile} size="small" />}</span>
+  );
+
   const adminMenuItems = [
-    { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
-    { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý Ghép cặp' },
+    { key: 'admin-dashboard', icon: <DashboardOutlined />, label: 'Dashboard tháng' },
+    { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Ghép cặp mentoring' },
+    { key: 'admin-points', icon: <TrophyOutlined />, label: 'Điểm phụ cấp' },
+    { key: 'admin-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
+    { key: 'admin-modules', icon: <BookOutlined />, label: 'Học tập' },
+    { key: 'admin-organization', icon: <ApartmentOutlined />, label: 'Tổ chức & phân quyền' },
+    { key: 'leader', icon: <CrownOutlined />, label: 'Tiến độ theo nhóm' },
+    { key: 'learning-dashboard', icon: <BarChartOutlined />, label: 'Điểm học tập TB' },
+    { key: 'proposals', icon: <AuditOutlined />, label: proposalLabel('Đề xuất') },
+    { key: 'admin-members', icon: <IdcardOutlined />, label: 'Thành viên & báo cáo' },
+    { key: 'profile-approvals', icon: <SafetyCertificateOutlined />, label: profileApprovalLabel },
   ];
 
+  // Trang quản trị mở cho mentor/mentee được giao quyền
+  type MenuEntry = { key: string; icon: React.JSX.Element; label: React.ReactNode };
+  const scopedMenuItems = ([
+    isGroupLeader && { key: 'leader', icon: <CrownOutlined />, label: 'Nhóm của tôi' },
+    scopes.includes('MENTORING') && { key: 'admin-mentoring', icon: <TeamOutlined />, label: 'Quản lý ghép cặp' },
+    !scopes.includes('MENTORING') && scopes.includes('MENTORING_VIEW') && { key: 'admin-mentoring', icon: <EyeOutlined />, label: 'Mentoring (chỉ xem)' },
+    scopes.includes('POINT') && { key: 'admin-points', icon: <TrophyOutlined />, label: 'Quản lý điểm' },
+    scopes.includes('FUND') && { key: 'admin-fund', icon: <WalletOutlined />, label: 'Duyệt HLC Fund' },
+    scopes.includes('LEARNING_MODULE') && { key: 'admin-modules', icon: <BookOutlined />, label: 'Quản lý module' },
+    (scopes.includes('MENTEE') || actions.includes('VIEW_ACTIVITY_LOG')) && { key: 'admin-organization', icon: <ApartmentOutlined />, label: scopes.includes('MENTEE') ? 'Nhóm MTE' : 'Nhật ký thao tác' },
+    (scopes.includes('LEARNING') || Boolean(moduleIds?.length)) && { key: 'learning-dashboard', icon: <BarChartOutlined />, label: 'Điểm học tập TB' },
+    (proposalAbility.canPropose > 0 || proposalAbility.canDecide > 0) && { key: 'proposals', icon: <AuditOutlined />, label: proposalLabel('Đề xuất') },
+    canApproveProfile && { key: 'profile-approvals', icon: <SafetyCertificateOutlined />, label: profileApprovalLabel },
+  ] as (MenuEntry | false)[]).filter((item): item is MenuEntry => Boolean(item));
+
   const menteeMenuItems = [
+    { key: 'mentee-dashboard', icon: <DashboardOutlined />, label: 'Tổng quan' },
     { key: 'mentee-mentoring', icon: <TeamOutlined />, label: 'Mentoring & Recap' },
+    { key: 'mentee-learning', icon: <BookOutlined />, label: 'Học tập' },
+    { key: 'mentee-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
+    ...scopedMenuItems,
+    { key: 'profile', icon: <SolutionOutlined />, label: 'Hồ sơ cá nhân' },
   ];
 
   const mentorMenuItems = [
+    { key: 'mentor-dashboard', icon: <DashboardOutlined />, label: 'Tổng quan' },
     { key: 'mentor-mentoring', icon: <TeamOutlined />, label: 'Mentoring & Recap' },
+    { key: 'mentor-learning', icon: <BookOutlined />, label: 'Học tập' },
+    { key: 'mentor-fund', icon: <WalletOutlined />, label: 'HLC Fund' },
+    ...scopedMenuItems,
+    { key: 'profile', icon: <SolutionOutlined />, label: 'Hồ sơ cá nhân' },
   ];
 
   const menuItems = user.role === 'ADMIN' ? adminMenuItems : user.role === 'MENTOR' ? mentorMenuItems : menteeMenuItems;
@@ -119,18 +268,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const saveMockDate = async (date: string | null) => {
     setSavingMockDate(true);
     try {
-      const response = await apiFetch('/time/mock', {
+      const result = await apiJson<{ date: string | null; enabled: boolean; now: string }>('/time/mock', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date })
+        json: { date }
       });
-      const result = await response.json();
-      if (!response.ok || !result.success) {
-        throw new Error(result.message || 'Không thể cập nhật ngày giả lập');
-      }
-      setClientMockDate(result.data.date);
-      message.success(result.data.enabled
-        ? `Đã bật ngày giả lập ${dayjs(result.data.date).format('DD/MM/YYYY')} cho toàn hệ thống`
+      syncServerTime(result.now);
+      message.success(result.enabled
+        ? `Đã bật ngày giả lập ${dayjs(result.date).format('DD/MM/YYYY')} cho toàn hệ thống`
         : 'Đã tắt ngày giả lập; toàn hệ thống dùng ngày thật');
       window.location.reload();
     } catch (error) {
@@ -145,6 +289,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     'admin-modules': '/admin-modules',
     'admin-fund': '/admin-fund',
     'admin-points': '/admin-points',
+    'admin-organization': '/admin-organization',
+    'admin-members': '/admin-members',
+    'learning-dashboard': '/learning-dashboard',
+    proposals: '/proposals',
+    'profile-approvals': '/profile-approvals',
+    'mentor-learning': '/mentor-learning',
+    'mentor-fund': '/mentor-fund',
+    leader: '/leader',
+    profile: '/profile',
     'mentee-dashboard': '/mentee-dashboard',
     'mentee-learning': '/mentee-learning',
     'mentee-mentoring': '/mentee-mentoring',
@@ -155,15 +308,14 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   const navigation = (
     <Menu
-      theme="dark"
+      theme="light"
       mode="inline"
       selectedKeys={menuItems.some((item) => routeMap[item.key] === pathname) ? [menuItems.find((item) => routeMap[item.key] === pathname)?.key ?? ''] : []}
       items={menuItems}
       onClick={({ key }) => {
         const target = routeMap[String(key)];
         setDrawerOpen(false);
-        if (target) router.push(target);
-        else router.push('/');
+        void go(target || '/');
       }}
     />
   );
@@ -171,9 +323,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   return (
     <Layout className={`min-h-screen app-shell ${roleTheme}`}>
       {!isMobile && <Sider className="role-sider" collapsible collapsed={collapsed} onCollapse={(value) => setCollapsed(value)} width={260}>
-        <div className="brand-lockup">
-          <span className="brand-mark">H</span>
-          {!collapsed && <span>HLC <b>Mentoring</b></span>}
+        <div className={`brand-lockup${collapsed ? ' is-collapsed' : ''}`}>
+          <BrandLogo compact={collapsed} />
         </div>
         {!collapsed && <div className="role-caption">{roleLabel}</div>}
         {navigation}
@@ -231,9 +382,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
               type="text"
               size={isMobile ? 'large' : 'middle'}
               icon={<LogoutOutlined />}
-              onClick={() => {
-                localStorage.removeItem('hlc_token');
-                localStorage.removeItem('hlc_user');
+              onClick={async () => {
+                if (!(await confirmLeave(modal))) return;
+                const refreshToken = localStorage.getItem('hlc_refresh_token');
+                if (refreshToken) {
+                  void apiFetch('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken }) }).catch(() => undefined);
+                }
+                clearSession();
                 router.replace('/login');
               }}
             >
@@ -244,7 +399,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {roleTabs.length > 0 && <nav className="role-tabs" aria-label="Điều hướng nhanh">
           {roleTabs.map((item) => {
             const target = routeMap[item.key];
-            return <button key={item.key} type="button" className={pathname === target ? 'active' : ''} onClick={() => router.push(target)}>{item.icon}<span>{item.label}</span></button>;
+            return <button key={item.key} type="button" className={pathname === target ? 'active' : ''} onClick={() => void go(target)}>{item.icon}<span>{item.label}</span></button>;
           })}
         </nav>}
 
@@ -252,7 +407,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           {children}
         </Content>
       </Layout>
-      <Drawer title="HLC Mentoring" placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} className={roleTheme}>
+      <Drawer title={<span className="brand-lockup !m-0 !h-auto"><BrandLogo /></span>} placement="left" open={drawerOpen} onClose={() => setDrawerOpen(false)} size={280} styles={{ body: { padding: 0 } }} rootClassName={`nav-drawer ${roleTheme}`}>
         {navigation}
       </Drawer>
       <Modal

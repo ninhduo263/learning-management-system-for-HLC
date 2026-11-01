@@ -1,0 +1,2297 @@
+import { RecapAccessService } from "./recap-access.service";
+import { Configuration } from "@config/configuration";
+import { ApiError } from "@config/exception/api-error";
+import { AttachmentOwnerType } from "@module/attachment/common/constant";
+import { AttachmentModel } from "@module/attachment/models/attachment.model";
+import { MemberStatus, MemberType } from "@module/member/common/constant";
+import { Member } from "@module/member/entities/member.entity";
+import { MemberModel } from "@module/member/models/member.model";
+import { PeriodModel } from "@module/period/models/period.model";
+import {
+    PointEntryStatus,
+    PointSourceType,
+} from "@module/point/common/constant";
+import { PointEntryModel } from "@module/point/models/point-entry.model";
+import { FileModel } from "@module/repository/sequelize/model/file.model";
+import { UserModel } from "@module/repository/sequelize/model/user.model";
+import { TimeService } from "@module/time/time.service";
+import { User } from "@module/user/entities/user.entity";
+import { Injectable, Logger, OnApplicationBootstrap } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
+import { PointFlowService } from "@module/point/flow/point-flow.service";
+import { ConfigService } from "@nestjs/config";
+import { InjectModel } from "@nestjs/sequelize";
+import { Op, Transaction } from "sequelize";
+import { Sequelize } from "sequelize-typescript";
+import {
+    MentoringPairSource,
+    MentoringPairStatus,
+    MentoringQuarterStatus,
+    MentoringRole,
+    RecapReviewStatus,
+    ScheduleLogAction,
+} from "../common/constant";
+import { MentoringQuarter } from "../entities/mentoring-quarter.entity";
+import { MentoringRecap } from "../entities/mentoring-recap.entity";
+import { MentoringSession } from "../entities/mentoring-session.entity";
+import { MentorPreferenceItemModel } from "../models/mentor-preference-item.model";
+import { MentorPreferenceModel } from "../models/mentor-preference.model";
+import { MentoringAwardModel } from "../models/mentoring-award.model";
+import { MentoringPairLogModel } from "../models/mentoring-pair-log.model";
+import { MentoringRecapLogModel } from "../models/mentoring-recap-log.model";
+import { MentoringPairModel } from "../models/mentoring-pair.model";
+import { MentoringQuarterModel } from "../models/mentoring-quarter.model";
+import { MentoringRecapModel } from "../models/mentoring-recap.model";
+import { MentoringScheduleLogModel } from "../models/mentoring-schedule-log.model";
+import { MentoringSessionModel } from "../models/mentoring-session.model";
+import { CreatePairDto } from "./dto/create-pair.dto";
+import { PreferenceDto } from "./dto/preference.dto";
+import { ProxyRecapDto } from "./dto/proxy-recap.dto";
+import { RecapDto } from "./dto/recap.dto";
+import { ReviewRecapDto } from "./dto/review-recap.dto";
+import { OverrideScheduleDto } from "./dto/override-schedule.dto";
+import { ScheduleDto } from "./dto/schedule.dto";
+import { UpdateSessionPairDto } from "./dto/update-session-pair.dto";
+import {
+    PairRecapStatus,
+    QuarterRef,
+    recapDeadlineOf,
+    RoleRecapStatus,
+    canAdminPair,
+    canChoosePreference,
+    canEditSchedule,
+    canWriteRecap,
+    combineRecapStatuses,
+    importedRoleStatus,
+    isVisibleToMember,
+    isWithinMonth,
+    monthKey,
+    pad2,
+    pairCode,
+    pairRecapStatus,
+    parseQuarterCode,
+    quarterCode,
+    quarterDates,
+    quarterFromIndex,
+    quarterIndex,
+    quarterMonths,
+    quarterOfDate,
+    quarterTimeline,
+    roleRecapStatus,
+    sessionCode,
+} from "./mentoring-rules";
+
+type Plain<T> = T & { createdAt?: Date; updatedAt?: Date };
+
+export interface MemberView {
+    _id: string;
+    memberCode: string;
+    memberType: string;
+    fullName: string;
+    phone: string | null;
+    email: string | null;
+    profileUrl: string | null;
+    status: string;
+}
+
+export interface RecapView {
+    _id: string;
+    role: string;
+    memberCode: string;
+    content: string;
+    firstSubmittedAt: Date;
+    lastSubmittedAt: Date;
+    isLate: boolean;
+    reviewStatus: string;
+    reviewNote: string | null;
+    reviewedAt: Date | null;
+    score: number | null;
+    /** Recap do admin nhập hộ / nhập từ dữ liệu quý cũ */
+    proxy: {
+        by: string | null;
+        at: Date | null;
+        reason: string | null;
+        importBatchId: string | null;
+    } | null;
+    media: {
+        fileId: string | null;
+        url: string;
+        fileName: string | null;
+        mimeType: string | null;
+    }[];
+}
+
+export interface SessionView {
+    _id: string;
+    code: string;
+    quarterCode: string;
+    year: number;
+    month: number;
+    monthIndex: number;
+    status: string;
+    pair: { _id: string; code: string; status: string; source: string };
+    mentor: MemberView | null;
+    mentee: MemberView | null;
+    schedule: {
+        startAt: Date;
+        endAt: Date;
+        firstStartAt: Date;
+        location: string | null;
+        meetingLink: string | null;
+        note: string | null;
+        submittedAt: Date | null;
+        submittedBy: string | null;
+    } | null;
+    recapDeadlineAt: Date | null;
+    recaps: { mentor: RecapView | null; mentee: RecapView | null };
+    recapStatus: {
+        mentor: RoleRecapStatus;
+        mentee: RoleRecapStatus;
+        pair: PairRecapStatus;
+        source: "SYSTEM" | "IMPORTED";
+    };
+    importedStatus: Record<string, string> | null;
+}
+
+export interface MySessionView extends SessionView {
+    myRole: "MENTOR" | "MENTEE";
+    canEditSchedule: boolean;
+    canWriteRecap: boolean;
+}
+
+@Injectable()
+export class MentoringFlowService implements OnApplicationBootstrap {
+    private readonly logger = new Logger(MentoringFlowService.name);
+
+    constructor(
+        private readonly moduleRef: ModuleRef,
+        private readonly sequelize: Sequelize,
+        private readonly timeService: TimeService,
+        private readonly configService: ConfigService<Configuration>,
+        @InjectModel(MentoringQuarterModel)
+        private readonly quarterModel: typeof MentoringQuarterModel,
+        @InjectModel(MentoringPairModel)
+        private readonly pairModel: typeof MentoringPairModel,
+        @InjectModel(MentoringSessionModel)
+        private readonly sessionModel: typeof MentoringSessionModel,
+        @InjectModel(MentoringRecapModel)
+        private readonly recapModel: typeof MentoringRecapModel,
+        @InjectModel(MentoringScheduleLogModel)
+        private readonly scheduleLogModel: typeof MentoringScheduleLogModel,
+        @InjectModel(MentoringAwardModel)
+        private readonly awardModel: typeof MentoringAwardModel,
+        @InjectModel(MentoringPairLogModel)
+        private readonly pairLogModel: typeof MentoringPairLogModel,
+        @InjectModel(MentoringRecapLogModel)
+        private readonly recapLogModel: typeof MentoringRecapLogModel,
+        @InjectModel(MentorPreferenceModel)
+        private readonly preferenceModel: typeof MentorPreferenceModel,
+        @InjectModel(MentorPreferenceItemModel)
+        private readonly preferenceItemModel: typeof MentorPreferenceItemModel,
+        @InjectModel(MemberModel)
+        private readonly memberModel: typeof MemberModel,
+        @InjectModel(PeriodModel)
+        private readonly periodModel: typeof PeriodModel,
+        @InjectModel(AttachmentModel)
+        private readonly attachmentModel: typeof AttachmentModel,
+        @InjectModel(FileModel)
+        private readonly fileModel: typeof FileModel,
+        @InjectModel(PointEntryModel)
+        private readonly pointEntryModel: typeof PointEntryModel,
+        private readonly recapAccess: RecapAccessService,
+    ) {}
+
+    now() {
+        return this.timeService.now();
+    }
+
+    /**
+     * Vòng 10: hạn recap = giờ KẾT THÚC buổi + 24h (trước đây tính từ giờ bắt đầu). Khởi động thì sửa hạn của các buổi
+     * đã có lịch, tính lại trạng thái nộp muộn, và ghi mốc nộp lần đầu cho recap cũ chưa có mốc. Chạy lại không đổi gì.
+     */
+    async onApplicationBootstrap() {
+        try {
+            const sessions = await this.sessionModel.findAll({
+                where: { scheduledEndAt: { [Op.ne]: null } },
+                attributes: [
+                    "_id",
+                    "periodId",
+                    "scheduledEndAt",
+                    "recapDeadlineAt",
+                ],
+                raw: true,
+            });
+            const changed = sessions.filter(
+                (session) =>
+                    !session.recapDeadlineAt ||
+                    new Date(session.recapDeadlineAt).getTime() !==
+                        recapDeadlineOf(
+                            new Date(session.scheduledEndAt),
+                        ).getTime(),
+            );
+            for (const session of changed) {
+                const deadline = recapDeadlineOf(
+                    new Date(session.scheduledEndAt),
+                );
+                await this.sessionModel.update(
+                    { recapDeadlineAt: deadline },
+                    { where: { _id: session._id } },
+                );
+                for (const recap of await this.recapModel.findAll({
+                    where: { sessionId: session._id },
+                })) {
+                    const isLate =
+                        new Date(recap.firstSubmittedAt).getTime() >
+                        deadline.getTime();
+                    if (recap.isLate !== isLate) await recap.update({ isLate });
+                }
+            }
+            const [backfilled] = await this.recapModel.update(
+                { initialSubmittedAt: Sequelize.col("firstSubmittedAt") },
+                { where: { initialSubmittedAt: null } },
+            );
+            if (changed.length || backfilled)
+                this.logger.log(
+                    `Hạn recap: cập nhật ${changed.length} buổi theo giờ kết thúc + 24h; ghi mốc nộp lần đầu cho ${backfilled} recap`,
+                );
+            if (changed.length)
+                await this.recalculatePoints(
+                    changed.map((session) => session.periodId),
+                );
+        } catch (error) {
+            this.logger.warn(`Không cập nhật được hạn recap: ${error}`);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Thành viên
+    // ------------------------------------------------------------------
+
+    private toMemberView(member?: Plain<Member> | null): MemberView | null {
+        if (!member) return null;
+        return {
+            _id: member._id,
+            memberCode: member.memberCode,
+            memberType: member.memberType,
+            fullName: member.fullName,
+            phone: member.phone ?? null,
+            email: member.email ?? null,
+            profileUrl: member.profileUrl ?? null,
+            status: member.status,
+        };
+    }
+
+    async listMembers(options: {
+        type?: MemberType;
+        includeInactive?: boolean;
+    }) {
+        const where: Record<string, unknown> = {};
+        if (options.type) where.memberType = options.type;
+        if (!options.includeInactive) where.status = MemberStatus.ACTIVE;
+        const members = await this.memberModel.findAll({
+            where,
+            order: [["memberCode", "ASC"]],
+            raw: true,
+        });
+        return members.map((member) => this.toMemberView(member));
+    }
+
+    async getMemberOfUser(user: User): Promise<Plain<Member>> {
+        const member = await this.memberModel.findOne({
+            where: { userId: user._id },
+            raw: true,
+        });
+        if (!member) throw ApiError.NotFound("error-member-not-linked");
+        return member;
+    }
+
+    private async findMemberByCode(code: string, type: MemberType) {
+        const member = await this.memberModel.findOne({
+            where: { memberCode: code.toUpperCase(), memberType: type },
+            raw: true,
+        });
+        if (!member || member.status !== MemberStatus.ACTIVE) {
+            throw ApiError.BadRequest("error-mentoring-member-invalid", {
+                code: code.toUpperCase(),
+            });
+        }
+        return member;
+    }
+
+    // ------------------------------------------------------------------
+    // Quý
+    // ------------------------------------------------------------------
+
+    private quarterView(quarter: Plain<MentoringQuarter>) {
+        const ref = { year: quarter.year, quarter: quarter.quarter };
+        const now = this.now();
+        return {
+            ...quarter,
+            months: quarterMonths(ref),
+            canPair: canAdminPair(ref, now) && !quarter.isLocked,
+            canChoosePreference: canChoosePreference(
+                {
+                    preferenceOpenAt: new Date(quarter.preferenceOpenAt),
+                    pairingOpenAt: new Date(quarter.pairingOpenAt),
+                },
+                now,
+            ),
+            isVisibleToMember: isVisibleToMember(
+                { visibleAt: new Date(quarter.visibleAt) },
+                now,
+            ),
+            hasEnded: now >= new Date(`${quarter.endDate}T23:59:59.999+07:00`),
+        };
+    }
+
+    async listQuarters() {
+        const quarters = await this.quarterModel.findAll({
+            order: [
+                ["year", "DESC"],
+                ["quarter", "DESC"],
+            ],
+            raw: true,
+        });
+        return quarters.map((quarter) => this.quarterView(quarter));
+    }
+
+    async getQuarterOrFail(code: string) {
+        const ref = parseQuarterCode(code);
+        const quarter = ref
+            ? await this.quarterModel.findOne({
+                  where: { code: quarterCode(ref) },
+                  raw: true,
+              })
+            : null;
+        if (!quarter) {
+            throw ApiError.NotFound("error-mentoring-quarter-not-found", {
+                code,
+            });
+        }
+        return quarter;
+    }
+
+    /**
+     * Tạo quý nếu chưa có. Được tạo quý hiện tại, hoặc quý kế tiếp từ ngày 5 tháng cuối quý hiện tại
+     * (để mentee gửi nguyện vọng); admin chỉ ghép cặp quý kế tiếp từ ngày 10.
+     */
+    /** historical = true: cho phép mở quý đã qua (nhập dữ liệu quý cũ) */
+    async ensureQuarter(
+        code: string,
+        user?: User,
+        transaction?: Transaction,
+        historical = false,
+    ) {
+        const ref = parseQuarterCode(code);
+        if (!ref)
+            throw ApiError.BadRequest("error-mentoring-quarter-not-found", {
+                code,
+            });
+        const existing = await this.quarterModel.findOne({
+            where: { code: quarterCode(ref) },
+            raw: true,
+            transaction,
+        });
+        if (existing) return this.quarterView(existing);
+
+        const now = this.now();
+        const current = quarterIndex(quarterOfDate(now));
+        const target = quarterIndex(ref);
+        const timeline = quarterTimeline(ref);
+        const allowed =
+            (historical && target <= current) ||
+            target === current ||
+            (target === current + 1 && now >= timeline.preferenceOpenAt);
+        if (!allowed) {
+            throw ApiError.BadRequest("error-mentoring-quarter-not-allowed", {
+                code: quarterCode(ref),
+            });
+        }
+        const run = async (t: Transaction) => {
+            await this.ensurePeriods(ref, t);
+            const created = await this.quarterModel.create(
+                {
+                    code: quarterCode(ref),
+                    year: ref.year,
+                    quarter: ref.quarter,
+                    ...quarterDates(ref),
+                    ...timeline,
+                    status: MentoringQuarterStatus.ACTIVE,
+                    createdBy: user?._id ?? null,
+                },
+                { transaction: t },
+            );
+            return created.get({ plain: true }) as Plain<MentoringQuarter>;
+        };
+        const quarter = transaction
+            ? await run(transaction)
+            : await this.sequelize.transaction(run);
+        return this.quarterView(quarter);
+    }
+
+    /** Tạo 3 kỳ tháng của quý (nếu chưa có) để gắn buổi mentoring và tính điểm */
+    private async ensurePeriods(ref: QuarterRef, transaction: Transaction) {
+        const periods = new Map<number, string>();
+        for (const month of quarterMonths(ref)) {
+            const code = monthKey(ref.year, month);
+            let period = await this.periodModel.findOne({
+                where: { code },
+                transaction,
+            });
+            if (!period) {
+                const lastDay = new Date(
+                    Date.UTC(ref.year, month, 0),
+                ).getUTCDate();
+                const next =
+                    month === 12
+                        ? { year: ref.year + 1, month: 1 }
+                        : { year: ref.year, month: month + 1 };
+                period = await this.periodModel.create(
+                    {
+                        code,
+                        year: ref.year,
+                        month,
+                        startDate: `${code}-01`,
+                        endDate: `${code}-${pad2(lastDay)}`,
+                        payoutDate: `${monthKey(next.year, next.month)}-10`,
+                    },
+                    { transaction },
+                );
+            }
+            periods.set(month, period._id);
+        }
+        return periods;
+    }
+
+    async setQuarterLock(code: string, isLocked: boolean, user: User) {
+        const quarter = await this.getQuarterOrFail(code);
+        await this.quarterModel.update(
+            {
+                isLocked,
+                lockedAt: isLocked ? this.now() : null,
+                lockedBy: isLocked ? user._id : null,
+            },
+            { where: { _id: quarter._id } },
+        );
+        return this.quarterView({ ...quarter, isLocked });
+    }
+
+    private assertQuarterWritable(quarter: Plain<MentoringQuarter>) {
+        if (quarter.isLocked) {
+            throw ApiError.Conflict("error-mentoring-quarter-locked", {
+                code: quarter.code,
+            });
+        }
+    }
+
+    private assertCanPair(quarter: Plain<MentoringQuarter>) {
+        this.assertQuarterWritable(quarter);
+        if (
+            !canAdminPair(
+                { year: quarter.year, quarter: quarter.quarter },
+                this.now(),
+            )
+        ) {
+            throw ApiError.Conflict("error-mentoring-pairing-closed", {
+                code: quarter.code,
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Dựng dữ liệu hiển thị
+    // ------------------------------------------------------------------
+
+    private fileUrl(fileId: string, fileName: string) {
+        const address = this.configService.get("server.address", {
+            infer: true,
+        });
+        return `${address}/file/${fileId}/${encodeURIComponent(fileName)}`;
+    }
+
+    private async buildSessionViews(
+        sessions: Plain<MentoringSession>[],
+    ): Promise<SessionView[]> {
+        if (!sessions.length) return [];
+        const now = this.now();
+        const pairIds = [...new Set(sessions.map((session) => session.pairId))];
+        const periodIds = [
+            ...new Set(sessions.map((session) => session.periodId)),
+        ];
+        const sessionIds = sessions.map((session) => session._id);
+        const [pairs, periods, recaps] = await Promise.all([
+            this.pairModel.findAll({ where: { _id: pairIds }, raw: true }),
+            this.periodModel.findAll({ where: { _id: periodIds }, raw: true }),
+            this.recapModel.findAll({
+                where: { sessionId: sessionIds },
+                raw: true,
+            }),
+        ]);
+        const quarterIds = [...new Set(pairs.map((pair) => pair.quarterId))];
+        const memberIds = [
+            ...new Set(pairs.flatMap((pair) => [pair.mentorId, pair.menteeId])),
+            ...new Set(
+                sessions
+                    .map((session) => session.scheduleSubmittedBy)
+                    .filter(Boolean),
+            ),
+        ];
+        const [quarters, members, attachments] = await Promise.all([
+            this.quarterModel.findAll({
+                where: { _id: quarterIds },
+                raw: true,
+            }),
+            this.memberModel.findAll({ where: { _id: memberIds }, raw: true }),
+            recaps.length
+                ? this.attachmentModel.findAll({
+                      where: {
+                          ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                          ownerId: recaps.map((recap) => recap._id),
+                      },
+                      order: [["sortOrder", "ASC"]],
+                      raw: true,
+                  })
+                : [],
+        ]);
+        const byId = <T extends { _id: string }>(items: T[]) =>
+            new Map(items.map((item) => [item._id, item]));
+        const pairMap = byId(pairs);
+        const periodMap = byId(periods);
+        const quarterMap = byId(quarters);
+        const memberMap = byId(members);
+        const recapView = (recap?: Plain<MentoringRecap>): RecapView | null =>
+            recap
+                ? {
+                      _id: recap._id,
+                      role: recap.role,
+                      memberCode:
+                          memberMap.get(recap.memberId)?.memberCode ?? null,
+                      content: recap.content,
+                      firstSubmittedAt: recap.firstSubmittedAt,
+                      lastSubmittedAt: recap.lastSubmittedAt,
+                      isLate: recap.isLate,
+                      reviewStatus: recap.reviewStatus,
+                      reviewNote: recap.reviewNote ?? null,
+                      reviewedAt: recap.reviewedAt ?? null,
+                      score:
+                          recap.score === null || recap.score === undefined
+                              ? null
+                              : Number(recap.score),
+                      proxy:
+                          recap.proxyBy || recap.importBatchId
+                              ? {
+                                    by: recap.proxyBy ?? null,
+                                    at: recap.proxyAt ?? null,
+                                    reason: recap.proxyReason ?? null,
+                                    importBatchId: recap.importBatchId ?? null,
+                                }
+                              : null,
+                      media: attachments
+                          .filter((item) => item.ownerId === recap._id)
+                          .map((item) => ({
+                              fileId: item.fileId ?? null,
+                              url: item.url,
+                              fileName: item.fileName ?? null,
+                              mimeType: item.mimeType ?? null,
+                          })),
+                  }
+                : null;
+
+        return sessions
+            .map((session) => {
+                const pair = pairMap.get(session.pairId);
+                const period = periodMap.get(session.periodId);
+                const quarter = pair && quarterMap.get(pair.quarterId);
+                const mentorRecap = recaps.find(
+                    (recap) =>
+                        recap.sessionId === session._id &&
+                        recap.role === MentoringRole.MENTOR,
+                );
+                const menteeRecap = recaps.find(
+                    (recap) =>
+                        recap.sessionId === session._id &&
+                        recap.role === MentoringRole.MENTEE,
+                );
+                const imported =
+                    !session.scheduledStartAt && session.importedStatus;
+                const mentorStatus = imported
+                    ? (importedRoleStatus(session, "MENTOR") ?? "NO_SCHEDULE")
+                    : roleRecapStatus(session, mentorRecap, now);
+                const menteeStatus = imported
+                    ? (importedRoleStatus(session, "MENTEE") ?? "NO_SCHEDULE")
+                    : roleRecapStatus(session, menteeRecap, now);
+                const pairStatus = imported
+                    ? combineRecapStatuses(mentorStatus, menteeStatus)
+                    : pairRecapStatus(session, mentorStatus, menteeStatus);
+                return {
+                    _id: session._id,
+                    code: session.code,
+                    quarterCode: quarter?.code ?? null,
+                    year: period?.year ?? null,
+                    month: period?.month ?? null,
+                    monthIndex: session.monthIndex,
+                    status: session.status,
+                    pair: pair
+                        ? {
+                              _id: pair._id,
+                              code: pair.code,
+                              status: pair.status,
+                              source: pair.source,
+                          }
+                        : null,
+                    mentor: this.toMemberView(
+                        pair && memberMap.get(pair.mentorId),
+                    ),
+                    mentee: this.toMemberView(
+                        pair && memberMap.get(pair.menteeId),
+                    ),
+                    schedule: session.scheduledStartAt
+                        ? {
+                              startAt: session.scheduledStartAt,
+                              endAt: session.scheduledEndAt,
+                              firstStartAt: session.firstScheduledStartAt,
+                              location: session.location ?? null,
+                              meetingLink: session.meetingLink ?? null,
+                              note: session.scheduleNote ?? null,
+                              submittedAt: session.scheduleSubmittedAt ?? null,
+                              submittedBy:
+                                  memberMap.get(session.scheduleSubmittedBy)
+                                      ?.memberCode ?? null,
+                          }
+                        : null,
+                    recapDeadlineAt: session.recapDeadlineAt ?? null,
+                    recaps: {
+                        mentor: recapView(mentorRecap),
+                        mentee: recapView(menteeRecap),
+                    },
+                    recapStatus: {
+                        mentor: mentorStatus,
+                        mentee: menteeStatus,
+                        pair: pairStatus,
+                        source: (imported ? "IMPORTED" : "SYSTEM") as
+                            | "IMPORTED"
+                            | "SYSTEM",
+                    },
+                    importedStatus:
+                        (session.importedStatus as Record<string, string>) ??
+                        null,
+                };
+            })
+            .sort(
+                (a, b) =>
+                    (a.month ?? 0) - (b.month ?? 0) ||
+                    a.code.localeCompare(b.code),
+            );
+    }
+
+    // ------------------------------------------------------------------
+    // Admin: bảng ghép cặp của quý
+    // ------------------------------------------------------------------
+
+    async getQuarterBoard(code: string) {
+        const quarter = await this.getQuarterOrFail(code);
+        const pairs = await this.pairModel.findAll({
+            where: { quarterId: quarter._id },
+            raw: true,
+        });
+        const sessions = pairs.length
+            ? await this.sessionModel.findAll({
+                  where: { pairId: pairs.map((pair) => pair._id) },
+                  raw: true,
+              })
+            : [];
+        const [sessionViews, preferences] = await Promise.all([
+            this.buildSessionViews(sessions),
+            this.getQuarterPreferences(quarter._id),
+        ]);
+        return {
+            quarter: this.quarterView(quarter),
+            sessions: sessionViews,
+            preferences,
+        };
+    }
+
+    private async getQuarterPreferences(quarterId: string) {
+        const preferences = await this.preferenceModel.findAll({
+            where: { quarterId },
+            raw: true,
+        });
+        if (!preferences.length) return [];
+        const items = await this.preferenceItemModel.findAll({
+            where: { preferenceId: preferences.map((item) => item._id) },
+            order: [["priority", "ASC"]],
+            raw: true,
+        });
+        const members = await this.memberModel.findAll({
+            where: {
+                _id: [
+                    ...preferences.map((item) => item.menteeId),
+                    ...items.map((item) => item.mentorId),
+                ],
+            },
+            raw: true,
+        });
+        const codeOf = new Map(
+            members.map((member) => [member._id, member.memberCode]),
+        );
+        return preferences.map((preference) => ({
+            _id: preference._id,
+            menteeCode: codeOf.get(preference.menteeId),
+            mentorCodes: items
+                .filter((item) => item.preferenceId === preference._id)
+                .map((item) => codeOf.get(item.mentorId)),
+            message: preference.message ?? null,
+            submittedAt: preference.submittedAt,
+        }));
+    }
+
+    // ------------------------------------------------------------------
+    // Admin: ghép / sửa / xóa cặp
+    // ------------------------------------------------------------------
+
+    async createPair(
+        code: string,
+        dto: CreatePairDto,
+        user: User,
+        source = MentoringPairSource.MANUAL,
+    ) {
+        const quarter = await this.getQuarterOrFail(code);
+        this.assertCanPair(quarter);
+        return this.sequelize.transaction(async (t) => {
+            const result = await this.createPairInTransaction(
+                quarter,
+                dto,
+                user,
+                source,
+                null,
+                t,
+            );
+            await this.pairLogModel.create(
+                {
+                    quarterCode: quarter.code,
+                    action: "CREATE",
+                    pairCode: result.pair.code,
+                    mentorCode: dto.mentorCode.toUpperCase(),
+                    menteeCode: dto.menteeCode.toUpperCase(),
+                    fromMonth: Number(dto.month),
+                    detail: {
+                        affectedMonths: result.syncedMonths,
+                        existingMonths: result.existingMonths,
+                        lockedMonths: result.lockedMonths,
+                    },
+                    actorUserId: user._id,
+                },
+                { transaction: t },
+            );
+            return result;
+        });
+    }
+
+    /** Import: không giới hạn cửa sổ ghép cặp (cho phép nhập dữ liệu cũ), chỉ cần quý chưa khóa */
+    async createPairFromImport(
+        code: string,
+        dto: CreatePairDto,
+        importedStatus: Record<number, Record<string, string>>,
+        user: User,
+    ) {
+        const quarter = await this.getQuarterOrFail(code);
+        this.assertQuarterWritable(quarter);
+        return this.sequelize.transaction((t) =>
+            this.createPairInTransaction(
+                quarter,
+                dto,
+                user,
+                MentoringPairSource.IMPORT,
+                Object.keys(importedStatus).length ? importedStatus : null,
+                t,
+            ),
+        );
+    }
+
+    async createPairInTransaction(
+        quarter: Plain<MentoringQuarter>,
+        dto: CreatePairDto,
+        user: User,
+        source: MentoringPairSource,
+        importedStatus: Record<number, Record<string, string>> | null,
+        t: Transaction,
+    ) {
+        const ref = { year: quarter.year, quarter: quarter.quarter };
+        const months = quarterMonths(ref);
+        if (!months.includes(Number(dto.month))) {
+            throw ApiError.BadRequest("error-mentoring-month-invalid", {
+                month: dto.month,
+                code: quarter.code,
+            });
+        }
+        const mentor = await this.findMemberByCode(
+            dto.mentorCode,
+            MemberType.MENTOR,
+        );
+        const mentee = await this.findMemberByCode(
+            dto.menteeCode,
+            MemberType.MENTEE,
+        );
+        let pair = await this.pairModel.findOne({
+            where: {
+                quarterId: quarter._id,
+                menteeId: mentee._id,
+                status: MentoringPairStatus.ACTIVE,
+            },
+            transaction: t,
+            raw: true,
+        });
+        if (pair && pair.mentorId !== mentor._id) {
+            throw ApiError.Conflict("error-mentoring-mentee-already-paired", {
+                code: mentee.memberCode,
+            });
+        }
+        if (!pair) {
+            const created = await this.pairModel.create(
+                {
+                    quarterId: quarter._id,
+                    mentorId: mentor._id,
+                    menteeId: mentee._id,
+                    code: pairCode(ref, mentor.memberCode, mentee.memberCode),
+                    source,
+                    createdBy: user._id,
+                },
+                { transaction: t },
+            );
+            pair = created.get({ plain: true });
+        }
+        const periods = await this.ensurePeriods(ref, t);
+        const existing = await this.sessionModel.findAll({
+            where: { pairId: pair._id },
+            transaction: t,
+            raw: true,
+        });
+        const syncedMonths: number[] = [];
+        /** Tháng sau đã có buổi của cặp này (ghép tay trước đó): không tạo trùng */
+        const existingMonths: number[] = [];
+        /** Tháng đã chốt bảng phụ cấp: không tự thêm cặp */
+        const lockedMonths: number[] = [];
+        const periodRows = new Map(
+            (
+                await this.periodModel.findAll({
+                    where: { _id: [...periods.values()] },
+                    raw: true,
+                    transaction: t,
+                })
+            ).map((item) => [item._id, item]),
+        );
+        // Chỉ các tháng từ tháng được chọn tới cuối quý (không tạo ngược về tháng trước)
+        for (const month of months.filter(
+            (value) => value >= Number(dto.month),
+        )) {
+            const periodId = periods.get(month);
+            const imported = importedStatus?.[month] ?? null;
+            const session = existing.find((item) => item.periodId === periodId);
+            if (session) {
+                if (imported) {
+                    await this.sessionModel.update(
+                        { importedStatus: imported },
+                        { where: { _id: session._id }, transaction: t },
+                    );
+                }
+                existingMonths.push(month);
+                continue;
+            }
+            if (
+                !importedStatus &&
+                ["LOCKED", "EXPORTED", "PAID"].includes(
+                    periodRows.get(periodId)?.status,
+                )
+            ) {
+                if (month === Number(dto.month))
+                    throw ApiError.Conflict("error-pair-month-locked", {
+                        month: `${pad2(month)}/${quarter.year}`,
+                    });
+                lockedMonths.push(month);
+                continue;
+            }
+            await this.sessionModel.create(
+                {
+                    pairId: pair._id,
+                    periodId,
+                    monthIndex: months.indexOf(month) + 1,
+                    code: sessionCode(
+                        ref,
+                        month,
+                        mentor.memberCode,
+                        mentee.memberCode,
+                    ),
+                    importedStatus: imported,
+                },
+                { transaction: t },
+            );
+            syncedMonths.push(month);
+        }
+        return {
+            pair,
+            syncedMonths,
+            existingMonths,
+            lockedMonths,
+            created: syncedMonths.length > 0,
+        };
+    }
+
+    private async getSessionContext(
+        sessionId: string,
+        transaction?: Transaction,
+    ) {
+        const session = await this.sessionModel.findOne({
+            where: { _id: sessionId },
+            raw: true,
+            transaction,
+        });
+        if (!session)
+            throw ApiError.NotFound("error-mentoring-session-not-found");
+        const pair = await this.pairModel.findOne({
+            where: { _id: session.pairId },
+            raw: true,
+            transaction,
+        });
+        const quarter = await this.quarterModel.findOne({
+            where: { _id: pair.quarterId },
+            raw: true,
+            transaction,
+        });
+        const period = await this.periodModel.findOne({
+            where: { _id: session.periodId },
+            raw: true,
+            transaction,
+        });
+        return { session, pair, quarter, period };
+    }
+
+    /** Đổi mentor/mentee của buổi này và các tháng sau trong quý */
+    async updateSessionPair(
+        sessionId: string,
+        dto: UpdateSessionPairDto,
+        user: User,
+    ) {
+        const { session, pair, quarter } =
+            await this.getSessionContext(sessionId);
+        this.assertCanPair(quarter);
+        const mentor = await this.findMemberByCode(
+            dto.mentorCode,
+            MemberType.MENTOR,
+        );
+        const mentee = await this.findMemberByCode(
+            dto.menteeCode,
+            MemberType.MENTEE,
+        );
+        if (mentor._id === pair.mentorId && mentee._id === pair.menteeId) {
+            return { changed: false, movedSessions: 0 };
+        }
+        const ref = { year: quarter.year, quarter: quarter.quarter };
+        return this.sequelize.transaction(async (t) => {
+            const pairSessions = await this.sessionModel.findAll({
+                where: { pairId: pair._id },
+                raw: true,
+                transaction: t,
+            });
+            const periods = await this.periodModel.findAll({
+                where: { _id: pairSessions.map((item) => item.periodId) },
+                raw: true,
+                transaction: t,
+            });
+            const monthOf = new Map(
+                periods.map((period) => [period._id, period.month]),
+            );
+            const fromMonth = monthOf.get(session.periodId);
+            const moving = pairSessions.filter(
+                (item) => monthOf.get(item.periodId) >= fromMonth,
+            );
+            const staying = pairSessions.filter(
+                (item) => monthOf.get(item.periodId) < fromMonth,
+            );
+            const recapCount = await this.recapModel.count({
+                where: { sessionId: moving.map((item) => item._id) },
+                transaction: t,
+            });
+            if (recapCount > 0) {
+                throw ApiError.Conflict("error-mentoring-session-has-recap");
+            }
+            if (mentee._id !== pair.menteeId) {
+                const other = await this.pairModel.findOne({
+                    where: {
+                        quarterId: quarter._id,
+                        menteeId: mentee._id,
+                        status: MentoringPairStatus.ACTIVE,
+                    },
+                    raw: true,
+                    transaction: t,
+                });
+                if (other) {
+                    throw ApiError.Conflict(
+                        "error-mentoring-mentee-already-paired",
+                        {
+                            code: mentee.memberCode,
+                        },
+                    );
+                }
+            }
+            // Cặp cũ: còn tháng trước thì kết thúc, không còn thì xóa sau khi chuyển buổi
+            await this.pairModel.update(
+                { status: MentoringPairStatus.ENDED },
+                { where: { _id: pair._id }, transaction: t },
+            );
+            const created = await this.pairModel.create(
+                {
+                    quarterId: quarter._id,
+                    mentorId: mentor._id,
+                    menteeId: mentee._id,
+                    code: pairCode(ref, mentor.memberCode, mentee.memberCode),
+                    source: MentoringPairSource.MANUAL,
+                    createdBy: user._id,
+                },
+                { transaction: t },
+            );
+            for (const item of moving) {
+                await this.sessionModel.update(
+                    {
+                        pairId: created._id,
+                        code: sessionCode(
+                            ref,
+                            monthOf.get(item.periodId),
+                            mentor.memberCode,
+                            mentee.memberCode,
+                        ),
+                        scheduledStartAt: null,
+                        scheduledEndAt: null,
+                        firstScheduledStartAt: null,
+                        recapDeadlineAt: null,
+                        scheduleSubmittedAt: null,
+                        scheduleSubmittedBy: null,
+                    },
+                    { where: { _id: item._id }, transaction: t },
+                );
+                if (item.scheduledStartAt) {
+                    await this.scheduleLogModel.create(
+                        {
+                            sessionId: item._id,
+                            action: ScheduleLogAction.CANCEL,
+                            oldStartAt: item.scheduledStartAt,
+                            oldEndAt: item.scheduledEndAt,
+                            actorUserId: user._id,
+                            reason: "Đổi cặp mentoring",
+                        },
+                        { transaction: t },
+                    );
+                }
+            }
+            if (!staying.length) {
+                await this.pairModel.destroy({
+                    where: { _id: pair._id },
+                    transaction: t,
+                });
+            }
+            return {
+                changed: true,
+                movedSessions: moving.length,
+                pairCode: created.code,
+            };
+        });
+    }
+
+    /** Xóa buổi này và các tháng sau của cùng cặp (kèm recap, lịch sử lịch, giải, điểm liên quan) */
+    /** Kế hoạch xóa cặp từ tháng của buổi này tới cuối quý: tháng nào xóa, tháng nào giữ (đã chốt), bao nhiêu dữ liệu */
+    private async deletePlan(sessionId: string, t?: Transaction) {
+        const { session, pair, quarter } = await this.getSessionContext(
+            sessionId,
+            t,
+        );
+        const pairSessions = await this.sessionModel.findAll({
+            where: { pairId: pair._id },
+            raw: true,
+            transaction: t,
+        });
+        const periods = new Map(
+            (
+                await this.periodModel.findAll({
+                    where: { _id: pairSessions.map((item) => item.periodId) },
+                    raw: true,
+                    transaction: t,
+                })
+            ).map((item) => [item._id, item]),
+        );
+        const fromMonth = periods.get(session.periodId).month;
+        const later = pairSessions.filter(
+            (item) => periods.get(item.periodId).month >= fromMonth,
+        );
+        const isLocked = (item: { periodId: string }) =>
+            ["LOCKED", "EXPORTED", "PAID"].includes(
+                periods.get(item.periodId)?.status,
+            );
+        const targets = later.filter((item) => !isLocked(item));
+        const skipped = later.filter(isLocked);
+        const ids = targets.map((item) => item._id);
+        const recaps = ids.length
+            ? await this.recapModel.findAll({
+                  where: { sessionId: ids },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const awards = ids.length
+            ? await this.awardModel.findAll({
+                  where: { sessionId: ids },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const attachments = recaps.length
+            ? await this.attachmentModel.count({
+                  where: {
+                      ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                      ownerId: recaps.map((item) => item._id),
+                  },
+                  transaction: t,
+              })
+            : 0;
+        const sourceIds = [
+            ...recaps.map((item) => item._id),
+            ...awards.map((item) => item._id),
+        ];
+        const pointEntries = sourceIds.length
+            ? await this.pointEntryModel.findAll({
+                  where: {
+                      sourceType: [
+                          PointSourceType.MENTORING_RECAP,
+                          PointSourceType.MENTORING_AWARD,
+                      ],
+                      sourceId: sourceIds,
+                  },
+                  raw: true,
+                  transaction: t,
+              })
+            : [];
+        const monthOf = (item: { periodId: string }) =>
+            periods.get(item.periodId).month;
+        return {
+            session,
+            pair,
+            quarter,
+            fromMonth,
+            targets,
+            recaps,
+            awards,
+            pointEntries,
+            remaining: pairSessions.length - targets.length,
+            preview: {
+                pairCode: pair.code,
+                fromMonth,
+                deleteMonths: targets.map(monthOf).sort((a, b) => a - b),
+                /** Tháng đã chốt / đã chi: giữ nguyên, xử lý bằng bù chênh lệch nếu cần */
+                keptLockedMonths: skipped.map(monthOf).sort((a, b) => a - b),
+                counts: {
+                    sessions: targets.length,
+                    schedules: targets.filter((item) => item.scheduledStartAt)
+                        .length,
+                    recaps: recaps.length,
+                    scoredRecaps: recaps.filter(
+                        (item) =>
+                            item.score !== null && item.score !== undefined,
+                    ).length,
+                    attachments,
+                    awards: awards.length,
+                    pointEntries: pointEntries.filter(
+                        (item) => item.status === PointEntryStatus.ACTIVE,
+                    ).length,
+                },
+                willDeletePair: pairSessions.length - targets.length === 0,
+            },
+        };
+    }
+
+    /** Xem trước khi xóa cặp (màn hình xác nhận nêu rõ số lượng dữ liệu sẽ bị xóa) */
+    async deletePreview(sessionId: string) {
+        return (await this.deletePlan(sessionId)).preview;
+    }
+
+    /**
+     * Xóa cặp từ tháng của buổi này tới cuối quý: xóa sạch lịch, recap, điểm chấm, ảnh, giải và điểm phụ cấp
+     * phát sinh từ cặp ở các tháng chưa chốt. Tháng đã chốt / đã chi giữ nguyên. Ghi nhật ký.
+     */
+    async deleteSessionsFrom(sessionId: string, user: User) {
+        const { quarter } = await this.getSessionContext(sessionId);
+        this.assertCanPair(quarter);
+        const result = await this.sequelize.transaction(async (t) => {
+            const plan = await this.deletePlan(sessionId, t);
+            const ids = plan.targets.map((item) => item._id);
+            if (plan.pointEntries.length)
+                await this.pointEntryModel.destroy({
+                    where: { _id: plan.pointEntries.map((item) => item._id) },
+                    transaction: t,
+                });
+            if (plan.recaps.length) {
+                await this.attachmentModel.destroy({
+                    where: {
+                        ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                        ownerId: plan.recaps.map((item) => item._id),
+                    },
+                    transaction: t,
+                });
+            }
+            if (ids.length) {
+                await this.recapModel.destroy({
+                    where: { sessionId: ids },
+                    transaction: t,
+                });
+                await this.awardModel.destroy({
+                    where: { sessionId: ids },
+                    transaction: t,
+                });
+                // Nhật ký lịch được giữ lại để đối soát
+                await this.sessionModel.destroy({
+                    where: { _id: ids },
+                    transaction: t,
+                });
+            }
+            if (!plan.remaining)
+                await this.pairModel.destroy({
+                    where: { _id: plan.pair._id },
+                    transaction: t,
+                });
+            const mentor = await this.memberModel.findByPk(plan.pair.mentorId, {
+                raw: true,
+                transaction: t,
+            });
+            const mentee = await this.memberModel.findByPk(plan.pair.menteeId, {
+                raw: true,
+                transaction: t,
+            });
+            await this.pairLogModel.create(
+                {
+                    quarterCode: plan.quarter.code,
+                    action: "DELETE",
+                    pairCode: plan.pair.code,
+                    mentorCode: mentor?.memberCode ?? null,
+                    menteeCode: mentee?.memberCode ?? null,
+                    fromMonth: plan.fromMonth,
+                    detail: {
+                        affectedMonths: plan.preview.deleteMonths,
+                        keptLockedMonths: plan.preview.keptLockedMonths,
+                        counts: plan.preview.counts,
+                    },
+                    actorUserId: user._id,
+                },
+                { transaction: t },
+            );
+            return {
+                plan,
+                periodIds: [
+                    ...new Set(plan.targets.map((item) => item.periodId)),
+                ],
+            };
+        });
+        // Điểm của các tháng chưa chốt được tính lại sau khi xóa
+        await this.recalculatePoints(result.periodIds);
+        const preview = result.plan.preview;
+        return {
+            deletedMonths: preview.deleteMonths,
+            keptLockedMonths: preview.keptLockedMonths,
+            deleted: {
+                ...preview.counts,
+                pair: preview.willDeletePair ? 1 : 0,
+            },
+            voidedPointEntries: preview.counts.pointEntries,
+        };
+    }
+
+    /** Nhật ký ghép / xóa cặp của quý */
+    async listPairLogs(quarter: string) {
+        const rows = await this.pairLogModel.findAll({
+            where: { quarterCode: quarter.toUpperCase() },
+            order: [["createdAt", "DESC"]],
+            limit: 500,
+            raw: true,
+        });
+        const userIds = [
+            ...new Set(rows.map((row) => row.actorUserId).filter(Boolean)),
+        ];
+        const users = new Map(
+            (userIds.length
+                ? await UserModel.findAll({
+                      where: { _id: userIds },
+                      attributes: ["_id", "username", "fullname"],
+                      raw: true,
+                  })
+                : []
+            ).map((row) => [row._id, row.fullname || row.username]),
+        );
+        return rows.map((row) => ({
+            ...row,
+            actor: users.get(row.actorUserId) ?? null,
+        }));
+    }
+
+    // ------------------------------------------------------------------
+    // Lịch mentoring
+    // ------------------------------------------------------------------
+
+    private memberRoleInPair(
+        member: Plain<Member>,
+        pair: { mentorId: string; menteeId: string },
+    ) {
+        if (pair.mentorId === member._id) return MentoringRole.MENTOR;
+        if (pair.menteeId === member._id) return MentoringRole.MENTEE;
+        return null;
+    }
+
+    /** Mentor/mentee gửi lịch đã chốt (hoặc sửa khi chưa tới thời điểm chốt lần đầu) */
+    async submitSchedule(sessionId: string, dto: ScheduleDto, user: User) {
+        const member = await this.getMemberOfUser(user);
+        const context = await this.getSessionContext(sessionId);
+        const { session, pair, quarter } = context;
+        if (
+            !this.memberRoleInPair(member, pair) ||
+            pair.status === MentoringPairStatus.CANCELLED
+        ) {
+            throw ApiError.Forbidden("error-mentoring-not-participant");
+        }
+        this.assertQuarterWritable(quarter);
+        const now = this.now();
+        if (
+            !isVisibleToMember({ visibleAt: new Date(quarter.visibleAt) }, now)
+        ) {
+            throw ApiError.Conflict("error-mentoring-not-visible");
+        }
+        if (!canEditSchedule(session, now)) {
+            throw ApiError.Conflict("error-mentoring-schedule-locked");
+        }
+        const { startAt, endAt } = this.validateScheduleTimes(
+            dto,
+            context.period,
+        );
+        if (startAt <= now)
+            throw ApiError.BadRequest("error-mentoring-schedule-past");
+        return this.saveSchedule(
+            context,
+            dto,
+            startAt,
+            endAt,
+            user,
+            member._id,
+            false,
+        );
+    }
+
+    /**
+     * Admin ghi đè lịch (bỏ qua quy tắc khóa sửa và thời điểm ở quá khứ).
+     * Bắt buộc lý do; hạn recap, trạng thái đúng hạn/trễ và điểm của kỳ được tính lại theo lịch mới.
+     */
+    async overrideSchedule(
+        sessionId: string,
+        dto: OverrideScheduleDto,
+        user: User,
+    ) {
+        if (!dto.reason?.trim())
+            throw ApiError.BadRequest(
+                "error-mentoring-override-reason-required",
+            );
+        const context = await this.getSessionContext(sessionId);
+        this.assertQuarterWritable(context.quarter);
+        const { startAt, endAt } = this.validateScheduleTimes(
+            dto,
+            context.period,
+        );
+        const view = await this.saveSchedule(
+            context,
+            dto,
+            startAt,
+            endAt,
+            user,
+            null,
+            true,
+        );
+        await this.recalculatePoints([context.session.periodId]);
+        return view;
+    }
+
+    /** Ghi đè nhiều lịch trong 1 transaction (import Excel): lỗi bất kỳ thì không thay đổi gì */
+    async applyScheduleOverrides(
+        items: {
+            sessionId: string;
+            startAt: Date;
+            endAt: Date;
+            location?: string | null;
+            meetingLink?: string | null;
+            note?: string | null;
+            reason: string;
+        }[],
+        user: User,
+    ) {
+        const periodIds: string[] = [];
+        await this.sequelize.transaction(async (t) => {
+            for (const item of items) {
+                const context = await this.getSessionContext(item.sessionId, t);
+                this.assertQuarterWritable(context.quarter);
+                this.validateScheduleTimes(
+                    {
+                        startAt: item.startAt.toISOString(),
+                        endAt: item.endAt.toISOString(),
+                    },
+                    context.period,
+                );
+                await this.saveSchedule(
+                    context,
+                    {
+                        startAt: item.startAt.toISOString(),
+                        endAt: item.endAt.toISOString(),
+                        location: item.location ?? undefined,
+                        meetingLink: item.meetingLink ?? undefined,
+                        note: item.note ?? undefined,
+                        reason: item.reason,
+                    },
+                    item.startAt,
+                    item.endAt,
+                    user,
+                    null,
+                    true,
+                    t,
+                );
+                periodIds.push(context.session.periodId);
+            }
+        });
+        await this.recalculatePoints(periodIds);
+        return { applied: items.length };
+    }
+
+    /** Tính lại điểm các kỳ chưa chốt sau khi lịch thay đổi (lỗi không chặn thao tác chính) */
+    async recalculatePoints(periodIds: string[]) {
+        let pointFlow: PointFlowService;
+        try {
+            pointFlow = this.moduleRef.get(PointFlowService, { strict: false });
+        } catch {
+            return;
+        }
+        for (const periodId of [...new Set(periodIds)]) {
+            try {
+                const period = await this.periodModel.findByPk(periodId, {
+                    raw: true,
+                });
+                if (
+                    !period ||
+                    ["LOCKED", "EXPORTED", "PAID"].includes(period.status)
+                )
+                    continue;
+                await pointFlow.recalculate(period.code, { _id: null });
+            } catch (error) {
+                this.logger.warn(
+                    `Không tính lại được điểm kỳ ${periodId}: ${error}`,
+                );
+            }
+        }
+    }
+
+    private validateScheduleTimes(
+        dto: ScheduleDto,
+        period: { year: number; month: number },
+    ) {
+        const startAt = new Date(dto.startAt);
+        const endAt = new Date(dto.endAt);
+        if (endAt <= startAt)
+            throw ApiError.BadRequest("error-mentoring-schedule-range");
+        if (!isWithinMonth(startAt, endAt, period.year, period.month)) {
+            throw ApiError.BadRequest("error-mentoring-schedule-month", {
+                month: `${pad2(period.month)}/${period.year}`,
+            });
+        }
+        return { startAt, endAt };
+    }
+
+    async saveSchedule(
+        context: Pick<
+            Awaited<ReturnType<MentoringFlowService["getSessionContext"]>>,
+            "session"
+        >,
+        dto: ScheduleDto & { reason?: string },
+        startAt: Date,
+        endAt: Date,
+        user: User,
+        memberId: string | null,
+        isOverride: boolean,
+        transaction?: Transaction,
+    ) {
+        const { session } = context;
+        const now = this.now();
+        const recapDeadlineAt = recapDeadlineOf(endAt);
+        const run = async (t: Transaction) => {
+            await this.sessionModel.update(
+                {
+                    scheduledStartAt: startAt,
+                    scheduledEndAt: endAt,
+                    // Ghi đè: mọi mốc phụ thuộc đi theo lịch mới
+                    firstScheduledStartAt: isOverride
+                        ? startAt
+                        : (session.firstScheduledStartAt ?? startAt),
+                    recapDeadlineAt,
+                    location: dto.location ?? null,
+                    meetingLink: dto.meetingLink ?? null,
+                    scheduleNote: dto.note ?? null,
+                    scheduleSubmittedAt: now,
+                    scheduleSubmittedBy:
+                        memberId ?? session.scheduleSubmittedBy ?? null,
+                },
+                { where: { _id: session._id }, transaction: t },
+            );
+            await this.scheduleLogModel.create(
+                {
+                    sessionId: session._id,
+                    action: isOverride
+                        ? ScheduleLogAction.ADMIN_OVERRIDE
+                        : session.scheduledStartAt
+                          ? ScheduleLogAction.UPDATE
+                          : ScheduleLogAction.CREATE,
+                    oldStartAt: session.scheduledStartAt ?? null,
+                    oldEndAt: session.scheduledEndAt ?? null,
+                    newStartAt: startAt,
+                    newEndAt: endAt,
+                    actorUserId: user._id,
+                    reason: dto.reason?.trim() || null,
+                },
+                { transaction: t },
+            );
+            // Recap đã nộp: giữ nguyên, tính lại đúng hạn/trễ theo hạn mới
+            const recaps = await this.recapModel.findAll({
+                where: { sessionId: session._id },
+                transaction: t,
+            });
+            for (const recap of recaps) {
+                const isLate =
+                    new Date(recap.firstSubmittedAt).getTime() >
+                    recapDeadlineAt.getTime();
+                if (recap.isLate !== isLate) {
+                    await recap.update({ isLate }, { transaction: t });
+                }
+            }
+        };
+        if (transaction) {
+            await run(transaction);
+            return null;
+        }
+        await this.sequelize.transaction(run);
+        const [view] = await this.buildSessionViews([
+            await this.sessionModel.findOne({
+                where: { _id: session._id },
+                raw: true,
+            }),
+        ]);
+        return view;
+    }
+
+    /** Nhật ký thay đổi lịch (ai sửa, lúc nào, lịch cũ/mới, lý do). Chỉ đọc */
+    async listScheduleLogs(query: {
+        quarter?: string;
+        sessionId?: string;
+        onlyOverride?: boolean;
+    }) {
+        let sessionIds: string[] | undefined;
+        if (query.sessionId) sessionIds = [query.sessionId];
+        else if (query.quarter) {
+            const quarter = await this.getQuarterOrFail(query.quarter);
+            const pairs = await this.pairModel.findAll({
+                where: { quarterId: quarter._id },
+                attributes: ["_id"],
+                raw: true,
+            });
+            sessionIds = (
+                await this.sessionModel.findAll({
+                    where: { pairId: pairs.map((pair) => pair._id) },
+                    attributes: ["_id"],
+                    raw: true,
+                })
+            ).map((session) => session._id);
+        }
+        const logs = await this.scheduleLogModel.findAll({
+            where: {
+                ...(sessionIds && { sessionId: sessionIds }),
+                ...(query.onlyOverride && {
+                    action: ScheduleLogAction.ADMIN_OVERRIDE,
+                }),
+            },
+            order: [["createdAt", "DESC"]],
+            limit: 500,
+            raw: true,
+        });
+        const sessions = new Map(
+            (
+                await this.sessionModel.findAll({
+                    where: {
+                        _id: [...new Set(logs.map((log) => log.sessionId))],
+                    },
+                    raw: true,
+                })
+            ).map((session) => [session._id, session]),
+        );
+        const userIds = [
+            ...new Set(logs.map((log) => log.actorUserId).filter(Boolean)),
+        ];
+        const users = new Map(
+            (userIds.length
+                ? await UserModel.findAll({
+                      where: { _id: userIds },
+                      attributes: ["_id", "username", "fullname"],
+                      raw: true,
+                  })
+                : []
+            ).map(
+                (row) =>
+                    [
+                        row._id,
+                        {
+                            _id: row._id,
+                            username: row.username,
+                            fullname: row.fullname ?? null,
+                        },
+                    ] as const,
+            ),
+        );
+        return logs.map((log) => ({
+            ...log,
+            sessionCode: sessions.get(log.sessionId)?.code ?? null,
+            actor: users.get(log.actorUserId) ?? null,
+        }));
+    }
+
+    // ------------------------------------------------------------------
+    // Recap
+    // ------------------------------------------------------------------
+
+    async submitRecap(sessionId: string, dto: RecapDto, user: User) {
+        const member = await this.getMemberOfUser(user);
+        const { session, pair, quarter } =
+            await this.getSessionContext(sessionId);
+        const role = this.memberRoleInPair(member, pair);
+        if (!role) throw ApiError.Forbidden("error-mentoring-not-participant");
+        this.assertQuarterWritable(quarter);
+        const now = this.now();
+        const existing = await this.recapModel.findOne({
+            where: { sessionId: session._id, role },
+            raw: true,
+        });
+        if (existing?.reviewStatus === RecapReviewStatus.APPROVED) {
+            throw ApiError.Conflict("error-mentoring-recap-approved");
+        }
+        if (!canWriteRecap(session, existing, now)) {
+            throw ApiError.Conflict("error-mentoring-recap-too-early");
+        }
+        const fileIds = [...new Set(dto.fileIds)];
+        const files = await this.fileModel.findAll({
+            where: { _id: fileIds },
+            attributes: ["_id", "name", "mimetype"],
+            raw: true,
+        });
+        if (files.length !== fileIds.length) {
+            throw ApiError.BadRequest("error-mentoring-recap-file-invalid");
+        }
+        if (!files.some((file) => String(file.mimetype).startsWith("image/"))) {
+            throw ApiError.BadRequest("error-mentoring-recap-image-required");
+        }
+        const isLate =
+            now.getTime() > new Date(session.recapDeadlineAt).getTime();
+        // Bị từ chối rồi nộp lại = nộp mới: tính lại thời điểm nộp và nộp muộn
+        const resetTiming =
+            !existing || existing.reviewStatus === RecapReviewStatus.REJECTED;
+        const filesBefore = existing
+            ? (
+                  await this.attachmentModel.findAll({
+                      where: {
+                          ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                          ownerId: existing._id,
+                      },
+                      order: [["sortOrder", "ASC"]],
+                      attributes: ["fileId", "fileName"],
+                      raw: true,
+                  })
+              ).map((row) => ({ fileId: row.fileId, fileName: row.fileName }))
+            : null;
+        await this.sequelize.transaction(async (t) => {
+            let recapId = existing?._id;
+            if (existing) {
+                await this.recapModel.update(
+                    {
+                        content: dto.content.trim(),
+                        lastSubmittedAt: now,
+                        ...(resetTiming
+                            ? {
+                                  firstSubmittedAt: now,
+                                  isLate,
+                                  score: null,
+                                  scoreDetails: null,
+                                  scoredBy: null,
+                                  scoredAt: null,
+                              }
+                            : {}),
+                        reviewStatus: RecapReviewStatus.PENDING,
+                        reviewedBy: null,
+                        reviewedAt: null,
+                    },
+                    { where: { _id: existing._id }, transaction: t },
+                );
+            } else {
+                const created = await this.recapModel.create(
+                    {
+                        sessionId: session._id,
+                        memberId: member._id,
+                        role,
+                        content: dto.content.trim(),
+                        firstSubmittedAt: now,
+                        lastSubmittedAt: now,
+                        // Mốc thưởng sớm: chỉ ghi ở lần nộp đầu tiên, sửa / nộp lại về sau không đổi
+                        initialSubmittedAt: now,
+                        isLate,
+                    },
+                    { transaction: t },
+                );
+                recapId = created._id;
+            }
+            await this.recapLogModel.create(
+                {
+                    recapId,
+                    sessionId: session._id,
+                    action: !existing
+                        ? "SUBMIT"
+                        : existing.reviewStatus === RecapReviewStatus.REJECTED
+                          ? "RESUBMIT"
+                          : "EDIT",
+                    contentBefore: existing?.content ?? null,
+                    contentAfter: dto.content.trim(),
+                    filesBefore,
+                    filesAfter: fileIds.map((fileId) => ({
+                        fileId,
+                        fileName:
+                            files.find((item) => item._id === fileId)?.name ??
+                            null,
+                    })),
+                    at: now,
+                    actorUserId: user._id,
+                },
+                { transaction: t },
+            );
+            await this.attachmentModel.destroy({
+                where: {
+                    ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                    ownerId: recapId,
+                },
+                transaction: t,
+            });
+            await this.attachmentModel.bulkCreate(
+                fileIds.map((fileId, index) => {
+                    const file = files.find((item) => item._id === fileId);
+                    return {
+                        ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                        ownerId: recapId,
+                        fileId,
+                        url: this.fileUrl(fileId, file.name),
+                        fileName: file.name,
+                        mimeType: file.mimetype,
+                        sortOrder: index,
+                        uploadedBy: user._id,
+                    };
+                }),
+                { transaction: t },
+            );
+        });
+        const [view] = await this.buildSessionViews([session]);
+        return view;
+    }
+
+    /**
+     * Admin Mentoring / Admin toàn cục nhập recap hộ. Ghi rõ người nhập, lúc nhập, lý do.
+     * Không ghi đè recap đã có của vai trò đó (chống trùng).
+     */
+    async proxyRecap(sessionId: string, dto: ProxyRecapDto, user: User) {
+        const { session, pair, quarter } =
+            await this.getSessionContext(sessionId);
+        // Recap MTE: chỉ Admin toàn cục / Trưởng ban Mentoring nộp hộ. Recap MTO: thêm người được Trưởng ban Mentoring ủy quyền
+        const auth =
+            dto.role === "MENTOR"
+                ? await this.recapAccess.authorize(user, pair, "PROXY")
+                : (await this.recapAccess.requireHead(user), {});
+        this.assertQuarterWritable(quarter);
+        if (!session.scheduledStartAt)
+            throw ApiError.Conflict("error-mentoring-recap-too-early");
+        const role =
+            dto.role === "MENTOR" ? MentoringRole.MENTOR : MentoringRole.MENTEE;
+        const existing = await this.recapModel.findOne({
+            where: { sessionId, role },
+            raw: true,
+        });
+        if (existing)
+            throw ApiError.Conflict("error-recap-exists", {
+                role: role === MentoringRole.MENTOR ? "MTO" : "MTE",
+            });
+        const now = this.now();
+        const submittedAt = dto.submittedAt ? new Date(dto.submittedAt) : now;
+        const fileIds = [...new Set(dto.fileIds ?? [])];
+        const files = fileIds.length
+            ? await this.fileModel.findAll({
+                  where: { _id: fileIds },
+                  attributes: ["_id", "name", "mimetype"],
+                  raw: true,
+              })
+            : [];
+        if (files.length !== fileIds.length)
+            throw ApiError.BadRequest("error-mentoring-recap-file-invalid");
+        await this.sequelize.transaction(async (t) => {
+            const recap = await this.recapModel.create(
+                {
+                    sessionId,
+                    memberId:
+                        role === MentoringRole.MENTOR
+                            ? pair.mentorId
+                            : pair.menteeId,
+                    role,
+                    content: dto.content.trim(),
+                    firstSubmittedAt: submittedAt,
+                    lastSubmittedAt: submittedAt,
+                    initialSubmittedAt: submittedAt,
+                    isLate:
+                        submittedAt.getTime() >
+                        new Date(session.recapDeadlineAt).getTime(),
+                    proxyBy: user._id,
+                    proxyAt: now,
+                    proxyReason: auth.behalf
+                        ? `[Theo ủy quyền của ${auth.behalf.name}] ${dto.reason.trim()}`
+                        : dto.reason.trim(),
+                },
+                { transaction: t },
+            );
+            await this.recapLogModel.create(
+                {
+                    recapId: recap._id,
+                    sessionId,
+                    action: "PROXY",
+                    contentBefore: null,
+                    contentAfter: dto.content.trim(),
+                    filesBefore: null,
+                    filesAfter: files.map((file) => ({
+                        fileId: file._id,
+                        fileName: file.name,
+                    })),
+                    at: submittedAt,
+                    actorUserId: user._id,
+                },
+                { transaction: t },
+            );
+            if (files.length) {
+                await this.attachmentModel.bulkCreate(
+                    files.map((file, index) => ({
+                        ownerType: AttachmentOwnerType.MENTORING_RECAP,
+                        ownerId: recap._id,
+                        fileId: file._id,
+                        url: this.fileUrl(file._id, file.name),
+                        fileName: file.name,
+                        mimeType: file.mimetype,
+                        sortOrder: index,
+                        uploadedBy: user._id,
+                    })),
+                    { transaction: t },
+                );
+            }
+        });
+        await this.recapAccess.log(
+            user,
+            "RECAP_PROXY",
+            `Nộp hộ recap ${role === MentoringRole.MENTOR ? "MTO" : "MTE"} buổi ${session.code}: ${dto.reason.trim()}`,
+            { id: session._id, name: session.code },
+            auth,
+        );
+        const [view] = await this.buildSessionViews([session]);
+        return view;
+    }
+
+    async reviewRecap(recapId: string, dto: ReviewRecapDto, user: User) {
+        const recap = await this.recapModel.findOne({
+            where: { _id: recapId },
+            raw: true,
+        });
+        if (!recap) throw ApiError.NotFound("error-record-not-found");
+        const { quarter, pair } = await this.getSessionContext(recap.sessionId);
+        // Duyệt / không duyệt recap MTO: Admin toàn cục, Trưởng ban Mentoring hoặc người được ủy quyền
+        const auth =
+            recap.role === MentoringRole.MENTOR
+                ? await this.recapAccess.authorize(user, pair, "REVIEW")
+                : (await this.recapAccess.requireHead(user), {});
+        this.assertQuarterWritable(quarter);
+        if (dto.status === "REJECTED" && !dto.note?.trim()) {
+            throw ApiError.BadRequest("error-mentoring-review-note-required");
+        }
+        // Một barem duy nhất: recap MTE được duyệt bằng cách chấm điểm (PUT /leader/recaps/:id/score)
+        if (dto.status === "APPROVED" && recap.role === MentoringRole.MENTEE) {
+            throw ApiError.BadRequest("error-recap-score-required");
+        }
+        await this.recapModel.update(
+            {
+                reviewStatus: dto.status,
+                reviewNote: dto.note?.trim() || null,
+                reviewedBy: user._id,
+                reviewedAt: this.now(),
+                ...(dto.status === "REJECTED" && {
+                    score: null,
+                    scoreDetails: null,
+                }),
+            },
+            { where: { _id: recap._id } },
+        );
+        const sessionRow = await this.sessionModel.findOne({
+            where: { _id: recap.sessionId },
+            raw: true,
+        });
+        await this.recapAccess.log(
+            user,
+            "RECAP_REVIEW",
+            `${dto.status === "APPROVED" ? "Duyệt" : "Không duyệt"} recap ${recap.role === MentoringRole.MENTOR ? "MTO" : "MTE"} buổi ${sessionRow.code}${dto.note?.trim() ? `: ${dto.note.trim()}` : ""}`,
+            { id: recap._id, name: sessionRow.code },
+            auth,
+        );
+        const [view] = await this.buildSessionViews([sessionRow]);
+        return view;
+    }
+
+    // ------------------------------------------------------------------
+    // Mentor / mentee: dữ liệu của tôi
+    // ------------------------------------------------------------------
+
+    async getMyMentoring(user: User) {
+        const member = await this.getMemberOfUser(user);
+        const now = this.now();
+        const pairs = await this.pairModel.findAll({
+            where: {
+                [Op.or]: [{ mentorId: member._id }, { menteeId: member._id }],
+                status: { [Op.ne]: MentoringPairStatus.CANCELLED },
+            },
+            raw: true,
+        });
+        const quarters = pairs.length
+            ? await this.quarterModel.findAll({
+                  where: {
+                      _id: [...new Set(pairs.map((pair) => pair.quarterId))],
+                  },
+                  raw: true,
+              })
+            : [];
+        const visibleQuarterIds = new Set(
+            quarters
+                .filter((quarter) =>
+                    isVisibleToMember(
+                        { visibleAt: new Date(quarter.visibleAt) },
+                        now,
+                    ),
+                )
+                .map((quarter) => quarter._id),
+        );
+        const visiblePairs = pairs.filter((pair) =>
+            visibleQuarterIds.has(pair.quarterId),
+        );
+        const sessions = visiblePairs.length
+            ? await this.sessionModel.findAll({
+                  where: { pairId: visiblePairs.map((pair) => pair._id) },
+                  raw: true,
+              })
+            : [];
+        const views = await this.buildSessionViews(sessions);
+        const myRole = (view: SessionView) =>
+            view.mentor?._id === member._id
+                ? MentoringRole.MENTOR
+                : MentoringRole.MENTEE;
+        const sessionMap = new Map(
+            sessions.map((session) => [session._id, session]),
+        );
+        const mySessions = views.map((view) => {
+            const role = myRole(view);
+            const raw = sessionMap.get(view._id);
+            const quarter = quarters.find(
+                (item) => item.code === view.quarterCode,
+            );
+            const ownRecap =
+                role === MentoringRole.MENTOR
+                    ? view.recaps.mentor
+                    : view.recaps.mentee;
+            return {
+                ...view,
+                myRole: role,
+                canEditSchedule:
+                    !quarter?.isLocked && canEditSchedule(raw, now),
+                canWriteRecap:
+                    !quarter?.isLocked && canWriteRecap(raw, ownRecap, now),
+            } as MySessionView;
+        });
+        return {
+            member: this.toMemberView(member),
+            now,
+            quarters: quarters
+                .filter((quarter) => visibleQuarterIds.has(quarter._id))
+                .map((quarter) => this.quarterView(quarter))
+                .sort((a, b) => quarterIndex(b) - quarterIndex(a)),
+            sessions: mySessions,
+            preference:
+                member.memberType === MemberType.MENTEE
+                    ? await this.getMyPreferenceState(member)
+                    : null,
+        };
+    }
+
+    /** Nguyện vọng cho quý kế tiếp của mentee */
+    private async getMyPreferenceState(member: Plain<Member>) {
+        const now = this.now();
+        const next = quarterFromIndex(quarterIndex(quarterOfDate(now)) + 1);
+        const timeline = quarterTimeline(next);
+        const quarter = await this.quarterModel.findOne({
+            where: { code: quarterCode(next) },
+            raw: true,
+        });
+        let mine = null;
+        if (quarter) {
+            const preference = await this.preferenceModel.findOne({
+                where: { quarterId: quarter._id, menteeId: member._id },
+                raw: true,
+            });
+            if (preference) {
+                const items = await this.preferenceItemModel.findAll({
+                    where: { preferenceId: preference._id },
+                    order: [["priority", "ASC"]],
+                    raw: true,
+                });
+                const mentors = await this.memberModel.findAll({
+                    where: { _id: items.map((item) => item.mentorId) },
+                    raw: true,
+                });
+                mine = {
+                    mentorCodes: items.map(
+                        (item) =>
+                            mentors.find(
+                                (mentor) => mentor._id === item.mentorId,
+                            )?.memberCode,
+                    ),
+                    message: preference.message ?? null,
+                    submittedAt: preference.submittedAt,
+                };
+            }
+        }
+        return {
+            quarterCode: quarterCode(next),
+            opensAt: timeline.preferenceOpenAt,
+            closesAt: timeline.pairingOpenAt,
+            canChoose: canChoosePreference(timeline, now),
+            mine,
+        };
+    }
+
+    async savePreference(dto: PreferenceDto, user: User) {
+        const member = await this.getMemberOfUser(user);
+        if (member.memberType !== MemberType.MENTEE) {
+            throw ApiError.Forbidden("error-mentoring-preference-mentee-only");
+        }
+        const ref = parseQuarterCode(dto.quarterCode);
+        if (!canChoosePreference(quarterTimeline(ref), this.now())) {
+            throw ApiError.Conflict("error-mentoring-preference-closed", {
+                code: quarterCode(ref),
+            });
+        }
+        const mentors = [];
+        for (const code of dto.mentorCodes) {
+            mentors.push(await this.findMemberByCode(code, MemberType.MENTOR));
+        }
+        return this.sequelize.transaction(async (t) => {
+            const quarter = await this.ensureQuarter(quarterCode(ref), user, t);
+            const now = this.now();
+            const existing = await this.preferenceModel.findOne({
+                where: { quarterId: quarter._id, menteeId: member._id },
+                transaction: t,
+            });
+            let preferenceId = existing?._id;
+            if (existing) {
+                await existing.update(
+                    { message: dto.message ?? null, submittedAt: now },
+                    { transaction: t },
+                );
+                await this.preferenceItemModel.destroy({
+                    where: { preferenceId },
+                    transaction: t,
+                });
+            } else {
+                const created = await this.preferenceModel.create(
+                    {
+                        quarterId: quarter._id,
+                        menteeId: member._id,
+                        message: dto.message ?? null,
+                        submittedAt: now,
+                        isLateJoiner: false,
+                    },
+                    { transaction: t },
+                );
+                preferenceId = created._id;
+            }
+            await this.preferenceItemModel.bulkCreate(
+                mentors.map((mentor, index) => ({
+                    preferenceId,
+                    mentorId: mentor._id,
+                    priority: index + 1,
+                })),
+                { transaction: t },
+            );
+            return {
+                quarterCode: quarter.code,
+                mentorCodes: mentors.map((mentor) => mentor.memberCode),
+                message: dto.message ?? null,
+                submittedAt: now,
+            };
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Báo cáo theo quý
+    // ------------------------------------------------------------------
+
+    /** Báo cáo của admin: mỗi cặp 2 dòng (Mentor, Mentee), mỗi tháng mã + trạng thái */
+    async getQuarterReports() {
+        const quarters = await this.quarterModel.findAll({
+            order: [
+                ["year", "ASC"],
+                ["quarter", "ASC"],
+            ],
+            raw: true,
+        });
+        const reports = [];
+        for (const quarter of quarters) {
+            const { sessions } = await this.getQuarterBoard(quarter.code);
+            reports.push(
+                this.buildQuarterReport(this.quarterView(quarter), sessions),
+            );
+        }
+        return reports;
+    }
+
+    async getQuarterReport(code: string) {
+        const { quarter, sessions } = await this.getQuarterBoard(code);
+        return this.buildQuarterReport(quarter, sessions);
+    }
+
+    private buildQuarterReport(
+        quarter: ReturnType<MentoringFlowService["quarterView"]>,
+        sessions: SessionView[],
+    ) {
+        const groups = new Map<string, SessionView[]>();
+        for (const session of sessions) {
+            const key = session.pair?.code ?? session.code;
+            groups.set(key, [...(groups.get(key) ?? []), session]);
+        }
+        const rows = [...groups.entries()].flatMap(([code, items], index) =>
+            (["MENTOR", "MENTEE"] as const).map((role) => {
+                const member =
+                    role === "MENTOR" ? items[0].mentor : items[0].mentee;
+                return {
+                    key: `${code}-${role}`,
+                    serial: role === "MENTOR" ? index + 1 : null,
+                    pairCode: code,
+                    role,
+                    member,
+                    months: Object.fromEntries(
+                        quarter.months.map((month) => {
+                            const session = items.find(
+                                (item) => item.month === month,
+                            );
+                            return [
+                                month,
+                                session
+                                    ? {
+                                          sessionId: session._id,
+                                          code: session.code,
+                                          status:
+                                              role === "MENTOR"
+                                                  ? session.recapStatus.mentor
+                                                  : session.recapStatus.mentee,
+                                          pairStatus: session.recapStatus.pair,
+                                      }
+                                    : null,
+                            ];
+                        }),
+                    ),
+                };
+            }),
+        );
+        return {
+            quarter: {
+                code: quarter.code,
+                year: quarter.year,
+                quarter: quarter.quarter,
+                months: quarter.months,
+                hasEnded: quarter.hasEnded,
+                isLocked: quarter.isLocked,
+            },
+            hasImportedStatus: sessions.some(
+                (session) => session.recapStatus.source === "IMPORTED",
+            ),
+            rows,
+        };
+    }
+
+    /** Báo cáo của chính mentor/mentee: các quý đã kết thúc hoặc đã có recap/dữ liệu cũ */
+    async getMyReport(user: User) {
+        const { member, sessions } = await this.getMyMentoring(user);
+        const groups = new Map<string, MySessionView[]>();
+        for (const session of sessions) {
+            const key = session.pair?.code ?? session.code;
+            groups.set(key, [...(groups.get(key) ?? []), session]);
+        }
+        const now = this.now();
+        return [...groups.entries()]
+            .map(([code, items]) => {
+                const ref = parseQuarterCode(items[0].quarterCode);
+                const months = quarterMonths(ref);
+                const role = items[0].myRole;
+                const hasEnded =
+                    now >=
+                    new Date(`${quarterDates(ref).endDate}T23:59:59.999+07:00`);
+                const hasData = items.some(
+                    (item) =>
+                        item.recapStatus.source === "IMPORTED" ||
+                        (role === "MENTOR"
+                            ? item.recaps.mentor
+                            : item.recaps.mentee),
+                );
+                return {
+                    key: code,
+                    pairCode: code,
+                    quarterCode: items[0].quarterCode,
+                    year: ref.year,
+                    quarter: ref.quarter,
+                    role,
+                    me: member,
+                    mentor: items[0].mentor,
+                    mentee: items[0].mentee,
+                    visible: hasEnded || hasData,
+                    months: months.map((month) => {
+                        const session = items.find(
+                            (item) => item.month === month,
+                        );
+                        return {
+                            month,
+                            session: session
+                                ? {
+                                      _id: session._id,
+                                      code: session.code,
+                                      schedule: session.schedule,
+                                      status:
+                                          role === "MENTOR"
+                                              ? session.recapStatus.mentor
+                                              : session.recapStatus.mentee,
+                                      recap:
+                                          role === "MENTOR"
+                                              ? session.recaps.mentor
+                                              : session.recaps.mentee,
+                                  }
+                                : null,
+                        };
+                    }),
+                };
+            })
+            .filter((report) => report.visible)
+            .sort((a, b) => a.year - b.year || a.quarter - b.quarter);
+    }
+}

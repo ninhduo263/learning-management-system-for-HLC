@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package main;
+
+import "google/protobuf/empty.proto";
+
+service MicroserviceService {
+  rpc HelloWorld (google.protobuf.Empty) returns (Output) {}
+}
+
+message Input {
+  int32 id = 1;
+}
+
+message Output {
+  string message = 2;
+}

@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Gói gọn server để chạy trong Docker (node server.js)
+  output: "standalone",
 };
 
 export default nextConfig;

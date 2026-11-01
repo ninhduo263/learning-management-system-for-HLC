@@ -1,0 +1,30 @@
+{
+    "$schema": "https://json.schemastore.org/nest-cli",
+    "collection": "@nestjs/schematics",
+    "sourceRoot": "src",
+    "compilerOptions": {
+        "manualRestart": true,
+        "assets": [
+            {
+                "include": "common/i18n/**/*",
+                "watchAssets": true
+            },
+            {
+                "include": "modules/microservice/grpc/proto/**/*.proto",
+                "watchAssets": true
+            },
+            {
+                "include": "**/*.{pdf,docx,xlsx}",
+                "watchAssets": true
+            }
+        ],
+        "plugins": [
+            {
+                "name": "@nestjs/swagger",
+                "options": {
+                    "introspectComments": true
+                }
+            }
+        ]
+    }
+}

@@ -1,10 +1,11 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useState } from 'react';
-import { Form, Input, Button, Card, App } from 'antd';
+import { Form, Input, Button, App } from 'antd';
 import { LockOutlined, UserOutlined, LoadingOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { useRouter } from 'next/navigation';
-import { apiFetch } from '@/lib/api';
+import { apiJson, clearSession, saveSession, type AppRole } from '@/lib/api';
 
 interface LoginValues {
   userId: string;
@@ -28,25 +29,26 @@ export default function LoginPage() {
     setElapsedSeconds(0);
     setIsAuthenticating(true);
     try {
-      const response = await apiFetch('/auth/login', {
+      const tokens = await apiJson<{ accessToken: string; refreshToken: string }>('/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: values.userId.toUpperCase(), password: values.password })
+        json: { username: values.userId.trim().toLowerCase(), password: values.password, platform: 'Web' }
       });
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error(
-          response.status === 404
-            ? 'Không tìm thấy API đăng nhập. Hãy khởi động lại đúng backend tại cổng 5000.'
-            : `Backend trả về phản hồi không hợp lệ (HTTP ${response.status})`
-        );
+      saveSession(tokens);
+      const account = await apiJson<{ username: string; fullname?: string; systemRole: string }>('/user/me');
+      const role = ({ Admin: 'ADMIN', Mentor: 'MENTOR', Mentee: 'MENTEE' } as Record<string, AppRole>)[account.systemRole];
+      if (!role) {
+        clearSession();
+        throw new Error('Tài khoản chưa được cấp vai trò Mentor/Mentee, vui lòng liên hệ quản trị viên');
       }
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || `Đăng nhập thất bại (HTTP ${response.status})`);
-      if (!result.success) throw new Error(result.message);
-      localStorage.setItem('hlc_token', result.token);
-      localStorage.setItem('hlc_user', JSON.stringify(result.user));
-      router.replace('/');
+      const member = role === 'ADMIN'
+        ? null
+        : await apiJson<{ memberCode: string; fullName: string } | null>('/member/me');
+      saveSession(tokens, {
+        userId: member?.memberCode || account.username,
+        fullName: member?.fullName || account.fullname || account.username,
+        role
+      });
+      router.replace(role === 'ADMIN' ? '/admin-dashboard' : role === 'MENTOR' ? '/mentor-dashboard' : '/mentee-dashboard');
     } catch (error) {
       setIsAuthenticating(false);
       message.error(error instanceof Error ? error.message : 'Đăng nhập thất bại');
@@ -65,7 +67,7 @@ export default function LoginPage() {
         <div className="login-wait-glow login-wait-glow-one" />
         <div className="login-wait-glow login-wait-glow-two" />
         <section className="login-wait-card">
-          <div className="login-wait-brand"><span className="login-wait-mark">H</span> HLC Mentoring</div>
+          <div className="login-wait-brand"><Image className="login-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={1024} height={330} priority /></div>
           <div className="login-wait-spinner" aria-hidden="true">
             <LoadingOutlined />
           </div>
@@ -86,21 +88,25 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gray-100 p-4">
-      <Card title="Đăng nhập HLC Mentoring" className="w-full max-w-md shadow-md">
-        <Form layout="vertical" onFinish={onFinish} disabled={isAuthenticating}>
+    <main className="login-screen">
+      <section className="login-card">
+        <div className="login-brand"><Image className="login-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={1024} height={330} priority /></div>
+        <h1>Đăng nhập</h1>
+        <p className="login-lead">Kết nối để cùng tiến xa: mentoring, học tập và HLC Fund trong một nơi.</p>
+        <Form layout="vertical" size="large" onFinish={onFinish} disabled={isAuthenticating} requiredMark={false}>
           <Form.Item name="userId" label="Mã thành viên" rules={[{ required: true, message: 'Nhập mã thành viên' }]}>
-            <Input prefix={<UserOutlined />} placeholder="MT01 / MN01" autoComplete="username" />
+            <Input prefix={<UserOutlined />} placeholder="HLC-MTE-00001" autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" label="Mật khẩu" rules={[{ required: true, message: 'Nhập mật khẩu' }]}>
             <Input.Password prefix={<LockOutlined />} autoComplete="current-password" />
           </Form.Item>
           <Button type="primary" htmlType="submit" block loading={isAuthenticating}>Đăng nhập</Button>
-          <p className="mt-4 text-center text-xs text-gray-500">
-            Tài khoản mật khẩu mặc định do quản trị viên cung cấp.
+          <p className="login-hint">
+            Mật khẩu mặc định là ngày sinh dạng ddmmyyyy (ví dụ 20052003), hoặc do quản trị viên cung cấp.
           </p>
         </Form>
-      </Card>
+        <div className="login-stripe" aria-hidden="true"><span /><span /><span /><span /></div>
+      </section>
     </main>
   );
 }

@@ -9,6 +9,33 @@ Hệ thống quản lý mentoring và học tập cho HLC, gồm:
 - Tính điểm, phụ cấp, báo cáo và xuất dữ liệu.
 - Upload minh chứng qua Cloudinary.
 
+## Chạy nhanh bằng Docker (frontend + backend + PostgreSQL + Redis)
+
+Yêu cầu: Docker và Docker Compose v2.
+
+```bash
+cp .env.example .env        # (tùy chọn) đổi mật khẩu, JWT secret, cổng
+docker compose up -d --build
+```
+
+| Thành phần | Địa chỉ |
+|---|---|
+| Frontend (`hlc-mentoring-web/`) | http://localhost:3000 |
+| Backend NestJS (`backend/`) | http://localhost:5000 |
+| Swagger | http://localhost:5000/api |
+
+- Tài khoản admin mặc định: `admin` / `admin` (đổi bằng `ADMIN_PASSWORD` trước lần chạy đầu).
+- Bắt đầu sử dụng:
+  1. Vào **Dashboard → Import Excel thành viên**.
+  2. Bấm **Tạo tài khoản**. Thành viên đăng nhập bằng mã viết thường (`hlc-mte-00001`), mật khẩu là ngày sinh `ddmmyyyy`.
+- Dữ liệu nằm trong volume `postgres-data`. Xóa sạch dữ liệu: `docker compose down -v`.
+- Xem log: `docker compose logs -f backend`. Dừng hệ thống: `docker compose down`.
+- Cổng 3000/5000 đã bị dùng thì đổi `FE_PORT`, `BE_PORT` và `PUBLIC_API_URL` trong `.env`.
+- Deploy lên server/domain: đặt `PUBLIC_API_URL` là địa chỉ backend mà trình duyệt truy cập được (ví dụ `https://api.hlc.vn`), rồi chạy lại `docker compose up -d --build`. Địa chỉ này được nhúng vào frontend lúc build.
+- **Lưu ý:**
+  - Backend đang chạy với `SERVER_ENV=development`, để Sequelize tự tạo bảng vì dự án **chưa có migration**. Ở chế độ này, response lỗi có kèm chi tiết debug.
+  - Trước khi đưa vào sử dụng thật, cần làm migration từ `backend/docs/database/schema.sql` rồi chuyển sang `production`.
+
 ## Cấu trúc dự án
 
 Hệ thống được chia thành 2 phần chính:

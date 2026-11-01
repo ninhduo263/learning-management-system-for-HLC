@@ -22,10 +22,10 @@ export default function Home() {
     try {
       const user = JSON.parse(savedUser) as { role?: string };
       const route = user.role === "ADMIN"
-        ? "/admin-mentoring"
+        ? "/admin-dashboard"
         : user.role === "MENTOR"
-          ? "/mentor-mentoring"
-          : "/mentee-mentoring";
+          ? "/mentor-dashboard"
+          : "/mentee-dashboard";
       router.push(route);
     } catch {
       router.replace("/login");
@@ -43,7 +43,7 @@ export default function Home() {
             cùng mentor và ghi lại những điều học được sau mỗi buổi gặp.
           </p>
           <button className="primary-action" type="button" onClick={openMentoring}>
-            Mở không gian mentoring <ArrowRightOutlined />
+            Vào hệ thống <ArrowRightOutlined />
           </button>
         </div>
         <div className="welcome-art" aria-hidden="true">
@@ -61,8 +61,8 @@ export default function Home() {
         <div className="intro-icon"><TeamOutlined /></div>
         <div>
           <span className="section-kicker">MỘT KHÔNG GIAN TẬP TRUNG</span>
-          <h2>Lịch hẹn, kết nối và recap mentoring</h2>
-          <p>Các tính năng khác đang tạm ẩn khỏi giao diện. Dữ liệu và route hiện tại vẫn được giữ nguyên.</p>
+          <h2>Mentoring, học tập, HLC Fund và điểm phụ cấp</h2>
+          <p>Theo dõi lịch mentoring và recap, nộp bài học tập, gửi minh chứng HLC Fund và xem điểm phụ cấp hằng tháng.</p>
         </div>
       </section>
     </div>
