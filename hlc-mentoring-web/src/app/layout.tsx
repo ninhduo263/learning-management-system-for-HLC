@@ -9,8 +9,12 @@ import MainLayout from "@/components/MainLayout"; // Bổ sung dòng import này
 const brandFont = Nunito({ subsets: ["latin", "vietnamese"], variable: "--font-brand", display: "swap", preload: false });
 
 export const metadata: Metadata = {
-  title: "HLC Mentoring System",
-  description: "Hệ thống quản lý học tập và Mentoring",
+  title: "HLC System",
+  description: "Hệ thống quản trị hoạt động HLC",
+  openGraph: {
+    title: "HLC System",
+    description: "Hệ thống quản trị hoạt động HLC",
+  },
 };
 
 export default function RootLayout({

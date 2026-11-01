@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import React, { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { App, Badge, Layout, Menu, Button, Drawer, Grid, Modal, DatePicker, Tag } from 'antd';
@@ -42,7 +42,7 @@ function BrandLogo({ compact = false }: { compact?: boolean }) {
   /* eslint-disable @next/next/no-img-element */
   return compact
     ? <img className="brand-logo" src="/brand/hlc-logo-256.png" alt="HLC – Happy Leadership Community" width={44} height={44} />
-    : <img className="brand-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={543} height={176} />;
+    : <img className="brand-logo-horizontal" src="/brand/hlc-logo-horizontal.png" alt="HLC – Happy Leadership Community" width={1024} height={330} />;
   /* eslint-enable @next/next/no-img-element */
 }
 const { useBreakpoint } = Grid;
